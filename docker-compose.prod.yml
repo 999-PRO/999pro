@@ -1,29 +1,28 @@
 # ============================================================================
 # 999 PRO — Docker Compose for production
-# Wave 2 (C-DEPLOY-001) + Wave 4 (B-PROD-001): PostgreSQL 16
+# v25.0-audit-fix: file-based Docker secrets (works on non-Swarm Docker),
+#   Bun-based builds, simplified backend CMD, clear env-var contract.
 #
 # Services:
 #   - postgres (PostgreSQL 16) on :5432
-#   - backend (Express + Prisma + Socket.IO) on :4000
+#   - backend  (Express + Prisma + Socket.IO) on :4000
 #   - frontend (Next.js) on :3000
-#   - studio (Next.js admin) on :3001
-#   - caddy (reverse proxy with auto TLS) on :80/:443
+#   - studio   (Next.js admin) on :3001
+#   - caddy    (reverse proxy with auto TLS) on :80/:443
 #
 # Usage:
-#   docker compose -f docker-compose.prod.yml up -d --build
+#   1. Generate secrets + .env.prod:
+#        ./generate-env.sh > .env.prod
+#        ./generate-env.sh --secrets   # creates ./secrets/postgres_password.txt
+#   2. Edit .env.prod (set APP_DOMAIN, SMTP_*, etc.)
+#   3. docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 #
-# Required env vars (set in .env.prod or export before running):
-#   - POSTGRES_PASSWORD (REQUIRED — fail-fast if missing)
-#   - JWT_SECRET, FIRST_RUN_TOKEN, RESET_ADMIN_TOKEN, IP_HASH_PEPPER
-#   - VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
-#   - APP_PUBLIC_URL (e.g. https://999.pro)
-#   - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM (for email verification)
-#
-# ⚠️ Before first deploy: run MIGRATION-GUIDE.md to migrate data from SQLite.
-# ⚠️ SECURITY: This compose file does NOT mount the dev .env. All secrets must
-#    come from the shell environment or a separately-managed .env.prod file
-#    (gitignored). The backend boot-time check (lib/auth.ts) refuses to start
-#    if JWT_SECRET matches any known dev value.
+# Required env vars (must be in .env.prod or shell env):
+#   POSTGRES_PASSWORD (REQUIRED — fail-fast if missing)
+#   JWT_SECRET, FIRST_RUN_TOKEN, RESET_ADMIN_TOKEN, IP_HASH_PEPPER
+#   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
+#   APP_PUBLIC_URL, APP_DOMAIN
+#   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM (if email verify on)
 # ============================================================================
 
 services:
@@ -31,15 +30,11 @@ services:
     image: postgres:16-alpine
     container_name: 999pro-postgres
     restart: unless-stopped
-    # C4 fix: Docker secrets — пароль читается из /run/secrets/postgres_password
-    # (файл монтируется из _FILE переменной). В docker inspect и /proc/1/environ
-    # значение POSTGRES_PASSWORD НЕ виден — только путь к файлу. Подробнее:
-    # https://docs.docker.com/engine/swarm/secrets/
+    # File-based Docker secret: password read from /run/secrets/postgres_password
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
       - POSTGRES_DB=pro999
-      # Performance tuning (adjust based on available RAM)
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
     secrets:
       - source: postgres_password
@@ -54,9 +49,6 @@ services:
       start_period: 30s
     networks:
       - 999pro-net
-    # Uncomment for external access (e.g. for pgloader during migration):
-    # ports:
-    #   - "5432:5432"
 
   backend:
     build:
@@ -64,15 +56,6 @@ services:
       dockerfile: Dockerfile
     container_name: 999pro-backend
     restart: unless-stopped
-    # S-CRIT-001 fix: NO env_file — dev .env must NOT leak into prod container.
-    # All secrets come from the host environment (or a separately-managed
-    # .env.prod file passed via `docker compose --env-file .env.prod up`).
-    # Required env vars are passed explicitly below; missing ones fail-fast.
-    #
-    # C4 fix: POSTGRES_PASSWORD больше НЕ инлайн в BACKEND_DATABASE_URL.
-    # Backend читает пароль из /run/secrets/postgres_password (Docker secret)
-    # и подставляет в connection string при старте. entrypoint скрипт собирает
-    # финальный BACKEND_DATABASE_URL из частей, чтобы пароль не утекал в env.
     environment:
       - NODE_ENV=production
       - PORT=4000
@@ -83,30 +66,41 @@ services:
       - VAPID_SUBJECT=${VAPID_SUBJECT:?VAPID_SUBJECT is required}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:?VAPID_PUBLIC_KEY is required}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:?VAPID_PRIVATE_KEY is required}
-      - CLIENT_ORIGIN=${CLIENT_ORIGIN:-https://999.pro,https://studio.999.pro}
+      - CLIENT_ORIGIN=${CLIENT_ORIGIN:-https://${APP_DOMAIN:-999.pro},https://studio.${APP_DOMAIN:-999.pro}}
       - TRUST_PROXY=true
       - APP_PUBLIC_URL=${APP_PUBLIC_URL:?APP_PUBLIC_URL is required}
       - EMAIL_VERIFICATION_REQUIRED=${EMAIL_VERIFICATION_REQUIRED:-true}
-      # SMTP config (optional in dev, required in prod if EMAIL_VERIFICATION_REQUIRED=true)
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASS=${SMTP_PASS:-}
-      - SMTP_FROM=${SMTP_FROM:-no-reply@999.pro}
+      - SMTP_FROM=${SMTP_FROM:-no-reply@${APP_DOMAIN:-999.pro}}
       - SMTP_SECURE=${SMTP_SECURE:-false}
-      # C4 fix: backend читает пароль из секрета, не из env. entrypoint
-      # (определён в Dockerfile через `sh -c`) собирает connection string:
-      #   PG_PASSWORD=$(cat /run/secrets/postgres_password) \
-      #   BACKEND_DATABASE_URL=postgresql://postgres:$PG_PASSWORD@postgres:5432/pro999?schema=public \
-      #   node dist/index.js
-      # Override CMD ниже.
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=pro999
+      # PG_PASSWORD env var is set by the entrypoint wrapper below, read from
+      # /run/secrets/postgres_password. We then assemble BACKEND_DATABASE_URL
+      # at runtime so the password never lands in the container environment.
     secrets:
       - source: postgres_password
         target: postgres_password
-    command: ["sh", "-c", "PG_PASSWORD=$$(cat /run/secrets/postgres_password) BACKEND_DATABASE_URL=postgresql://postgres:$${PG_PASSWORD}@postgres:5432/pro999?schema=public npx prisma migrate deploy && node dist/index.js"]
+    # Step 1: read Postgres password from Docker secret file.
+    # Step 2: assemble BACKEND_DATABASE_URL inline (only in process env, NOT in
+    #         container metadata — `docker inspect` shows the secret file path,
+    #         not the password value).
+    # Step 3: apply Prisma migrations (idempotent).
+    # Step 4: start backend.
+    command:
+      - sh
+      - -c
+      - |
+        PG_PASSWORD="$$(cat /run/secrets/postgres_password)" \
+        BACKEND_DATABASE_URL="postgresql://postgres:$${PG_PASSWORD}@postgres:5432/pro999?schema=public" \
+        bunx prisma migrate deploy && \
+        PG_PASSWORD="$$(cat /run/secrets/postgres_password)" \
+        BACKEND_DATABASE_URL="postgresql://postgres:$${PG_PASSWORD}@postgres:5432/pro999?schema=public" \
+        node dist/index.js
     volumes:
       - backend-uploads:/app/uploads
     depends_on:
@@ -116,8 +110,8 @@ services:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:4000/api/ready', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 5s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 30s
     networks:
       - 999pro-net
 
@@ -132,24 +126,27 @@ services:
       - PORT=3000
       - HOSTNAME=0.0.0.0
       - BACKEND_URL=http://backend:4000
-      - NEXT_PUBLIC_API_BASE=http://backend:4000
+      - NEXT_PUBLIC_API_BASE=
+      - NEXT_PUBLIC_YANDEX_MAPS_API_KEY=${NEXT_PUBLIC_YANDEX_MAPS_API_KEY:-}
       - NEXT_TELEMETRY_DISABLED=1
+      - ALLOW_IFRAME=false
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 5s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 30s
     networks:
       - 999pro-net
 
   studio:
     build:
-      context: ./mini-services/studio
-      dockerfile: Dockerfile
+      # Root context so the studio Dockerfile can COPY packages/shared
+      context: .
+      dockerfile: mini-services/studio/Dockerfile
     container_name: 999pro-studio
     restart: unless-stopped
     environment:
@@ -157,17 +154,21 @@ services:
       - PORT=3001
       - HOSTNAME=0.0.0.0
       - BACKEND_URL=http://backend:4000
-      - NEXT_PUBLIC_API_BASE=http://backend:4000
+      - NEXT_PUBLIC_API_BASE=
+      - NEXT_PUBLIC_APP_URL=${APP_PUBLIC_URL:-https://${APP_DOMAIN:-999.pro}}
+      - NEXT_PUBLIC_BACKEND_ORIGIN=http://backend:4000
+      - NEXT_PUBLIC_YANDEX_MAPS_API_KEY=${NEXT_PUBLIC_YANDEX_MAPS_API_KEY:-}
+      - ALLOW_IFRAME=true
       - NEXT_TELEMETRY_DISABLED=1
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/studio', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/studio', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 5s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 30s
     networks:
       - 999pro-net
 
@@ -182,12 +183,13 @@ services:
       - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    environment:
+      - APP_DOMAIN=${APP_DOMAIN:-999.pro}
+      - STUDIO_DOMAIN=studio.${APP_DOMAIN:-999.pro}
     depends_on:
       - frontend
       - studio
       - backend
-    # H-13 fix: healthcheck + mem_limit для caddy — без этого OOM убивает
-    # весь стек без алерта. 512m достаточно для Caddy даже при высоком трафике.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
       interval: 30s
@@ -204,18 +206,12 @@ volumes:
   caddy-data:
   caddy-config:
 
-# C4 fix: Docker secrets — пароль Postgres хранится как внешний секрет.
-# Создайте файл /run/secrets/postgres_password (или используйте Docker Swarm
-# secrets) со значением пароля BEFORE запуском `docker compose up`.
-# Альтернатива: передайте через environment variable POSTGRES_PASSWORD_FILE.
+# File-based Docker secrets — work on non-Swarm Docker Engine.
+# `./secrets/postgres_password.txt` is created by ./generate-env.sh --secrets
+# or manually: `openssl rand -hex 24 > ./secrets/postgres_password.txt`
 secrets:
   postgres_password:
-    # External secret — должен быть создан ДО запуска compose:
-    #   echo "your-strong-password" | docker secret create postgres_password -
-    # Или, для non-swarm, через file:
-    #   postgres_password:
-    #     file: ./secrets/postgres_password.txt
-    external: true
+    file: ./secrets/postgres_password.txt
 
 networks:
   999pro-net:

@@ -1,4 +1,6 @@
 # .dockerignore for 999 PRO backend
+# Build context = ./mini-services/backend
+
 node_modules
 dist
 .git

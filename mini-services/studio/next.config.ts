@@ -16,6 +16,12 @@ const nextConfig: NextConfig = {
   basePath: "/studio",
   assetPrefix: "/studio/",
   skipTrailingSlashRedirect: true,
+  // v25.0-audit-fix: silence "multiple lockfiles" warning when building inside
+  // a monorepo. Studio's bun.lock + root's bun.lock both exist by design
+  // (root builds the frontend, studio builds the admin panel — each as an
+  // independent service with its own deps). Point turbopack.root at the
+  // studio directory so it doesn't get confused by the parent lockfile.
+  turbopack: { root: __dirname },
   // v24.6-audit: Studio has accumulated pre-existing TS errors in managers
   // (useConfirmDialog API drift, missing UI exports, etc.). Dev mode ignores
   // them, but `next build` fails. We temporarily skip type check to ship a
