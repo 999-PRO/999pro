@@ -1,0 +1,143 @@
+# ============================================================================
+# 999 PRO — Production Caddyfile
+# v24.6-audit (S-CRIT-2 / C3 fix): was missing — docker-compose.prod.yml:182
+# mounted this file but it didn't exist, so the caddy container would refuse
+# to start with "Error: loading config: open /etc/caddy/Caddyfile: no such file".
+#
+# This Caddyfile assumes:
+#   - Frontend container is on `frontend:3000` (docker-compose network)
+#   - Backend container is on `backend:4000`
+#   - Studio container is on `studio:3001`
+#   - Operator sets the domain via the APP_DOMAIN env var
+#     (e.g. APP_DOMAIN=999.pro docker compose up)
+#   - Caddy auto-provisions Let's Encrypt TLS certs for the domain
+#
+# To run on a bare VPS without docker-compose, replace the upstream hostnames
+# with `localhost:PORT` and run `caddy run --config Caddyfile.prod` as root.
+# ============================================================================
+
+{
+	# Global options
+	email admin@{$APP_DOMAIN:999.pro}
+	# Persist Let's Encrypt account + certs across container restarts
+	storage file_system /data/caddy
+	# Local admin API (handy for `caddy reload`) — bind to localhost only
+	admin localhost:2019
+	# Wait for upstreams to be reachable before starting (gives healthy
+	# container dependency ordering).
+	# 30s grace period — frontend / studio take ~10-15s to start.
+}
+
+# ============================================================================
+# Main app (frontend)
+# ============================================================================
+{$APP_DOMAIN:999.pro} {
+	encode zstd gzip
+
+	# Security headers (mirror next.config.ts dev headers + add HSTS)
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Permissions-Policy — same as next.config.ts
+		Permissions-Policy "camera=(self), microphone=(self), geolocation=(self), fullscreen=(self), accelerometer=(), autoplay=(self), clipboard-write=(self), encrypted-media=(self), gyroscope=(), magnetometer=(), midi=(), payment=(), picture-in-picture=(self), publickey-credentials-get=(), screen-wake-lock=(self), sync-xhr=(self), usb=(), web-share=(self)"
+		# CSP — same as next.config.ts prod
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://api-maps.yandex.ru https://yastatic.net; style-src 'self' 'unsafe-inline' https://api-maps.yandex.ru; img-src 'self' data: blob: https: http:; media-src 'self' blob: https:; connect-src 'self' wss: https: https://api-maps.yandex.ru https://geocode-maps.yandex.ru https://*.maps.yandex.net; font-src 'self' data:; object-src 'none'; frame-src 'self' https://kodikplayer.com https://*.kodikplayer.com https://kodikapi.com https://*.kodikapi.com https://tuser.online https://*.tuser.online https://*.newplayjj.com https://newplayjj.com https://militorys.net https://*.militorys.net https://videoapi.myvi.ru https://*.myvi.ru https://hdgo.cc https://*.hdgo.cc https://hdvb.online https://*.hdvb.online https://voidboost.cc https://*.voidboost.cc https://alloha.tv https://*.alloha.tv https://videocdn.tv https://*.videocdn.tv https://ortified.ws https://*.ortified.ws https://cdnvideohub.com https://*.cdnvideohub.com https://interkh.com https://*.interkh.com https://vibio.tv https://*.vibio.tv; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+		# Don't leak Caddy version
+		-Server
+	}
+
+	# Service Worker must NEVER be cached by the browser (stale SW = stuck users)
+	@sw path /sw.js
+	handle @sw {
+		header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		header Service-Worker-Allowed "/"
+		reverse_proxy frontend:3000
+	}
+
+	@manifest path /manifest.webmanifest
+	handle @manifest {
+		header Cache-Control "no-store, no-cache, must-revalidate"
+		reverse_proxy frontend:3000
+	}
+
+	# /api/* → backend
+	@api path /api/*
+	handle @api {
+		reverse_proxy backend:4000
+	}
+
+	# /uploads/* → backend (served statically by Express)
+	@uploads path /uploads/*
+	handle @uploads {
+		reverse_proxy backend:4000
+	}
+
+	# /socket.io/* → backend (WebSocket + long-poll)
+	@socketio path /socket.io /socket.io/*
+	handle @socketio {
+		# Caddy automatically handles WebSocket upgrade by default.
+		reverse_proxy backend:4000
+	}
+
+	# /studio/* → studio admin panel
+	@studio path /studio /studio/*
+	handle @studio {
+		reverse_proxy studio:3001
+	}
+
+	# Everything else → frontend
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
+
+# ============================================================================
+# Studio — separate subdomain (optional; can be removed if /studio proxy above
+# is sufficient). Activate by setting STUDIO_DOMAIN env var.
+# ============================================================================
+{$STUDIO_DOMAIN:studio.999.pro} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Studio: stricter Permissions-Policy — admins don't need camera/mic/geo
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), fullscreen=(self), clipboard-write=(self), accelerometer=(), autoplay=(), encrypted-media=(), gyroscope=(), magnetometer=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(self), usb=(), web-share=(self), interest-cohort=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://api-maps.yandex.ru https://yastatic.net; style-src 'self' 'unsafe-inline' https://api-maps.yandex.ru; img-src 'self' data: blob: https: http:; media-src 'self' blob: https:; connect-src 'self' ws: wss: https: http: https://api-maps.yandex.ru https://geocode-maps.yandex.ru https://*.maps.yandex.net; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+		-Server
+	}
+
+	# /api/* /uploads/* /socket.io/* → backend (Studio needs full backend access)
+	@api path /api/*
+	handle @api {
+		reverse_proxy backend:4000
+	}
+
+	@uploads path /uploads/*
+	handle @uploads {
+		reverse_proxy backend:4000
+	}
+
+	@socketio path /socket.io /socket.io/*
+	handle @socketio {
+		reverse_proxy backend:4000
+	}
+
+	# Studio SW — no-cache
+	@sw path /studio/sw.js
+	handle @sw {
+		header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy studio:3001
+	}
+
+	# Everything else → studio
+	handle {
+		reverse_proxy studio:3001
+	}
+}

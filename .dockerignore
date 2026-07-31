@@ -1,0 +1,21 @@
+# .dockerignore for 999 PRO frontend
+# Wave 2 (C-DEPLOY-001): exclude dev artifacts from Docker build context
+
+node_modules
+.next
+.git
+.gitignore
+*.md
+logs
+*.log
+.env
+.env.*
+!.env.example
+Dockerfile
+docker-compose*.yml
+.dockerignore
+.vscode
+.idea
+.DS_Store
+coverage
+*.tsbuildinfo

@@ -1,0 +1,1785 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* v24.5: color-scheme prevents Android Chrome's "Auto Dark Mode" from
+   incorrectly inverting colors (which caused the greenish/discolored
+   rendering on Android). By explicitly declaring our color scheme,
+   Chrome knows NOT to apply its auto-dark algorithm. */
+:root {
+  color-scheme: light dark;
+}
+.dark {
+  color-scheme: dark;
+}
+
+@custom-variant dark (&:is(.dark *));
+@custom-variant neon (&:is(.neon *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 12px);
+  --radius-3xl: calc(var(--radius) + 24px);
+}
+
+:root {
+  /* 999 — Три девятки — light theme: airy white surfaces + sky-blue gradients */
+  --radius: 1rem;
+  /* Mobile header + bottom nav theme-aware vars */
+  --mobile-header-bg: linear-gradient(135deg, rgba(255,255,255,0.92) 0%, rgba(248,250,252,0.90) 50%, rgba(241,245,249,0.88) 100%);
+  --mobile-nav-bg: linear-gradient(135deg, rgba(255,255,255,0.92) 0%, rgba(248,250,252,0.90) 50%, rgba(241,245,249,0.88) 100%);
+  --mobile-bar-text: #1e293b;
+  --mobile-bar-text-muted: #64748b;
+  --mobile-bar-pill-active: rgba(59,130,246,0.12);
+  --mobile-bar-shadow: 0 12px 32px -10px rgba(15,23,42,0.15), 0 0 0 1px rgba(0,0,0,0.04) inset;
+  --mobile-bar-blur: blur(24px) saturate(180%);
+
+  /* v9-premium-v6: soft cool light-gray background — the exact tone that
+     previously appeared between cards. Cards stay pure white (#fff) so they
+     float naturally over this matte surface. No more flat pure-white app. */
+  --background: oklch(0.965 0.008 240); /* soft light-gray with cool tint */
+  --foreground: oklch(0.18 0.02 250);
+
+  --card: oklch(1 0 0); /* pure white — cards float over the soft background */
+  --card-foreground: oklch(0.18 0.02 250);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 250);
+
+  /* Primary: vivid sky blue */
+  --primary: oklch(0.62 0.18 245);
+  --primary-foreground: oklch(0.99 0.01 240);
+
+  --secondary: oklch(0.96 0.01 240);
+  --secondary-foreground: oklch(0.25 0.03 250);
+
+  --muted: oklch(0.96 0.01 240);
+  --muted-foreground: oklch(0.5 0.02 250);
+
+  --accent: oklch(0.94 0.03 240);
+  --accent-foreground: oklch(0.25 0.05 250);
+
+  --destructive: oklch(0.6 0.22 27);
+  --border: oklch(0.92 0.01 240);
+  --input: oklch(0.94 0.01 240);
+  --ring: oklch(0.62 0.18 245);
+
+  --chart-1: oklch(0.62 0.18 245);
+  --chart-2: oklch(0.7 0.15 200);
+  --chart-3: oklch(0.65 0.18 280);
+  --chart-4: oklch(0.78 0.18 90);
+  --chart-5: oklch(0.7 0.2 350);
+
+  --sidebar: oklch(0.965 0.008 240); /* matches app background — soft light-gray */
+  --sidebar-foreground: oklch(0.18 0.02 250);
+  --sidebar-primary: oklch(0.62 0.18 245);
+  --sidebar-primary-foreground: oklch(0.99 0.01 240);
+  --sidebar-accent: oklch(0.94 0.03 240);
+  --sidebar-accent-foreground: oklch(0.25 0.05 250);
+  --sidebar-border: oklch(0.92 0.01 240);
+  --sidebar-ring: oklch(0.62 0.18 245);
+
+  /* Brand gradient used for hero / banner / chips */
+  --gradient-brand: linear-gradient(135deg, #38bdf8 0%, #2563eb 50%, #7c3aed 100%);
+  --gradient-soft: linear-gradient(135deg, rgba(56,189,248,0.18) 0%, rgba(124,58,237,0.12) 100%);
+}
+
+.dark {
+  --background: oklch(0.16 0.02 250);
+  --foreground: oklch(0.97 0.01 240);
+
+  /* Mobile header + bottom nav — dark theme overrides */
+  --mobile-header-bg: linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.94) 50%, rgba(37,99,235,0.92) 100%);
+  --mobile-nav-bg: linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.94) 50%, rgba(37,99,235,0.92) 100%);
+  --mobile-bar-text: #ffffff;
+  --mobile-bar-text-muted: rgba(255,255,255,0.7);
+  --mobile-bar-pill-active: rgba(255,255,255,0.25);
+  --mobile-bar-shadow: 0 12px 32px -10px rgba(15,23,42,0.55), 0 0 0 1px rgba(255,255,255,0.10) inset;
+
+  --card: oklch(0.21 0.025 250);
+  --card-foreground: oklch(0.97 0.01 240);
+
+  --popover: oklch(0.21 0.025 250);
+  --popover-foreground: oklch(0.97 0.01 240);
+
+  --primary: oklch(0.72 0.16 240);
+  --primary-foreground: oklch(0.16 0.02 250);
+
+  --secondary: oklch(0.27 0.025 250);
+  --secondary-foreground: oklch(0.97 0.01 240);
+
+  --muted: oklch(0.25 0.02 250);
+  --muted-foreground: oklch(0.7 0.02 250);
+
+  --accent: oklch(0.3 0.04 245);
+  --accent-foreground: oklch(0.97 0.01 240);
+
+  --destructive: oklch(0.7 0.2 22);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.72 0.16 240);
+
+  --chart-1: oklch(0.72 0.16 240);
+  --chart-2: oklch(0.7 0.15 200);
+  --chart-3: oklch(0.7 0.18 280);
+  --chart-4: oklch(0.78 0.18 90);
+  --chart-5: oklch(0.7 0.2 350);
+
+  --sidebar: oklch(0.18 0.02 250);
+  --sidebar-foreground: oklch(0.97 0.01 240);
+  --sidebar-primary: oklch(0.72 0.16 240);
+  --sidebar-primary-foreground: oklch(0.16 0.02 250);
+  --sidebar-accent: oklch(0.27 0.025 250);
+  --sidebar-accent-foreground: oklch(0.97 0.01 240);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.72 0.16 240);
+
+  --gradient-brand: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 50%, #8b5cf6 100%);
+  --gradient-soft: linear-gradient(135deg, rgba(14,165,233,0.22) 0%, rgba(139,92,246,0.18) 100%);
+}
+
+/* ============================================================================
+   NEON GLASS THEME — третья тема оформления
+   ----------------------------------------------------------------------------
+   Глубокий тёмный фон с мягкими фиолетово-синими неоновыми свечениями.
+   Стиль вдохновлён анимацией голосового поиска.
+   ============================================================================ */
+.neon {
+  --background: oklch(0.08 0.02 275);
+  --foreground: oklch(0.97 0.01 240);
+
+  --mobile-header-bg: linear-gradient(135deg, rgba(10,8,25,0.97) 0%, rgba(20,15,45,0.95) 50%, rgba(99,102,241,0.25) 100%);
+  --mobile-nav-bg: linear-gradient(135deg, rgba(10,8,25,0.97) 0%, rgba(20,15,45,0.95) 50%, rgba(139,92,246,0.25) 100%);
+  --mobile-bar-text: #ffffff;
+  --mobile-bar-text-muted: rgba(255,255,255,0.7);
+  --mobile-bar-pill-active: rgba(139,92,246,0.3);
+  --mobile-bar-shadow: 0 12px 32px -10px rgba(99,102,241,0.3), 0 0 0 1px rgba(139,92,246,0.15) inset;
+  --mobile-bar-blur: blur(24px) saturate(180%);
+
+  --card: oklch(0.12 0.025 275);
+  --card-foreground: oklch(0.97 0.01 240);
+
+  --popover: oklch(0.12 0.025 275);
+  --popover-foreground: oklch(0.97 0.01 240);
+
+  --primary: oklch(0.65 0.2 285);
+  --primary-foreground: oklch(0.08 0.02 275);
+
+  --secondary: oklch(0.16 0.03 275);
+  --secondary-foreground: oklch(0.97 0.01 240);
+
+  --muted: oklch(0.15 0.025 275);
+  --muted-foreground: oklch(0.65 0.03 275);
+
+  --accent: oklch(0.2 0.05 285);
+  --accent-foreground: oklch(0.97 0.01 240);
+
+  --destructive: oklch(0.7 0.2 22);
+  --border: oklch(0.5 0.05 285 / 15%);
+  --input: oklch(0.5 0.05 285 / 15%);
+  --ring: oklch(0.65 0.2 285);
+
+  --chart-1: oklch(0.65 0.2 285);
+  --chart-2: oklch(0.65 0.18 240);
+  --chart-3: oklch(0.7 0.2 350);
+  --chart-4: oklch(0.7 0.18 200);
+  --chart-5: oklch(0.7 0.2 320);
+
+  --sidebar: oklch(0.1 0.02 275);
+  --sidebar-foreground: oklch(0.97 0.01 240);
+  --sidebar-primary: oklch(0.65 0.2 285);
+  --sidebar-primary-foreground: oklch(0.08 0.02 275);
+  --sidebar-accent: oklch(0.16 0.03 275);
+  --sidebar-accent-foreground: oklch(0.97 0.01 240);
+  --sidebar-border: oklch(0.5 0.05 285 / 15%);
+  --sidebar-ring: oklch(0.65 0.2 285);
+
+  --gradient-brand: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+  --gradient-soft: linear-gradient(135deg, rgba(99,102,241,0.2) 0%, rgba(139,92,246,0.15) 50%, rgba(236,72,153,0.1) 100%);
+}
+
+/* Neon theme — glass surfaces with purple/blue glow */
+.neon .glass {
+  background: rgba(20, 15, 40, 0.6);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  box-shadow: 0 4px 24px -4px rgba(99, 102, 241, 0.1), 0 0 0 1px rgba(139, 92, 246, 0.05) inset;
+}
+
+.neon .glass-strong {
+  background: rgba(15, 12, 35, 0.75);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  box-shadow: 0 8px 32px -4px rgba(99, 102, 241, 0.15);
+}
+
+.neon .glass-message-outgoing {
+  background: linear-gradient(135deg, rgba(99,102,241,0.25) 0%, rgba(139,92,246,0.2) 100%);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+}
+
+.neon .glass-message-incoming {
+  background: rgba(25, 20, 50, 0.6);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(139, 92, 246, 0.12);
+}
+
+.neon .premium-rail {
+  background: linear-gradient(180deg, #0a0815 0%, #0f0c20 100%);
+  border-right: 1px solid rgba(139, 92, 246, 0.1);
+}
+
+.neon .premium-rail-item {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.neon .premium-rail-active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.15) 100%);
+  color: #a855f7;
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.2);
+}
+
+.neon body,
+.neon html {
+  background: #08060f;
+}
+
+/* Neon ambient glow on background */
+.neon .app-main::before {
+  content: '';
+  position: fixed;
+  top: -20%;
+  left: -10%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.08) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.neon .app-main::after {
+  content: '';
+  position: fixed;
+  bottom: -20%;
+  right: -10%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Neon glow on brand buttons */
+.neon .gradient-brand {
+  box-shadow: 0 4px 16px -2px rgba(99, 102, 241, 0.4);
+}
+
+.neon .shadow-glow {
+  box-shadow: 0 4px 24px -4px rgba(99, 102, 241, 0.5);
+}
+
+/* Neon theme — sidebar brand text */
+.neon .premium-brand-text {
+  color: #ffffff;
+  text-shadow: 0 2px 16px rgba(139, 92, 246, 0.4);
+}
+.neon .premium-brand-text span:first-child {
+  color: #ffffff;
+}
+.neon .premium-brand-text span:last-child {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Neon theme — sidebar background */
+.neon .premium-rail {
+  background: linear-gradient(180deg, #0a0815 0%, #0f0c20 100%);
+  border-right: 1px solid rgba(139, 92, 246, 0.1);
+  box-shadow: 0 0 60px -20px rgba(99, 102, 241, 0.15);
+}
+
+/* Neon theme — sidebar items */
+.neon .premium-rail-item {
+  color: rgba(255, 255, 255, 0.5);
+}
+.neon .premium-rail-item:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(99, 102, 241, 0.12);
+}
+
+/* Neon theme — sidebar active item */
+.neon .premium-rail-active {
+  color: #a855f7;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.15) 100%);
+  box-shadow:
+    0 4px 16px -4px rgba(139, 92, 246, 0.4),
+    0 0 0 1px rgba(139, 92, 246, 0.2) inset;
+}
+.neon .premium-rail-active::before {
+  background: linear-gradient(180deg, #6366f1, #8b5cf6, #ec4899);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.6);
+}
+
+/* Neon theme — tooltip */
+.neon .premium-tooltip {
+  background: rgba(20, 15, 40, 0.95);
+  color: #ffffff;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Neon theme — bottom nav decorative blobs */
+.neon .mobile-nav-bar .bg-white\/20 {
+  background: rgba(139, 92, 246, 0.15) !important;
+}
+
+/* Neon theme — mobile header text */
+.neon .mobile-header-bar {
+  color: #ffffff;
+}
+.neon .mobile-header-bar input {
+  color: #ffffff;
+}
+.neon .mobile-header-bar input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Neon theme — avatar fallback */
+.neon .premium-brand-mark {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%) !important;
+  box-shadow:
+    0 8px 24px -8px rgba(139, 92, 246, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.15) inset !important;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html, body {
+    @apply bg-background text-foreground;
+    -webkit-tap-highlight-color: transparent;
+    overflow-x: clip;
+    max-width: 100vw;
+  }
+  body {
+    font-feature-settings: "ss01", "cv11";
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+    -webkit-overflow-scrolling: touch;
+    /* v10-native: `manipulation` disables double-tap-to-zoom but allows
+       pinch-zoom (per W3C spec). v11-zoom-fix: switched to `pan-x pan-y`
+       which allows scrolling but blocks BOTH double-tap AND pinch-zoom.
+       Zoom-allowed zones (image lightbox, stories viewer) override this
+       locally via `[data-zoom-allowed] { touch-action: pinch-zoom }`. */
+    touch-action: pan-x pan-y;
+  }
+
+  /* v11-zoom-fix: `pan-x pan-y` blocks pinch-zoom at the CSS level.
+     This is the key change from `manipulation` (which ALLOWED pinch).
+     Children with [data-zoom-allowed] re-enable pinch via their own
+     `touch-action: pinch-zoom` rule below. */
+  html {
+    touch-action: pan-x pan-y;
+    -ms-touch-action: pan-x pan-y;
+  }
+
+  /* v11-zoom-fix: zoom-allowed zones — image lightbox, stories viewer.
+     `pinch-zoom` re-enables native pinch for these containers. The
+     lightbox also sets `touch-action: none` inline and handles pinch via
+     JS, but this rule ensures the global touchmove preventDefault in
+     layout.tsx doesn't block its 2-finger gestures. */
+  [data-zoom-allowed] {
+    touch-action: pinch-zoom;
+  }
+
+  /* v10-native: contain overscroll on all scrollable list containers so
+     scrolling inside a chat/feed/catalog doesn't trigger the browser's
+     pull-to-refresh or "bounce" effect at the document level. This makes
+     nested scroll areas feel like native scroll views (iOS UIScrollView). */
+  [data-scroll-lock-ignore],
+  .overflow-y-auto,
+  .overflow-auto {
+    overscroll-behavior: contain;
+  }
+
+  /* ========================================================================
+     DISABLE TEXT SELECTION — native app feel.
+     The app should feel like a native mobile application: text in
+     buttons, cards, labels, headers, badges, navigation is NOT
+     selectable. The only exception is actual user-generated content
+     that needs to be copyable — chat messages and reply previews,
+     comment text, and form input fields. Those opt back in via the
+     .selectable utility class.
+     ======================================================================== */
+  html, body {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none; /* iOS long-press menu off */
+  }
+  /* Whitelist: text inputs + textareas must remain selectable. */
+  input, textarea {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+  /* Whitelist: chat messages + comments + reply previews are
+     explicitly marked .selectable so users can copy conversation text. */
+  .selectable,
+  .selectable * {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+  /* v9-audit-fix: WCAG 1.4.4 — main content (article text, product
+     titles/prices/descriptions, order numbers, addresses, error messages)
+     must remain selectable so users can copy-paste into support chats
+     and translators. We restrict `user-select: none` to interactive
+     chrome (nav, buttons, badges, headers, cards-as-buttons). */
+  main p, main li, main blockquote, main dd, main dt,
+  article p, article li, article blockquote,
+  [data-selectable="true"] {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
+  img, video, svg, canvas {
+    max-width: 100%;
+    height: auto;
+  }
+  /* Custom scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+  }
+  /* Hide scrollbars on edge-to-edge scrollers */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* custom-scroll — thin, dark-themed scrollbar for overlay panels (dark bg) */
+  .custom-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+  }
+  .custom-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+  .custom-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    /* Enable touch scrolling with momentum on iOS */
+    -webkit-overflow-scrolling: touch;
+    /* Make sure horizontal scroll works on touch */
+    overscroll-behavior: contain;
+  }
+
+  /* Main content has NO top padding on mobile — it scrolls UNDER the fixed
+     translucent glass header (Telegram-style). The header is glassy so
+     content shows through it as you scroll. Each page's first section
+     adds its own top padding so its content isn't hidden behind the header
+     on first paint. */
+  .app-main {
+    padding-top: 0;
+  }
+
+  /* Helper class: page's first section adds this so its content starts
+     below the fixed glass header on first paint. As you scroll, content
+     slides under the translucent header. NOTE: these are also in
+     @layer utilities below to ensure they win over Tailwind py-* classes. */
+}
+
+@layer utilities {
+  /* page-top-padding — moved to utilities layer so it WINS over Tailwind's
+     py-* utilities (which are also in utilities layer, but our !important
+     guarantees the safe-area padding is applied). */
+  .page-top-padding {
+    padding-top: calc(env(safe-area-inset-top) + 4.5rem) !important;
+  }
+
+  .safe-area-top {
+    padding-top: max(env(safe-area-inset-top), 12px) !important;
+  }
+  .safe-area-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 8px) !important;
+  }
+
+  @media (min-width: 768px) {
+    .page-top-padding {
+      padding-top: 0 !important;
+    }
+  }
+  .glass {
+    background: color-mix(in oklch, var(--card) 65%, transparent);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+  }
+  .glass-strong {
+    background: color-mix(in oklch, var(--card) 85%, transparent);
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+  }
+
+  /* ========================================================================
+     PREMIUM GLASS CHAT — floating cards, glass messages, input island
+     ======================================================================== */
+
+  /* Soft, modern chat list card — no shadow, calm pastel gradient,
+     gentle border, subtle hover lift. Narrower padding than the old
+     glass-chat-card so the list reads cleaner. */
+  .chat-card-soft {
+    position: relative;
+    border-radius: 20px;
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+                border-color 0.25s ease,
+                background 0.25s ease;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .chat-card-soft:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.32);
+  }
+  .chat-card-soft:active {
+    transform: translateY(0) scale(0.99);
+  }
+
+  /* === Pastel chat card — мягкая стеклянная карточка с цветным pastel фоном ===
+     Фон + box-shadow + borderColor задаются inline через palette (см.
+     getChatCardPalette в gradients.ts). Здесь — только общие правила:
+     border, border-radius, transition, hover-lift, active-press. */
+  .chat-card-pastel {
+    position: relative;
+    border-radius: 22px;
+    border: 1px solid transparent;
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
+                box-shadow 0.32s ease,
+                border-color 0.25s ease;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .chat-card-pastel:hover {
+    transform: translateY(-2px);
+  }
+  .chat-card-pastel:active {
+    transform: translateY(0) scale(0.985);
+  }
+  /* Dark theme — slightly stronger glass tint for readability */
+  .dark .chat-card-pastel {
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+  }
+
+  /* Floating glass card for chat list — vivid gradient + glassmorphism
+     (kept for backwards compat; chat list now uses .chat-card-soft) */
+  .glass-chat-card {
+    position: relative;
+    border-radius: 28px;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.25);
+    box-shadow:
+      0 10px 40px -8px rgba(0,0,0,0.20),
+      0 4px 12px -2px rgba(0,0,0,0.10),
+      inset 0 1px 0 0 rgba(255,255,255,0.30),
+      inset 0 -1px 0 0 rgba(0,0,0,0.05);
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+                box-shadow 0.4s ease,
+                border-color 0.3s ease;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .glass-chat-card:hover {
+    transform: translateY(-4px) scale(1.02);
+    box-shadow:
+      0 20px 60px -8px rgba(0,0,0,0.28),
+      0 8px 20px -2px rgba(0,0,0,0.12),
+      inset 0 1px 0 0 rgba(255,255,255,0.40),
+      inset 0 -1px 0 0 rgba(0,0,0,0.05);
+  }
+  .glass-chat-card:active {
+    transform: translateY(-1px) scale(0.99);
+  }
+  /* Glass overlay on top of vivid gradient — provides the frosted look */
+  .glass-chat-card-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.10);
+    pointer-events: none;
+  }
+
+  /* Glass message bubble — frosted glass, адаптируется под тему */
+  .glass-message {
+    position: relative;
+    border-radius: 14px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-touch-callout: none;
+    transition: transform 0.2s ease;
+  }
+  .glass-message:active {
+    transform: scale(0.98);
+  }
+
+  /* === OUTGOING — голубой glass, адаптируется под тему === */
+  .glass-message-outgoing {
+    color: #ffffff;
+    background: rgba(59, 130, 246, 0.65);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+  }
+  .dark .glass-message-outgoing {
+    background: rgba(59, 130, 246, 0.45);
+    border: 1px solid rgba(96, 165, 250, 0.25);
+  }
+  .glass-message-outgoing .text-foreground,
+  .glass-message-outgoing .text-muted-foreground {
+    color: #ffffff !important;
+  }
+  .glass-message-outgoing a {
+    color: #ffffff !important;
+    text-decoration: underline;
+    text-decoration-color: rgba(255,255,255,0.6);
+  }
+  .glass-message-outgoing .opacity-70,
+  .glass-message-outgoing .opacity-60,
+  .glass-message-outgoing .opacity-80 {
+    color: rgba(255,255,255,0.85);
+  }
+
+  /* === INCOMING — тёплый коричневый glass, адаптируется под тему === */
+  .glass-message-incoming {
+    color: var(--foreground);
+    background: rgba(217, 119, 6, 0.12);
+    border: 1px solid rgba(217, 119, 6, 0.15);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .dark .glass-message-incoming {
+    color: #ffffff;
+    background: rgba(217, 119, 6, 0.18);
+    border: 1px solid rgba(217, 119, 6, 0.2);
+  }
+
+  /* === Glass chat card — для списка чатов, адаптируется под тему ===
+     Светлая тема: полупрозрачный белый.
+     Тёмная тема: полупрозрачный тёмный. */
+  .glass-chat-card {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 16px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .glass-chat-card {
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.06);
+  }
+  .dark .glass-chat-card {
+    background: rgba(30, 30, 46, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.3);
+  }
+  .glass-chat-card:hover {
+    transform: scale(1.01);
+  }
+  .glass-chat-card-active {
+    background: rgba(96, 165, 250, 0.15) !important;
+    border-color: rgba(96, 165, 250, 0.3) !important;
+  }
+  .dark .glass-chat-card-active {
+    background: rgba(96, 165, 250, 0.2) !important;
+    border-color: rgba(96, 165, 250, 0.35) !important;
+  }
+
+  /* === Support card variant — голубой accent === */
+  .glass-chat-card-support {
+    background: rgba(96, 165, 250, 0.12);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+  }
+  .dark .glass-chat-card-support {
+    background: rgba(96, 165, 250, 0.15);
+    border: 1px solid rgba(96, 165, 250, 0.25);
+  }
+
+  /* Floating input island — glass, адаптируется под тему */
+  .glass-input-island {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.6);
+    transition: border-color 0.3s ease;
+    position: relative;
+  }
+  .dark .glass-input-island {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(30, 30, 46, 0.5);
+  }
+  .glass-input-island:focus-within {
+    border-color: rgba(96, 165, 250, 0.4);
+  }
+
+  /* Glass context menu (legacy — оставлен для обратной совместимости) */
+  .glass-context-menu {
+    backdrop-filter: blur(32px) saturate(180%);
+    -webkit-backdrop-filter: blur(32px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.20);
+    border-radius: 24px;
+    background: rgba(255,255,255,0.12);
+    box-shadow:
+      0 20px 60px -12px rgba(0,0,0,0.30),
+      0 8px 24px -4px rgba(0,0,0,0.15),
+      inset 0 1px 0 0 rgba(255,255,255,0.25);
+  }
+  .glass-context-item {
+    transition: background 0.2s ease, transform 0.15s ease;
+    border-radius: 14px;
+  }
+  .glass-context-item:hover {
+    background: rgba(255,255,255,0.15);
+  }
+  .glass-context-item:active {
+    transform: scale(0.96);
+  }
+
+  /* ─── Premium context menu (v16.8 final) ───
+     Используется в MessageContextMenu. Theme-aware: на light-теме фон
+     белый с прозрачностью, на dark-теме — тёмный с прозрачностью.
+     Glass effect + premium shadow + subtle border. */
+
+  .premium-context-menu {
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+    border-radius: 22px;
+    background: color-mix(in oklch, var(--card) 92%, transparent);
+    box-shadow:
+      0 24px 64px -16px rgba(0,0,0,0.40),
+      0 12px 32px -8px rgba(0,0,0,0.20),
+      inset 0 1px 0 0 color-mix(in oklch, var(--foreground) 8%, transparent);
+  }
+
+  /* Mobile bottom sheet variant — больше скругление сверху, нет border */
+  .premium-context-sheet {
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    border-top-left-radius: 28px;
+    border-top-right-radius: 28px;
+    background: color-mix(in oklch, var(--card) 96%, transparent);
+    border-top: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    box-shadow:
+      0 -16px 48px -12px rgba(0,0,0,0.30),
+      0 -8px 24px -6px rgba(0,0,0,0.15);
+    /* touch-action: none — предотвращает scroll-trough на iOS */
+    touch-action: none;
+  }
+
+  /* Карточка внутри menu/sheet — glass с тонкой границей */
+  .premium-context-card {
+    background: color-mix(in oklch, var(--foreground) 4%, transparent);
+    border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+
+  /* Danger-карточка — красный tint */
+  .premium-context-card.premium-context-danger {
+    background: color-mix(in oklch, #ef4444 8%, transparent);
+    border-color: color-mix(in oklch, #ef4444 25%, transparent);
+  }
+
+  /* ─── Premium Map Picker (v16.8 final) ───
+     Полный overlay для выбора адреса доставки. Glass-эффект на всех панелях,
+     safe-area-aware (кнопка закрытия НЕ под status bar на iOS). */
+  .premium-map-overlay {
+    background: rgba(15, 23, 42, 0.96);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+
+  .premium-map-header {
+    background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.08) 0%,
+      rgba(255, 255, 255, 0.03) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    position: relative;
+    z-index: 10;
+  }
+
+  .premium-map-search {
+    background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.04) 0%,
+      rgba(255, 255, 255, 0.01) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    position: relative;
+    z-index: 9;
+  }
+
+  .premium-map-footer {
+    background: linear-gradient(0deg,
+      rgba(255, 255, 255, 0.08) 0%,
+      rgba(255, 255, 255, 0.03) 100%);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    position: relative;
+    z-index: 10;
+  }
+
+  /* Leaflet overrides removed — app uses Yandex Maps, not Leaflet */
+
+  /* ─── Message highlight pulse (v16.8 final) ───
+     Применяется к message bubble когда пользователь кликает на reply-target
+     чтобы "перейти к оригинальному сообщению". Анимация:
+       1. Мягкое свечение (box-shadow pulse) — привлекающее внимание
+       2. Лёгкий scale (1 → 1.02 → 1) — "дышащий" эффект
+       3. Brand-tinted overlay (primary color с прозрачностью)
+     Длительность: 2 секунды, 2 цикла, ease-in-out. */
+  .message-highlight-pulse {
+    animation: messageHighlightPulse 1s ease-in-out 2;
+    border-radius: 18px;
+    position: relative;
+    z-index: 5;
+    transition: transform 0.2s ease;
+  }
+
+  @keyframes messageHighlightPulse {
+    0% {
+      box-shadow:
+        0 0 0 0 color-mix(in oklch, var(--primary) 60%, transparent),
+        0 0 0 0 color-mix(in oklch, var(--primary) 40%, transparent);
+      transform: scale(1);
+      background-color: transparent;
+    }
+    25% {
+      box-shadow:
+        0 0 0 4px color-mix(in oklch, var(--primary) 35%, transparent),
+        0 0 24px 4px color-mix(in oklch, var(--primary) 25%, transparent);
+      transform: scale(1.015);
+      background-color: color-mix(in oklch, var(--primary) 10%, transparent);
+    }
+    50% {
+      box-shadow:
+        0 0 0 6px color-mix(in oklch, var(--primary) 20%, transparent),
+        0 0 32px 8px color-mix(in oklch, var(--primary) 20%, transparent);
+      transform: scale(1.025);
+      background-color: color-mix(in oklch, var(--primary) 15%, transparent);
+    }
+    75% {
+      box-shadow:
+        0 0 0 4px color-mix(in oklch, var(--primary) 25%, transparent),
+        0 0 24px 4px color-mix(in oklch, var(--primary) 15%, transparent);
+      transform: scale(1.015);
+      background-color: color-mix(in oklch, var(--primary) 8%, transparent);
+    }
+    100% {
+      box-shadow:
+        0 0 0 0 color-mix(in oklch, var(--primary) 0%, transparent),
+        0 0 0 0 color-mix(in oklch, var(--primary) 0%, transparent);
+      transform: scale(1);
+      background-color: transparent;
+    }
+  }
+
+  /* Reduced-motion users: анимация упрощается до single-pulse без scale */
+  @media (prefers-reduced-motion: reduce) {
+    .message-highlight-pulse {
+      animation: messageHighlightPulseReduced 0.6s ease-out 1;
+    }
+    @keyframes messageHighlightPulseReduced {
+      0%, 100% {
+        box-shadow: 0 0 0 0 transparent;
+        background-color: transparent;
+      }
+      50% {
+        box-shadow:
+          0 0 0 3px color-mix(in oklch, var(--primary) 40%, transparent),
+          0 0 16px 2px color-mix(in oklch, var(--primary) 20%, transparent);
+        background-color: color-mix(in oklch, var(--primary) 12%, transparent);
+      }
+    }
+  }
+
+  /* Send button — soft modern glass circle with a calm gradient.
+     No harsh glow; gentle hover lift + scale. The breathing accent
+     ring is subtle so it feels alive without being loud. */
+  .send-button-glow {
+    background: #60a5fa;
+    transition: transform 0.2s ease, filter 0.2s ease;
+    position: relative;
+  }
+  .send-button-glow:hover {
+    transform: scale(1.05);
+    filter: brightness(1.1);
+  }
+  .send-button-glow:active {
+    transform: scale(0.92);
+  }
+
+  /* Recording waveform — 4 keyframe variants so adjacent bars dance
+     out of sync, creating the "live audio" feel from the reference image. */
+  @keyframes rec-wave-0 {
+    0%   { height: 20%; }
+    50%  { height: 80%; }
+    100% { height: 40%; }
+  }
+  @keyframes rec-wave-1 {
+    0%   { height: 60%; }
+    50%  { height: 30%; }
+    100% { height: 90%; }
+  }
+  @keyframes rec-wave-2 {
+    0%   { height: 40%; }
+    50%  { height: 100%; }
+    100% { height: 50%; }
+  }
+  @keyframes rec-wave-3 {
+    0%   { height: 80%; }
+    50%  { height: 20%; }
+    100% { height: 70%; }
+  }
+
+  /* ========================================================================
+     VOICE MESSAGE WAVEFORM — bar styling
+     Heights are driven by React (audioLevel from Web Audio AnalyserNode).
+     ======================================================================== */
+  .voice-bar {
+    flex: 1;
+    min-width: 2px;
+    transform-origin: center;
+    transition: height 0.05s linear, opacity 0.2s ease;
+  }
+
+  /* ========================================================================
+     CHAT BACKGROUND — floating decorative shapes (wallpaper effect)
+     ======================================================================== */
+  @keyframes chat-bg-float {
+    0%, 100% {
+      transform: translateY(0) rotate(0deg);
+    }
+    50% {
+      transform: translateY(-20px) rotate(5deg);
+    }
+  }
+  .chat-bg-float {
+    animation: chat-bg-float 8s ease-in-out infinite;
+    will-change: transform;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chat-bg-float {
+      animation: none;
+    }
+  }
+
+  /* ========================================================================
+     ANIMATIONS — premium spring + fade + slide (60 FPS)
+     ======================================================================== */
+
+  @keyframes message-in {
+    0% { opacity: 0; transform: translateY(16px) scale(0.90); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .animate-message-in {
+    animation: message-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  @keyframes card-in {
+    0% { opacity: 0; transform: translateY(20px) scale(0.94); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .animate-card-in {
+    animation: card-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  @keyframes menu-in {
+    0% { opacity: 0; transform: scale(0.85) translateY(10px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .animate-menu-in {
+    animation: menu-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes voice-wave {
+    0%, 100% { transform: scaleY(0.3); }
+    50% { transform: scaleY(1); }
+  }
+  .animate-voice-wave {
+    animation: voice-wave 0.9s ease-in-out infinite;
+  }
+
+  @keyframes recording-ring {
+    0% { transform: scale(0.8); opacity: 0.8; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  .animate-recording-ring {
+    animation: recording-ring 1.8s ease-out infinite;
+  }
+
+  @keyframes highlight-flash {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(14,165,233,0); }
+    50% { box-shadow: 0 0 0 4px rgba(14,165,233,0.50), 0 0 32px rgba(14,165,233,0.40); }
+  }
+  .animate-highlight-flash {
+    animation: highlight-flash 1.5s ease-in-out;
+  }
+
+  @keyframes light-pulse {
+    0% { left: 0%; opacity: 0; }
+    20% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { left: 100%; opacity: 0; }
+  }
+  .animate-light-pulse {
+    animation: light-pulse 2s ease-in-out infinite;
+  }
+
+  /* Hide scrollbar but keep scrollability */
+  .scrollbar-premium {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148,163,184,0.3) transparent;
+  }
+  .scrollbar-premium::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-premium::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-premium::-webkit-scrollbar-thumb {
+    background: rgba(148,163,184,0.3);
+    border-radius: 4px;
+  }
+  .scrollbar-premium::-webkit-scrollbar-thumb:hover {
+    background: rgba(148,163,184,0.5);
+  }
+  .gradient-brand {
+    background-image: var(--gradient-brand);
+  }
+  .gradient-soft {
+    background-image: var(--gradient-soft);
+  }
+  /* v12.3: 999 CLUB module accent gradient — amber → pink → violet.
+     Used by the CLUB hero, card chips, and the bottom-nav badge glow.
+     Centralised here so rebranding the module only requires editing
+     src/modules/999-club/config.ts + this single rule. */
+  .gradient-club {
+    background-image: linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%);
+  }
+  .text-gradient-club {
+    background-image: linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .text-gradient {
+    background-image: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  /* Snap-x helpers used for stories & promo banners */
+  .snap-edge {
+    scroll-snap-type: x mandatory;
+    scroll-padding-left: 1rem;
+  }
+  .snap-edge > * {
+    scroll-snap-align: start;
+  }
+  /* Smooth horizontal scrolling without scrollbar */
+  .smooth-x {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Glow shadow for primary buttons */
+  .shadow-glow {
+    box-shadow: 0 8px 24px -8px color-mix(in oklch, var(--primary) 60%, transparent);
+  }
+  .shadow-glow-lg {
+    box-shadow: 0 16px 48px -12px color-mix(in oklch, var(--primary) 55%, transparent);
+  }
+  /* Subtle card shadow */
+  .shadow-soft {
+    box-shadow:
+      0 1px 2px -1px color-mix(in oklch, var(--foreground) 8%, transparent),
+      0 8px 24px -10px color-mix(in oklch, var(--foreground) 12%, transparent);
+  }
+  /* Animated gradient border */
+  .gradient-border {
+    position: relative;
+    background-clip: padding-box;
+    border: 1px solid transparent;
+  }
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    margin: -1px;
+    border-radius: inherit;
+    background: var(--gradient-brand);
+  }
+}
+
+/* Keyframes */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+/* The 906-914 block below is the canonical definition (used by .skeleton
+   utility class). Kept as the source of truth. */
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 50%, transparent); }
+  70% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out both; }
+.animate-scale-in { animation: scale-in 0.25s ease-out both; }
+.animate-pulse-ring { animation: pulse-ring 2s infinite; }
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--muted) 60%, transparent) 25%,
+    color-mix(in oklch, var(--muted) 90%, transparent) 50%,
+    color-mix(in oklch, var(--muted) 60%, transparent) 75%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite linear;
+}
+
+/* Legacy voice-bubble / voice-play-btn / animate-voice-bar classes removed —
+   replaced by .voice-play-btn-compact and .compact-media-card below. */
+
+/* ============================================================================
+   COMPACT MEDIA CARD — единый премиум-стиль для голосовых и файлов в чате.
+   Лёгкий glassmorphism без тяжёлых теней; работает в светлой и тёмной теме.
+   ============================================================================ */
+.media-compact-card {
+  position: relative;
+  border-radius: 18px;
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+  border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.08);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.media-compact-card:hover {
+  background: color-mix(in oklch, var(--foreground) 7%, transparent);
+  box-shadow: 0 4px 14px -3px rgba(15, 23, 42, 0.12);
+  transform: translateY(-1px);
+}
+.media-compact-card:active {
+  transform: scale(0.98);
+}
+.dark .media-compact-card {
+  background: color-mix(in oklch, var(--foreground) 7%, transparent);
+  border-color: color-mix(in oklch, var(--foreground) 10%, transparent);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.3);
+}
+.dark .media-compact-card:hover {
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+  box-shadow: 0 4px 14px -3px rgba(0, 0, 0, 0.4);
+}
+
+/* Compact voice play button — small, glassy, brand-colored */
+.voice-play-btn-compact {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+  box-shadow: 0 3px 10px -2px color-mix(in oklch, var(--primary) 60%, transparent);
+}
+.voice-play-btn-compact:hover {
+  background: color-mix(in oklch, var(--primary) 88%, white);
+  box-shadow: 0 4px 14px -2px color-mix(in oklch, var(--primary) 70%, transparent);
+}
+
+/* Waveform bars — slimmer, lighter */
+.voice-bar-played {
+  background: var(--primary);
+  opacity: 0.9;
+}
+.voice-bar-idle {
+  background: color-mix(in oklch, var(--foreground) 30%, transparent);
+  opacity: 0.7;
+}
+
+/* Voice meta — small monospace time + rate button */
+.voice-meta-time {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.voice-rate-btn {
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+  border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+  font-size: 10px;
+}
+.voice-rate-btn:hover {
+  color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+/* Media compact text — works on both themes (no need for isOwn override) */
+.media-compact-title {
+  color: var(--foreground);
+}
+.media-compact-meta {
+  color: var(--muted-foreground);
+}
+.media-compact-action {
+  color: var(--muted-foreground);
+  transition: color 0.2s ease;
+}
+.media-compact-card:hover .media-compact-action {
+  color: var(--primary);
+}
+
+
+
+/* ============================================================
+   Skeleton shimmer animation
+   (v9-audit-fix: deduplicated — only one @keyframes shimmer block,
+    defined at line 761-764 above.)
+   ============================================================ */
+
+/* ============================================================
+   PREMIUM DESKTOP UI — Apple/Linear/Stripe-inspired
+   ============================================================ */
+
+/* ─── Compact rail sidebar ─── */
+.premium-rail {
+  background: color-mix(in oklch, var(--card) 80%, transparent);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  /* v8-audit-fix: removed visible border-right that appeared as "кривая линия" on catalog */
+  border-right: none;
+  box-shadow: 0 0 60px -20px rgba(0, 0, 0, 0.08);
+}
+
+.premium-brand-mark {
+  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 50%, #8b5cf6 100%);
+  box-shadow:
+    0 8px 24px -8px rgba(59, 130, 246, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.premium-brand-mark:hover {
+  transform: scale(1.08) rotate(-3deg);
+  box-shadow:
+    0 12px 32px -8px rgba(59, 130, 246, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+}
+
+/* v16.8 final: text-only brand wordmark in the desktop sidebar.
+   Replaces the old circular "999" badge with a two-line "999 / PRO" wordmark.
+   The hover treatment lifts opacity + adds a subtle text-shadow instead of
+   scaling, since the wordmark is already wider than the old square mark. */
+.premium-brand-text {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+}
+.premium-brand-text:hover {
+  transform: translateY(-1px);
+  text-shadow:
+    0 4px 16px rgba(99, 102, 241, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.premium-brand-text:hover span:first-child {
+  letter-spacing: -0.01em;
+}
+.premium-brand-text:hover span:last-child {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.premium-rail-item {
+  color: var(--muted-foreground);
+  background: transparent;
+}
+.premium-rail-item:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 60%, transparent);
+  transform: scale(1.08);
+}
+
+.premium-rail-active {
+  color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+  box-shadow:
+    0 4px 12px -4px color-mix(in oklch, var(--primary) 40%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--primary) 20%, transparent) inset;
+}
+.premium-rail-active::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 24px;
+  background: var(--primary);
+  border-radius: 0 3px 3px 0;
+  box-shadow: 0 0 12px var(--primary);
+}
+
+/* Tooltip on hover — appears to the right of the icon */
+.premium-tooltip-host { position: relative; }
+.premium-tooltip {
+  position: absolute;
+  left: calc(100% + 16px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-8px);
+  padding: 6px 12px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 100;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.2);
+}
+.premium-tooltip::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 4px solid transparent;
+  border-right-color: var(--foreground);
+}
+.premium-tooltip-host:hover .premium-tooltip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* ─── Premium glass cards ─── */
+.premium-glass-card {
+  background: color-mix(in oklch, var(--card) 75%, transparent);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 8px 24px -12px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dark .premium-glass-card {
+  background: color-mix(in oklch, var(--card) 60%, transparent);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.2),
+    0 8px 24px -12px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+/* ─── Hero card ─── */
+.premium-hero-card {
+  box-shadow:
+    0 20px 60px -20px rgba(15, 23, 42, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+}
+.premium-hero-gradient {
+  background:
+    radial-gradient(ellipse at top right, #6366f1 0%, transparent 50%),
+    radial-gradient(ellipse at bottom left, #3b82f6 0%, transparent 50%),
+    linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #312e81 100%);
+}
+
+/* ─── Gradient feature card ─── */
+.premium-gradient-card {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+  box-shadow:
+    0 20px 60px -20px rgba(99, 102, 241, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+}
+
+/* ─── Closing CTA card ─── */
+.premium-closing-card {
+  background:
+    radial-gradient(ellipse at top, color-mix(in oklch, var(--primary) 8%, transparent) 0%, transparent 60%),
+    var(--card);
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+}
+
+/* ─── Ambient background ─── */
+.premium-ambient {
+  background:
+    radial-gradient(ellipse 800px 600px at 20% 0%, color-mix(in oklch, var(--primary) 6%, transparent) 0%, transparent 50%),
+    radial-gradient(ellipse 600px 400px at 80% 100%, color-mix(in oklch, #8b5cf6 5%, transparent) 0%, transparent 50%);
+}
+
+/* ─── Page top padding — desktop only (mobile uses safe-area) ─── */
+.page-top-padding-md {
+  padding-top: 2rem;
+}
+@media (min-width: 1024px) {
+  .page-top-padding-md {
+    padding-top: 2.5rem;
+  }
+}
+
+/* ─── Tabular numbers for stats ─── */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Smooth scrollbar (premium feel) ─── */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+    background-clip: padding-box;
+  }
+}
+
+/* Gallery fade-in animation */
+@keyframes galleryFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Gallery top bar — on mobile, padding-top accounts for the fixed mobile
+   header (safe-area + ~4.5rem) so the close button is NOT hidden behind
+   the header. On desktop, no extra padding needed. */
+.gallery-top-bar {
+  padding-top: calc(env(safe-area-inset-top) + 4.5rem);
+}
+@media (min-width: 768px) {
+  .gallery-top-bar {
+    padding-top: 1rem;
+  }
+}
+
+/* ============================================================
+   MOBILE HEADER + BOTTOM NAV — theme-aware
+   Light theme: soft white glass with dark icons.
+   Dark theme: dark gradient (unchanged).
+   ============================================================ */
+
+:root {
+  --mobile-header-bg: linear-gradient(135deg, rgba(255,255,255,0.92) 0%, rgba(248,250,252,0.90) 50%, rgba(241,245,249,0.88) 100%);
+  --mobile-nav-bg: linear-gradient(135deg, rgba(255,255,255,0.92) 0%, rgba(248,250,252,0.90) 50%, rgba(241,245,249,0.88) 100%);
+  --mobile-bar-text: #1e293b;
+  --mobile-bar-text-muted: #64748b;
+  --mobile-bar-pill-active: rgba(59,130,246,0.12);
+  --mobile-bar-shadow: 0 12px 32px -10px rgba(15,23,42,0.15), 0 0 0 1px rgba(0,0,0,0.04) inset;
+  --mobile-bar-blur: blur(24px) saturate(180%);
+}
+
+.dark {
+  --mobile-header-bg: linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.94) 50%, rgba(37,99,235,0.92) 100%);
+  --mobile-nav-bg: linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.94) 50%, rgba(37,99,235,0.92) 100%);
+  --mobile-bar-text: #ffffff;
+  --mobile-bar-text-muted: rgba(255,255,255,0.7);
+  --mobile-bar-pill-active: rgba(255,255,255,0.25);
+  --mobile-bar-shadow: 0 12px 32px -10px rgba(15,23,42,0.55), 0 0 0 1px rgba(255,255,255,0.10) inset;
+  --mobile-bar-blur: blur(24px) saturate(180%);
+}
+
+/* Header bar */
+.mobile-header-bar {
+  background-image: var(--mobile-header-bg);
+  backdrop-filter: var(--mobile-bar-blur);
+  -webkit-backdrop-filter: var(--mobile-bar-blur);
+}
+.mobile-header-bar .font-extrabold,
+.mobile-header-bar span {
+  color: var(--mobile-bar-text);
+}
+.mobile-header-bar button[aria-label] {
+  color: var(--mobile-bar-text);
+  background: var(--mobile-bar-pill-active) !important;
+}
+
+/* Bottom nav bar */
+.mobile-nav-bar {
+  background-image: var(--mobile-nav-bg);
+  backdrop-filter: var(--mobile-bar-blur);
+  -webkit-backdrop-filter: var(--mobile-bar-blur);
+  box-shadow: var(--mobile-bar-shadow);
+}
+.mobile-nav-item {
+  color: var(--mobile-bar-text-muted);
+}
+.mobile-nav-item-active {
+  color: var(--mobile-bar-text);
+}
+.mobile-nav-pill-active {
+  background: var(--mobile-bar-pill-active);
+  backdrop-filter: blur(8px);
+}
+
+/* ============================================================
+   v9-audit-fix: WCAG 2.3.3 (Animation from Interactions) AA
+   Honor the user's "Reduce Motion" OS setting. ~14 custom animations
+   (chat-bg-float, message-in, card-in, menu-in, pulse-glow, voice-wave,
+   recording-ring, highlight-flash, light-pulse, fade-in-up, scale-in,
+   pulse-ring, skeleton shimmer, hero zoom) previously ignored this
+   preference. This global block short-circuits them all.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Disable framer-motion's transform-based hovers/taps.
+     (Components should also call useReducedMotion() for full
+     correctness, but this CSS catches the CSS-driven animations.) */
+  [style*="transform"],
+  [class*="hover:scale"],
+  [class*="active:scale"] {
+    transform: none !important;
+  }
+}
+
+/* ============================================================
+   NEON THEME — mobile overrides (MUST be after :root and .dark)
+   ============================================================ */
+.neon {
+  --mobile-header-bg: linear-gradient(135deg, rgba(10,8,25,0.97) 0%, rgba(20,15,45,0.95) 50%, rgba(99,102,241,0.25) 100%);
+  --mobile-nav-bg: linear-gradient(135deg, rgba(10,8,25,0.97) 0%, rgba(20,15,45,0.95) 50%, rgba(139,92,246,0.25) 100%);
+  --mobile-bar-text: #ffffff;
+  --mobile-bar-text-muted: rgba(255,255,255,0.7);
+  --mobile-bar-pill-active: rgba(139,92,246,0.3);
+  --mobile-bar-shadow: 0 12px 32px -10px rgba(99,102,241,0.3), 0 0 0 1px rgba(139,92,246,0.15) inset;
+  --mobile-bar-blur: blur(24px) saturate(180%);
+}
+
+/* Neon mobile header — force dark glass.
+   NOTE: do NOT use !important on background-image — it would override the
+   admin-configured header image set via inline style. Instead, override
+   the --mobile-header-bg CSS variable so the image still shows on top. */
+.neon {
+  --mobile-header-bg: linear-gradient(135deg, rgba(10,8,25,0.97) 0%, rgba(20,15,45,0.95) 50%, rgba(99,102,241,0.25) 100%);
+  --mobile-nav-bg: linear-gradient(135deg, rgba(10,8,25,0.97) 0%, rgba(20,15,45,0.95) 50%, rgba(99,102,241,0.25) 100%);
+  --mobile-bar-text: #ffffff;
+  --mobile-bar-text-muted: rgba(255,255,255,0.7);
+  --mobile-bar-pill-active: rgba(139,92,246,0.25);
+  --mobile-bar-shadow: 0 12px 32px -10px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,92,246,0.15) inset;
+  --mobile-bar-blur: blur(24px) saturate(180%);
+}
+.neon .mobile-header-bar .font-extrabold,
+.neon .mobile-header-bar span {
+  color: #ffffff !important;
+}
+
+/* Neon bottom nav — force dark glass (via variable, not !important) */
+.neon .mobile-nav-bar {
+  background-image: var(--mobile-nav-bg);
+}
+.neon .mobile-nav-item {
+  color: rgba(255,255,255,0.5) !important;
+}
+.neon .mobile-nav-item-active {
+  color: #a855f7 !important;
+}
+.neon .mobile-nav-pill-active {
+  background: rgba(139,92,246,0.25) !important;
+}
+
+/* Neon chat input — glass with purple glow */
+.neon .chat-input-btn {
+  background: rgba(20, 15, 40, 0.6) !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+  border: 1px solid rgba(139, 92, 246, 0.15) !important;
+  box-shadow: 0 2px 8px -2px rgba(99, 102, 241, 0.1) !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+.neon .chat-input-btn:hover {
+  background: rgba(30, 25, 55, 0.7) !important;
+  border-color: rgba(139, 92, 246, 0.3) !important;
+}
+
+/* Neon chat textarea container — glass with purple border + glow */
+.neon textarea {
+  color: #ffffff !important;
+}
+.neon textarea::placeholder {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Neon product card in chat — glass with purple glow */
+.neon .glass-message {
+  background: rgba(20, 15, 40, 0.6) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid rgba(139, 92, 246, 0.15) !important;
+  box-shadow: 0 4px 16px -4px rgba(99, 102, 241, 0.1) !important;
+}
+
+/* Neon product card image background */
+.neon .glass-message .bg-slate-100,
+.neon .glass-message .dark\:bg-slate-800 {
+  background: rgba(30, 25, 55, 0.5) !important;
+}
+
+/* Neon product card text */
+.neon .glass-message .text-slate-500 {
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+.neon .glass-message .text-slate-600,
+.neon .glass-message .text-slate-700 {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* Neon product card discount badge */
+.neon .glass-message .bg-red-500 {
+  background: linear-gradient(135deg, #6366f1, #ec4899) !important;
+}
+
+/* Neon product card CTA button */
+.neon .glass-message .bg-primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+  box-shadow: 0 2px 8px -2px rgba(99, 102, 241, 0.4) !important;
+}
+
+/* Neon product card 999 — Три девятки badge */
+.neon .glass-message .bg-gradient-brand {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899) !important;
+}
+
+/* Neon skeleton loading */
+.neon .bg-slate-200\/60,
+.neon .dark\:bg-slate-700\/40 {
+  background: rgba(30, 25, 55, 0.4) !important;
+}
+
+/* Neon product card brand chip */
+.neon .glass-message .text-white\/80 {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Neon Film Bottom Sheet */
+.neon .film-bottom-sheet {
+  background: linear-gradient(180deg, rgba(15,12,35,0.98) 0%, rgba(10,8,25,0.98) 100%) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  border: 1px solid rgba(139, 92, 246, 0.15) !important;
+}
+.neon .film-bottom-sheet .text-muted-foreground {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+.neon .film-bottom-sheet .bg-muted {
+  background: rgba(30, 25, 55, 0.5) !important;
+}
+.neon .film-bottom-sheet h2 {
+  color: #ffffff !important;
+}
+
+

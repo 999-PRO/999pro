@@ -1,0 +1,99 @@
+{
+  "id": "/",
+  "name": "999 — Три девятки",
+  "short_name": "Три девятки",
+  "description": "999 — Три девятки. Современный маркетплейс товаров и услуг с голосовым AI-агентом.",
+  "version": "22.5.0",
+  "version_name": "v22.5 — AI Auth Fix",
+  "start_url": "/?source=pwa&v=22.5",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "ru",
+  "dir": "ltr",
+  "categories": ["shopping", "social", "communication"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "16x16 32x32 48x48 64x64 128x128 256x256",
+      "type": "image/x-icon"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/icons/screenshot-phone-1.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Каталог товаров"
+    },
+    {
+      "src": "/icons/screenshot-phone-2.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Чат с продавцом"
+    },
+    {
+      "src": "/icons/screenshot-tablet-1.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "999 CLUB"
+    }
+  ],
+  "shortcuts": [
+    { "name": "Каталог", "short_name": "Каталог", "url": "/?view=catalog&source=shortcut", "icons": [{ "src": "/icons/shortcut-catalog.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Чат", "short_name": "Чат", "url": "/?view=chat&source=shortcut", "icons": [{ "src": "/icons/shortcut-chat.png", "sizes": "192x192", "type": "image/png" }] }
+  ],
+  "share_target": {
+    "action": "/api/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "image",
+          "accept": ["image/*"]
+        }
+      ]
+    }
+  },
+  "launch_handler": {
+    "client_mode": ["navigate-existing", "auto"]
+  },
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+  "gcm_sender_id": "482941778795"
+}

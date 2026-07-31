@@ -1,0 +1,246 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 12px);
+}
+
+:root {
+  --radius: 1rem;
+
+  --background: oklch(0.99 0.005 240);
+  --foreground: oklch(0.18 0.02 250);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.02 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 250);
+
+  --primary: oklch(0.62 0.18 245);
+  --primary-foreground: oklch(0.99 0.01 240);
+
+  --secondary: oklch(0.96 0.01 240);
+  --secondary-foreground: oklch(0.25 0.03 250);
+  --muted: oklch(0.96 0.01 240);
+  --muted-foreground: oklch(0.5 0.02 250);
+  --accent: oklch(0.94 0.03 240);
+  --accent-foreground: oklch(0.25 0.05 250);
+  --destructive: oklch(0.6 0.22 27);
+  --border: oklch(0.92 0.01 240);
+  --input: oklch(0.94 0.01 240);
+  --ring: oklch(0.62 0.18 245);
+
+  --gradient-brand: linear-gradient(135deg, #38bdf8 0%, #2563eb 50%, #7c3aed 100%);
+  --gradient-soft: linear-gradient(135deg, rgba(56,189,248,0.18) 0%, rgba(124,58,237,0.12) 100%);
+}
+
+.dark {
+  --background: oklch(0.16 0.02 250);
+  --foreground: oklch(0.97 0.01 240);
+  --card: oklch(0.21 0.025 250);
+  --card-foreground: oklch(0.97 0.01 240);
+  --popover: oklch(0.21 0.025 250);
+  --popover-foreground: oklch(0.97 0.01 240);
+  --primary: oklch(0.72 0.16 240);
+  --primary-foreground: oklch(0.16 0.02 250);
+  --secondary: oklch(0.27 0.025 250);
+  --secondary-foreground: oklch(0.97 0.01 240);
+  --muted: oklch(0.25 0.02 250);
+  --muted-foreground: oklch(0.7 0.02 250);
+  --accent: oklch(0.3 0.04 245);
+  --accent-foreground: oklch(0.97 0.01 240);
+  --destructive: oklch(0.7 0.2 22);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.72 0.16 240);
+  --gradient-brand: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 50%, #8b5cf6 100%);
+  --gradient-soft: linear-gradient(135deg, rgba(14,165,233,0.22) 0%, rgba(139,92,246,0.18) 100%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html, body {
+    @apply bg-background text-foreground;
+    -webkit-tap-highlight-color: transparent;
+    /* v13.0 (audit P0-2 fix): allow pinch-zoom for accessibility (WCAG 1.4.4).
+       The previous `touch-action: pan-x pan-y` blocked pinch-zoom entirely,
+       silently reverting the S-MED-006 fix. `manipulation` permits panning
+       and pinching but disables double-tap-to-zoom delay. */
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    overflow-x: hidden;
+  }
+  body {
+    font-feature-settings: "ss01", "cv11";
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Main content scrolls UNDER the fixed translucent glass header.
+     v16.6: add padding-bottom on mobile so the fixed BottomNav (~64px)
+     doesn't overlap the last rows of any manager. */
+  .app-main { padding-top: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem); }
+  @media (min-width: 768px) {
+    .app-main { padding-bottom: 0; }
+  }
+
+  .page-top-padding {
+    padding-top: calc(env(safe-area-inset-top) + 4.5rem);
+  }
+  @media (min-width: 768px) {
+    .page-top-padding { padding-top: 0; }
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: color-mix(in oklch, var(--card) 65%, transparent);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+  }
+  .glass-strong {
+    background: color-mix(in oklch, var(--card) 85%, transparent);
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+  }
+  .gradient-brand { background-image: var(--gradient-brand); }
+  .gradient-soft { background-image: var(--gradient-soft); }
+  .text-gradient {
+    background-image: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .shadow-glow {
+    box-shadow: 0 8px 24px -8px color-mix(in oklch, var(--primary) 60%, transparent);
+  }
+  .shadow-glow-lg {
+    box-shadow: 0 16px 48px -12px color-mix(in oklch, var(--primary) 55%, transparent);
+  }
+  .shadow-soft {
+    box-shadow:
+      0 1px 2px -1px color-mix(in oklch, var(--foreground) 8%, transparent),
+      0 8px 24px -10px color-mix(in oklch, var(--foreground) 12%, transparent);
+  }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out both; }
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--muted) 60%, transparent) 25%,
+    color-mix(in oklch, var(--muted) 90%, transparent) 50%,
+    color-mix(in oklch, var(--muted) 60%, transparent) 75%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite linear;
+}
+
+/* ─── Premium Map Picker (v16.8 final) ───
+   Зеркало frontend-стилей для studio-версии map-picker. */
+.premium-map-overlay {
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+.premium-map-header {
+  background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  position: relative;
+  z-index: 10;
+}
+.premium-map-search {
+  background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: relative;
+  z-index: 9;
+}
+.premium-map-footer {
+  background: linear-gradient(0deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  position: relative;
+  z-index: 10;
+}
+.premium-map-overlay .leaflet-control-attribution {
+  background: rgba(15,23,42,0.7) !important;
+  color: rgba(255,255,255,0.5) !important;
+  backdrop-filter: blur(8px);
+  border-radius: 8px 0 0 0;
+  padding: 2px 6px;
+  font-size: 10px;
+}
+.premium-map-overlay .leaflet-control-attribution a {
+  color: rgba(255,255,255,0.7) !important;
+}
+.premium-map-overlay .leaflet-control-zoom {
+  border: none !important;
+  border-radius: 16px !important;
+  overflow: hidden;
+  box-shadow: 0 8px 24px -8px rgba(0,0,0,0.5);
+}
+.premium-map-overlay .leaflet-control-zoom a {
+  background: rgba(255,255,255,0.95) !important;
+  color: #1e293b !important;
+  border: none !important;
+  width: 40px !important;
+  height: 40px !important;
+  line-height: 40px !important;
+  font-size: 20px !important;
+  font-weight: 600 !important;
+}
+.premium-map-overlay .leaflet-control-zoom a:hover { background: white !important; }
+.premium-map-overlay .leaflet-control-zoom a:first-child { border-radius: 16px 16px 0 0 !important; }
+.premium-map-overlay .leaflet-control-zoom a:last-child { border-radius: 0 0 16px 16px !important; }

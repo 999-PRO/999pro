@@ -1,0 +1,15 @@
+# .dockerignore for 999 PRO backend
+node_modules
+dist
+.git
+*.md
+logs
+*.log
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore
+dev.db
+dev.db-journal
+uploads
