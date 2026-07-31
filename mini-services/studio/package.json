@@ -1,11 +1,12 @@
 {
   "name": "999-pro-studio",
-  "version": "16.8.11",
+  "version": "25.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3001",
     "build": "next build",
-    "start": "next start -p 3001",
+    "start": "node .next/standalone/server.js",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -38,5 +39,8 @@
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

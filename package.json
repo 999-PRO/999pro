@@ -1,31 +1,34 @@
 {
   "name": "999pro-marketplace",
-  "version": "22.5.0",
+  "version": "25.0.0",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
+  "description": "999 PRO Marketplace — frontend (Next.js), backend (Express + Prisma), studio (admin panel)",
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
-    "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
-    "lint": "eslint .",
+    "dev": "next dev -p 3000",
+    "build": "node scripts/build.js",
+    "start": "node scripts/start.js",
+    "setup": "node scripts/setup.js",
+    "lint": "next lint",
     "analyze": "ANALYZE=true next build",
-    "db:push": "cd mini-services/backend && bunx prisma db push",
-    "db:generate": "cd mini-services/backend && bunx prisma generate",
-    "db:migrate": "cd mini-services/backend && bunx prisma migrate dev",
-    "db:reset": "cd mini-services/backend && bunx prisma migrate reset",
-    "db:seed": "cd mini-services/backend && bunx prisma db seed",
-    "typecheck:all": "bunx tsc --noEmit && cd mini-services/backend && bunx tsc --noEmit && cd ../studio && bunx tsc --noEmit",
+    "build:frontend": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
+    "build:backend": "cd mini-services/backend && npm run build",
+    "build:studio": "cd mini-services/studio && npm run build",
+    "start:frontend": "node .next/standalone/server.js",
+    "start:backend": "node mini-services/backend/dist/index.js",
+    "start:studio": "node mini-services/studio/.next/standalone/server.js",
+    "install:all": "node scripts/install-all.js",
+    "db:push": "cd mini-services/backend && npx prisma db push",
+    "db:generate": "cd mini-services/backend && npx prisma generate",
+    "db:migrate": "cd mini-services/backend && npx prisma migrate dev",
+    "db:reset": "cd mini-services/backend && npx prisma migrate reset",
+    "db:seed": "cd mini-services/backend && npx tsx prisma/seed.ts",
+    "db:deploy": "cd mini-services/backend && npx prisma migrate deploy && npx prisma generate",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@999pro/shared": "workspace:*",
+    "@999pro/shared": "file:packages/shared",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-label": "^2.1.7",
@@ -60,7 +63,6 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^4.1.10",
-    "bun-types": "^1.3.4",
     "eslint": "^9",
     "eslint-config-next": "^16.1.1",
     "jsdom": "^29.1.1",
@@ -68,5 +70,8 @@
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
     "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

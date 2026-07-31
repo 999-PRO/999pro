@@ -16,6 +16,11 @@ const allowIframe = process.env.ALLOW_IFRAME === 'true' || !isProd;
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // v25.0: silence "multiple lockfiles" warning + ensure standalone output
+  // lands at .next/standalone/server.js (flat structure). Without this,
+  // Next.js may pick a parent directory as the workspace root and nest the
+  // standalone output under .next/standalone/path/to/project/.
+  turbopack: { root: __dirname },
   typescript: { ignoreBuildErrors: false },
   reactStrictMode: true,
   // v10-dev-origins: allow sandbox preview gateway origins in dev mode so
