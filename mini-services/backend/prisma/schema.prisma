@@ -1,34 +1,31 @@
-// «Три девятки» — Prisma schema (PostgreSQL — production default)
+// «Три девятки» — Prisma schema (PostgreSQL — production)
 // ============================================================================
-// v25.1: PostgreSQL is now the DEFAULT database provider, replacing SQLite
-// as the production backend. SQLite remains available for local dev via
-// schema.sqlite.prisma (auto-selected by scripts/setup.js when
-// BACKEND_DATABASE_URL starts with "file:").
+// v25.2: PostgreSQL is the ONLY production database provider.
 //
-// Why PostgreSQL over SQLite for production:
-//   • True concurrent writes (SQLite locks the whole file on write —
-//     Postgres uses MVCC, so readers never block writers and vice versa).
-//   • Connection pooling (PgBouncer / Prisma's built-in pool) — scales to
-//     hundreds of concurrent users without "database is locked" errors.
-//   • Native `Decimal(10,2)` type — exact numeric math for prices/orders
-//     (SQLite stores Decimal as TEXT, losing precision guarantees).
-//   • Native `JSONB` type — faster queries on the moderation / AI KB
-//     JSON columns (can index inside JSON with GIN).
-//   • Row-level locking, FOR UPDATE, partial indexes, full-text search —
-//     all available when needed.
+// Why PostgreSQL-only:
+//   • True concurrent writes (MVCC — readers never block writers).
+//   • Connection pooling (PgBouncer / Prisma's built-in pool).
+//   • Native Decimal(10,2) — exact numeric math for prices/orders.
+//   • Native JSONB — fast indexed queries on moderation / AI KB columns.
+//   • Row-level locking, FOR UPDATE, partial indexes, full-text search.
+//   • No "database is locked" errors under concurrent registrations.
+//   • No filesystem-permission issues (the v25.2 "readonly database" bug
+//     was SQLite-specific — it cannot occur with PostgreSQL because the
+//     DB runs as a separate process, not as a file the backend writes).
 //
-// Connection pool: configured in lib/prisma.ts via the
-// `?connection_limit=10&pool_timeout=10` query-string params appended
-// to BACKEND_DATABASE_URL. Tuned for a typical 2-4 GB VPS.
+// Connection pool: configured via the `connection_limit` and `pool_timeout`
+// query-string params on DATABASE_URL. Tuned for a typical 2-4 GB VPS.
 //
 // Migration baseline: prisma/migrations/0_postgres_baseline/migration.sql
 //   (generated from this schema via `prisma migrate diff --from-empty`).
 //   To apply: `npx prisma migrate deploy` (idempotent — skips if applied).
+//   This is run automatically by:
+//     - deploy.sh (foreground deploy)
+//     - scripts/install-services.sh (systemd install)
 //
-// To switch back to SQLite for local dev:
-//   1. Run `npm run setup` and answer "sqlite" when prompted, OR
-//   2. Set BACKEND_DATABASE_URL="file:./dev.db" in mini-services/backend/.env
-//      and run `node scripts/use-sqlite.js` to swap the schema file.
+// Local-dev SQLite is still supported as an opt-in via scripts/use-sqlite.js
+// — but it ONLY swaps this schema file locally. Production deployments
+// MUST use PostgreSQL.
 // ============================================================================
 
 generator client {
@@ -37,7 +34,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("BACKEND_DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 // ============================================================

@@ -105,23 +105,13 @@ runStep('Build backend (prisma generate + tsc)', () => {
   log('  Running prisma generate...', ANSI.dim);
   run('npx', ['prisma', 'generate'], { cwd: BACKEND });
 
-  // v25.1: detect DB provider from the active schema. If PostgreSQL, run
-  // `prisma migrate deploy` (applies the baseline + any new migrations).
-  // If SQLite, run `prisma db push` instead — SQLite migrations are
-  // dialect-specific and the lock file says "postgresql", so migrate deploy
-  // would refuse to run. `db push` syncs the schema directly without a
-  // migration history, which is fine for local dev.
-  const schemaPath = path.join(BACKEND, 'prisma', 'schema.prisma');
-  const schemaContent = fs.readFileSync(schemaPath, 'utf8');
-  const isSqlite = /provider\s*=\s*"sqlite"/.test(schemaContent);
-
-  if (isSqlite) {
-    log('  Running prisma db push (SQLite detected)...', ANSI.dim);
-    run('npx', ['prisma', 'db', 'push'], { cwd: BACKEND });
-  } else {
-    log('  Running prisma migrate deploy (PostgreSQL detected)...', ANSI.dim);
-    run('npx', ['prisma', 'migrate', 'deploy'], { cwd: BACKEND });
-  }
+  // v25.2: PostgreSQL-only. Always run `prisma migrate deploy` — it applies
+  // the baseline + any new migrations idempotently. SQLite is no longer
+  // supported in production; if a developer has swapped the schema to
+  // sqlite via scripts/use-sqlite.js, they are responsible for running
+  // `prisma db push` manually (build.js assumes production PostgreSQL).
+  log('  Running prisma migrate deploy (PostgreSQL)...', ANSI.dim);
+  run('npx', ['prisma', 'migrate', 'deploy'], { cwd: BACKEND });
 
   log('  Running tsc...', ANSI.dim);
   run('npx', ['tsc'], { cwd: BACKEND });

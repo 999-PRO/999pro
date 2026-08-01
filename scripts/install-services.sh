@@ -200,6 +200,33 @@ for svc in "${SERVICES[@]}"; do
   fi
 done
 
+# ---------- v25.2: pre-create uploads directory ----------
+# The backend writes uploaded files (avatars, voice messages, product images)
+# to $BACKEND/uploads/. Ensure it exists with correct ownership BEFORE
+# starting the service so the first upload doesn't fail with EACCES.
+#
+# Note: the database (PostgreSQL) runs as a separate process — there is NO
+# local DB file the backend needs to write. The v25.2 "readonly database"
+# bug was SQLite-specific and cannot occur with PostgreSQL.
+echo "  ${DIM}ensuring backend uploads directory exists…${RESET}"
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$BACKEND/uploads" 2>/dev/null || true
+ok "uploads directory ready (owner: $SERVICE_USER)"
+
+# ---------- v25.2: migrate legacy BACKEND_DATABASE_URL → DATABASE_URL ----------
+# Operators upgrading from v25.1 may still have BACKEND_DATABASE_URL in
+# their backend .env. Rename it so the new prisma schema picks it up.
+BACKEND_ENV="$BACKEND/.env"
+if [ -f "$BACKEND_ENV" ] && grep -q '^BACKEND_DATABASE_URL=' "$BACKEND_ENV" 2>/dev/null; then
+  warn "Found legacy BACKEND_DATABASE_URL in backend .env — migrating to DATABASE_URL…"
+  if grep -q '^DATABASE_URL=' "$BACKEND_ENV"; then
+    sed -i '/^BACKEND_DATABASE_URL=/d' "$BACKEND_ENV"
+    ok "Removed legacy BACKEND_DATABASE_URL (DATABASE_URL already set)"
+  else
+    sed -i 's/^BACKEND_DATABASE_URL=/DATABASE_URL=/' "$BACKEND_ENV"
+    ok "Renamed BACKEND_DATABASE_URL → DATABASE_URL"
+  fi
+fi
+
 for i in "${!SERVICES[@]}"; do
   svc="${SERVICES[$i]}"
   template="${TEMPLATE_MAP[$i]}"
@@ -246,6 +273,42 @@ if [ "$NO_START" = true ]; then
 fi
 
 step "6/6  Starting services"
+
+# v25.2: run prisma migrate deploy AS THE SERVICE USER before starting the
+# backend. This ensures the PostgreSQL schema exists BEFORE the first
+# registration request comes in. Without this, /api/auth/register hits a
+# "no such table: User" error on a fresh DB.
+#
+# We use `sudo -u` so the migration runs with the same DB credentials as
+# the runtime (no privilege escalation). `migrate deploy` is idempotent —
+# already-applied migrations are skipped.
+#
+# NOTE: This requires DATABASE_URL to be exported in the service user's
+# environment. We source it from $BACKEND/.env explicitly because sudo -u
+# does not preserve the caller's environment by default.
+echo "  ${DIM}running prisma migrate deploy as $SERVICE_USER (PostgreSQL)…${RESET}"
+# Extract DATABASE_URL from .env (handles both quoted and unquoted values)
+DB_URL_FOR_MIGRATE=$(grep '^DATABASE_URL=' "$BACKEND/.env" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+if [ -z "$DB_URL_FOR_MIGRATE" ]; then
+  err "DATABASE_URL not found in $BACKEND/.env"
+  err "Run 'npm run setup' first, or set DATABASE_URL manually."
+  exit 3
+fi
+if ! echo "$DB_URL_FOR_MIGRATE" | grep -q '^postgres\(ql\)\?://'; then
+  err "DATABASE_URL must be a postgresql:// URL (v25.2 — SQLite not supported in production)."
+  err "Got: $DB_URL_FOR_MIGRATE"
+  exit 3
+fi
+if sudo -u "$SERVICE_USER" \
+    DATABASE_URL="$DB_URL_FOR_MIGRATE" \
+    bash -c "cd '$BACKEND' && npx prisma migrate deploy" 2>&1 | sed 's/^/    /'; then
+  ok "PostgreSQL schema synced"
+else
+  err "prisma migrate deploy failed."
+  err "Check that PostgreSQL is running and DATABASE_URL is correct."
+  err "DATABASE_URL (masked): $(echo "$DB_URL_FOR_MIGRATE" | sed 's/\(:\/\/[^:]*:\)[^@]*\(@\)/\1****\2/')"
+  exit 5
+fi
 
 # Start backend first (frontend + studio depend on it for API).
 echo "  ${DIM}starting 999pro-backend…${RESET}"

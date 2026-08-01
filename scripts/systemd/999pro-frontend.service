@@ -2,6 +2,11 @@
 # 999 PRO Frontend — systemd unit template
 # ----------------------------------------------------------------------------
 # Next.js standalone server (user-facing app) on port 3000.
+#
+# v25.2-fix: REMOVED ProtectSystem=full + ProtectHome=read-only because
+# Next.js standalone needs to write to .next/cache for image optimization
+# and ISR. ReadWritePaths=__ROOT__ explicitly allows writes only to the
+# project directory.
 # ============================================================================
 
 [Unit]
@@ -22,6 +27,9 @@ Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOSTNAME=0.0.0.0
 
+# Ensure the Next.js cache directory exists before the server starts.
+ExecStartPre=-/usr/bin/install -d -o __USER__ -g __GROUP__ -m 0755 __ROOT__/.next/cache
+
 ExecStart=__NODE__ .next/standalone/server.js
 
 Restart=on-failure
@@ -39,9 +47,8 @@ StandardError=journal
 SyslogIdentifier=999pro-frontend
 
 NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=read-only
 PrivateTmp=true
+ReadWritePaths=__ROOT__
 
 [Install]
 WantedBy=multi-user.target

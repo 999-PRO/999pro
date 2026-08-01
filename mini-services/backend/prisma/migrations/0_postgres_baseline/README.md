@@ -39,9 +39,9 @@ to PostgreSQL:
    CREATE DATABASE ninepro OWNER ninepro;
    \q
    ```
-3. Set `BACKEND_DATABASE_URL` in `mini-services/backend/.env`:
+3. Set `DATABASE_URL` in `mini-services/backend/.env`:
    ```
-   BACKEND_DATABASE_URL="postgresql://ninepro:your-strong-password@localhost:5432/ninepro?schema=public&connection_limit=10&pool_timeout=10"
+   DATABASE_URL="postgresql://ninepro:your-strong-password@localhost:5432/ninepro?schema=public&connection_limit=10&pool_timeout=10"
    ```
 4. Apply the baseline migration:
    ```bash
@@ -70,13 +70,13 @@ to PostgreSQL:
 
 ## Why a single baseline instead of many small migrations?
 
-The SQLite migration history (`20260721092117_init_sqlite/`) is not
+The legacy SQLite migration history (`20260721092117_init_sqlite/`) was not
 directly portable to PostgreSQL — the SQL dialect differs (`INTEGER PRIMARY
 KEY` vs `TEXT`, `Decimal` as `TEXT` vs `DECIMAL(10,2)`, etc.). Rather than
 maintain two parallel migration histories, we ship one clean PostgreSQL
 baseline generated from the current schema. Future schema changes will
 produce timestamped PostgreSQL migrations alongside this baseline.
 
-The old SQLite migration is preserved as `20260721092117_init_sqlite/`
-for reference only — it is NOT applied by `prisma migrate deploy` when the
-provider is `postgresql`.
+v25.2: the old SQLite migration folder has been removed. The migration_lock.toml
+locks the provider to `postgresql`. `prisma migrate deploy` will apply only
+PostgreSQL migrations from this folder.

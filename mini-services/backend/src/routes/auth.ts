@@ -295,10 +295,21 @@ router.post(
       role: user.role as 'user' | 'admin',
       v: user.tokenVersion,
     })
-    // Phase 32: audit log registration
-    await auditLogRaw(user.id, req, 'auth', user.id, 'register', {
-      after: { username: user.username, email: user.email, role: user.role },
-    })
+    // Phase 32: audit log registration.
+    // v25.2-fix: wrap in try/catch — if the DB write fails (e.g. SQLite
+    // read-only), we must NOT let it crash the registration response.
+    // The user is already created at this point; the audit log is best-effort.
+    try {
+      await auditLogRaw(user.id, req, 'auth', user.id, 'register', {
+        after: { username: user.username, email: user.email, role: user.role },
+      })
+    } catch (auditErr) {
+      logger.error('Registration audit log failed (non-fatal)', {
+        module: 'auth',
+        error: auditErr instanceof Error ? auditErr : new Error(String(auditErr)),
+        userId: user.id,
+      })
+    }
 
     // ========================================================================
     // v16.8 final: AUTO-SEND email verification after successful registration.

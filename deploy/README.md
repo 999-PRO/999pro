@@ -91,7 +91,7 @@ VAPID_KEYS=$(bunx web-push generate-vapid-keys)
 # (copy the public + private keys from the output)
 
 cat > /opt/999pro/mini-services/backend/.env <<EOF
-BACKEND_DATABASE_URL=file:/opt/999pro/mini-services/backend/db/marketplace.db
+DATABASE_URL=postgresql://ninepro:your-strong-password@localhost:5432/ninepro?schema=public&connection_limit=10&pool_timeout=10
 PORT=4000
 NODE_ENV=production
 CLIENT_ORIGIN=https://999.pro,https://studio.999.pro
@@ -401,20 +401,23 @@ export S3_BACKUP_BUCKET=999pro-db-backups
 
 ## 4. Scaling considerations
 
-### 4.1 When SQLite is no longer enough
+### 4.1 When single PostgreSQL instance is no longer enough
 
-Symptoms:
-- `database is locked` errors in logs
+> **v25.2**: PostgreSQL is the ONLY production database provider. The
+> "migrate from SQLite to PostgreSQL" path documented in earlier versions
+> no longer applies — the project ships PostgreSQL-only since v25.2.
+
+Symptoms that you've outgrown a single Postgres instance:
 - DB latency > 200ms on /api/health/detailed
 - > 50 concurrent users actively chatting
+- Connection pool saturation (Prisma P2024 "Timed out fetching a connection")
 
-Migration path:
-1. Provision PostgreSQL 16 (RDS, DigitalOcean Managed DB, or self-hosted)
-2. Update `BACKEND_DATABASE_URL` to `postgresql://...`
-3. Update `prisma/schema.prisma`: change `provider = "sqlite"` to `provider = "postgresql"`
-4. `bunx prisma migrate dev --name migrate_to_postgres`
-5. Migrate data: `pgloader sqlite:///marketplace.db postgresql://...`
-6. Restart backend
+Scaling path:
+1. Add PgBouncer in front of PostgreSQL (connection pooling at the DB level)
+2. Increase `connection_limit` in DATABASE_URL (e.g. from 10 to 20-30)
+3. Provision a larger PostgreSQL instance (RDS, DigitalOcean Managed DB)
+4. Add read replicas for analytics queries (routes/analytics.ts)
+5. Consider partitioning the audit log table (it grows fastest)
 
 ### 4.2 When local uploads are no longer enough
 

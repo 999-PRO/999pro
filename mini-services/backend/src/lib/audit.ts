@@ -138,7 +138,10 @@ const PG_ADVISORY_LOCK_KEY = 9999202457n // произвольный стаби�
  * используется in-process Promise mutex.
  */
 function isPostgres(): boolean {
-  const url = process.env.BACKEND_DATABASE_URL || process.env.DATABASE_URL || ''
+  // v25.2: production is PostgreSQL-only. We keep this guard for clarity
+  // (dev SQLite mode bypasses the advisory lock and uses an in-process
+  // mutex), but in production this always returns true.
+  const url = process.env.DATABASE_URL || ''
   return url.startsWith('postgresql://') || url.startsWith('postgres://')
 }
 

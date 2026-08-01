@@ -54,22 +54,26 @@ step()  { echo ""; log "$1"; echo "${DIM}$(printf '─%.0s' {1..78})${RESET}"; }
 
 # ---------- args ----------
 NO_START=false
-USE_SQLITE=false
 INSTALL_SERVICES=false
 for arg in "$@"; do
   case "$arg" in
     --no-start) NO_START=true ;;
-    --sqlite)   USE_SQLITE=true ;;
     --install-services) INSTALL_SERVICES=true ;;
     --services) INSTALL_SERVICES=true ;;  # alias
+    --sqlite)
+      err "--sqlite is no longer supported (v25.2). PostgreSQL is the only production database."
+      err "For local-dev SQLite, see scripts/use-sqlite.js — but be aware it is NOT supported in production."
+      exit 1
+      ;;
     --help|-h)
-      echo "Usage: ./deploy.sh [--no-start] [--sqlite] [--install-services]"
+      echo "Usage: ./deploy.sh [--no-start] [--install-services]"
       echo ""
       echo "  --no-start           Build only, don't start services"
-      echo "  --sqlite             Use SQLite instead of PostgreSQL (local dev)"
       echo "  --install-services   Install systemd units for persistent startup"
       echo "                       (auto-start on boot, auto-restart on crash,"
       echo "                       survives terminal/SSH disconnect)"
+      echo ""
+      echo "Database: PostgreSQL (production-only since v25.2)."
       exit 0
       ;;
     *)
@@ -89,7 +93,7 @@ cd "$ROOT"
 echo ""
 echo "${BOLD}╔══════════════════════════════════════════════════════════════════════════╗${RESET}"
 echo "${BOLD}║  999 PRO — Deployment                                                    ║${RESET}"
-echo "${BOLD}║  No Docker · Node.js only · PostgreSQL (default) / SQLite (dev)         ║${RESET}"
+echo "${BOLD}║  No Docker · Node.js only · PostgreSQL (production)                     ║${RESET}"
 if [ "$INSTALL_SERVICES" = true ]; then
   echo "${BOLD}║  + systemd persistent services (auto-start on boot, auto-restart)       ║${RESET}"
 fi
@@ -118,14 +122,9 @@ ok "npm $(npm -v)"
 
 # ---------- 2. .env files ----------
 step "2/9  Checking .env files"
-SETUP_ARGS=""
-if [ "$USE_SQLITE" = true ]; then
-  SETUP_ARGS="--sqlite"
-  warn "SQLite mode requested — NOT recommended for production."
-fi
 if [ ! -f "$ROOT/.env" ] || [ ! -f "$ROOT/mini-services/backend/.env" ] || [ ! -f "$ROOT/mini-services/studio/.env" ]; then
   warn "Some .env files missing — running setup.js…"
-  if ! node "$ROOT/scripts/setup.js" $SETUP_ARGS; then
+  if ! node "$ROOT/scripts/setup.js"; then
     err "setup.js failed."
     exit 3
   fi
@@ -133,29 +132,47 @@ else
   ok "All .env files present."
 fi
 
-# Re-swap the schema provider if --sqlite was passed but .env already exists.
-if [ "$USE_SQLITE" = true ]; then
-  if [ ! -f "$ROOT/mini-services/backend/prisma/schema.sqlite.prisma" ]; then
-    warn "SQLite template not found — running setup.js to bootstrap."
-    node "$ROOT/scripts/setup.js" --sqlite || true
+# v25.2: PostgreSQL is the only production database. Migrate any legacy
+# BACKEND_DATABASE_URL → DATABASE_URL in the backend .env (setup.js already
+# does this on first run, but we re-check here for operators upgrading
+# from v25.1 without re-running setup).
+BACKEND_ENV="$ROOT/mini-services/backend/.env"
+if grep -q '^BACKEND_DATABASE_URL=' "$BACKEND_ENV" 2>/dev/null; then
+  warn "Found legacy BACKEND_DATABASE_URL in backend .env — migrating to DATABASE_URL…"
+  # If DATABASE_URL is already set, just delete the legacy line.
+  if grep -q '^DATABASE_URL=' "$BACKEND_ENV"; then
+    sed -i '/^BACKEND_DATABASE_URL=/d' "$BACKEND_ENV"
+    ok "Removed legacy BACKEND_DATABASE_URL (DATABASE_URL already set)"
   else
-    node "$ROOT/scripts/use-sqlite.js"
+    sed -i 's/^BACKEND_DATABASE_URL=/DATABASE_URL=/' "$BACKEND_ENV"
+    ok "Renamed BACKEND_DATABASE_URL → DATABASE_URL"
   fi
 fi
 
-# Check whether BACKEND_DATABASE_URL is still the placeholder (PostgreSQL).
-DB_URL=$(grep '^BACKEND_DATABASE_URL=' "$ROOT/mini-services/backend/.env" | cut -d= -f2- | tr -d '"' || true)
+# Check whether DATABASE_URL is still the placeholder (PostgreSQL).
+DB_URL=$(grep '^DATABASE_URL=' "$BACKEND_ENV" | cut -d= -f2- | tr -d '"' || true)
+if [ -z "$DB_URL" ]; then
+  err "DATABASE_URL is not set in mini-services/backend/.env"
+  err "Run 'npm run setup' to generate it, or set it manually:"
+  err "  DATABASE_URL=\"postgresql://USER:PASSWORD@HOST:5432/DBNAME?schema=public&connection_limit=10&pool_timeout=10\""
+  exit 3
+fi
 if echo "$DB_URL" | grep -q 'USER:PASSWORD'; then
-  err "BACKEND_DATABASE_URL in mini-services/backend/.env is still the placeholder."
+  err "DATABASE_URL in mini-services/backend/.env is still the placeholder."
   err "Edit it to point to your real PostgreSQL database, then re-run ./deploy.sh."
   err ""
   err "Example:"
-  err "  BACKEND_DATABASE_URL=\"postgresql://ninepro:password@localhost:5432/ninepro?schema=public&connection_limit=10&pool_timeout=10\""
-  err ""
-  err "Or use SQLite for local dev: ./deploy.sh --sqlite"
+  err "  DATABASE_URL=\"postgresql://ninepro:password@localhost:5432/ninepro?schema=public&connection_limit=10&pool_timeout=10\""
   exit 3
 fi
-ok "BACKEND_DATABASE_URL is set (provider: $(echo "$DB_URL" | cut -d: -f1))"
+if ! echo "$DB_URL" | grep -q '^postgres\(ql\)\?://'; then
+  err "DATABASE_URL must be a postgresql:// URL (v25.2 — SQLite not supported in production)."
+  err "Got: $DB_URL"
+  err ""
+  err "Set DATABASE_URL to a valid PostgreSQL connection string in mini-services/backend/.env."
+  exit 3
+fi
+ok "DATABASE_URL is set (PostgreSQL)"
 
 # ---------- 3. Install dependencies ----------
 step "3/9  Installing dependencies"
@@ -179,22 +196,24 @@ install_deps "$ROOT/packages/shared" "shared"
 ok "All dependencies installed."
 
 # ---------- 4. Prisma migrations ----------
-step "4/9  Running Prisma migrations"
-SCHEMA_FILE="$ROOT/mini-services/backend/prisma/schema.prisma"
-if grep -q 'provider = "sqlite"' "$SCHEMA_FILE"; then
-  echo "  ${DIM}SQLite detected — running prisma db push…${RESET}"
-  if ! (cd "$ROOT/mini-services/backend" && npx prisma db push); then
-    err "prisma db push failed."
-    exit 5
-  fi
-else
-  echo "  ${DIM}PostgreSQL detected — running prisma migrate deploy…${RESET}"
-  if ! (cd "$ROOT/mini-services/backend" && npx prisma migrate deploy); then
-    err "prisma migrate deploy failed."
-    err "Check that BACKEND_DATABASE_URL points to a reachable PostgreSQL instance"
-    err "and that the database exists (CREATE DATABASE ninepro OWNER ninepro;)."
-    exit 5
-  fi
+step "4/9  Running Prisma migrations (PostgreSQL)"
+# v25.2: PostgreSQL-only. prisma migrate deploy applies all migrations
+# from prisma/migrations/ in order. Idempotent — already-applied migrations
+# are skipped. This is the correct production strategy (vs. `prisma db push`
+# which is for prototyping and can silently drop columns).
+# Awaits PostgreSQL service if running on the same host via systemd Wants=.
+echo "  ${DIM}running prisma migrate deploy…${RESET}"
+if ! (cd "$ROOT/mini-services/backend" && npx prisma migrate deploy); then
+  err "prisma migrate deploy failed."
+  err ""
+  err "Check that:"
+  err "  1. PostgreSQL is running on the host from DATABASE_URL."
+  err "  2. The database exists (CREATE DATABASE ninepro OWNER ninepro;)."
+  err "  3. The user has CREATE/ALTER/INSERT permissions on the database."
+  err "  4. The database is reachable from this host (firewall, pg_hba.conf)."
+  err ""
+  err "DATABASE_URL (masked): $(echo "$DB_URL" | sed 's/\(:\/\/[^:]*:\)[^@]*\(@\)/\1****\2/')"
+  exit 5
 fi
 ok "Database schema applied."
 

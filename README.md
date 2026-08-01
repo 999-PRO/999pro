@@ -68,10 +68,11 @@ psql -U ninepro -d ninepro -h localhost -c 'SELECT version();'
 > **Beget VPS note**: Beget's PostgreSQL add-on can be enabled from the
 > hosting control panel. After enabling, you'll get a `postgresql://`
 > connection string — paste it into `mini-services/backend/.env` as
-> `BACKEND_DATABASE_URL`.
+> `DATABASE_URL`.
 
-If you prefer SQLite for a quick local test, skip this step and run
-`npm run setup -- --sqlite` instead.
+> **v25.2**: PostgreSQL is the only production database provider. SQLite
+> is no longer a setup.js flag — see `scripts/use-sqlite.js` for a
+> LOCAL-DEV-ONLY convenience that is NOT supported in production.
 
 ## 2. Get the project on the server
 
@@ -110,9 +111,9 @@ This generates cryptographically-strong secrets and writes three `.env` files:
 - `mini-services/backend/.env` (backend)
 - `mini-services/studio/.env` (studio)
 
-**v25.1**: `setup` now defaults to **PostgreSQL**. It writes a placeholder
-`BACKEND_DATABASE_URL` that you MUST edit before building. To use SQLite
-for local dev instead, run `npm run setup -- --sqlite`.
+**v25.2**: `setup` writes a placeholder `DATABASE_URL` (PostgreSQL) that
+you MUST edit before building. SQLite is no longer a setup flag — see
+`scripts/use-sqlite.js` for a LOCAL-DEV-ONLY convenience.
 
 **Review and edit the generated `.env` files** — especially
 `mini-services/backend/.env`:
@@ -124,14 +125,14 @@ nano mini-services/backend/.env
 Settings you likely need to change for production:
 
 ```ini
-# Database — PostgreSQL is the default (production-grade, MVCC, connection
-# pool). Replace USER:PASSWORD@localhost:5432/999pro with your real
+# Database — PostgreSQL is the only production provider (v25.2).
+# Replace USER:PASSWORD@localhost:5432/999pro with your real
 # PostgreSQL credentials.
 #
 # Connection pool params:
 #   connection_limit=10   — max simultaneous connections (Prisma's pool)
 #   pool_timeout=10       — seconds to wait for a free connection
-BACKEND_DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/999pro?schema=public&connection_limit=10&pool_timeout=10"
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/999pro?schema=public&connection_limit=10&pool_timeout=10"
 
 # CORS — comma-separated list of allowed origins
 CLIENT_ORIGIN="https://your-domain.com,https://studio.your-domain.com"
@@ -866,7 +867,7 @@ sudo journalctl -u 999pro-studio --no-pager -n 50
 
 Common causes:
 
-1. **`BACKEND_DATABASE_URL` is the placeholder** — edit
+1. **`DATABASE_URL` is the placeholder** — edit
    `mini-services/backend/.env` to point to a real PostgreSQL database,
    then `sudo systemctl restart 999pro-backend`.
 2. **Node.js not in the unit file's PATH** — the installer detects Node
@@ -1153,7 +1154,7 @@ Added:
 |----------|----------|---------|-------------|
 | `NODE_ENV` | yes | `production` | Runtime environment |
 | `PORT` | no | `4000` | Backend listen port |
-| `BACKEND_DATABASE_URL` | yes | `postgresql://USER:PASSWORD@localhost:5432/999pro?...` | **v25.1: PostgreSQL is the default.** Format: `postgresql://user:pass@host:5432/db?schema=public&connection_limit=10&pool_timeout=10`. For SQLite (local dev): `file:./dev.db` (run `npm run setup -- --sqlite` to switch). |
+| `DATABASE_URL` | yes | `postgresql://USER:PASSWORD@localhost:5432/999pro?...` | **v25.2: PostgreSQL is the ONLY production provider.** Format: `postgresql://user:pass@host:5432/db?schema=public&connection_limit=10&pool_timeout=10`. SQLite is NOT supported in production (see `scripts/use-sqlite.js` for local-dev-only). |
 | `CLIENT_ORIGIN` | yes | `http://localhost:3000,...` | CORS allowed origins (comma-sep) |
 | `TRUST_PROXY` | no | `false` | Set `true` behind Nginx/Caddy |
 | `JWT_SECRET` | **yes** | — | JWT signing secret (min 32 chars) |
