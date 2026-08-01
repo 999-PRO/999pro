@@ -8,15 +8,22 @@ export const registerSchema = z.object({
     .string()
     .min(3)
     .max(24)
-    // v24.5: ONLY latin letters, digits, underscore — no Cyrillic
+    // v24.5: ONLY latin letters, digits, underscore — no Cyrillic.
+    // Usernames are technical identifiers used in URLs, mentions, and
+    // referral codes, so they must be ASCII-safe.
     .regex(/^[a-zA-Z0-9_]+$/, 'Имя пользователя: только латинские буквы, цифры и подчёркивание'),
   email: z.string().email().max(256),
   phone: z.string().min(6).max(20).optional(),
   password: z.string().min(8).max(128),
   // v19.0: password confirmation — must match password
   confirmPassword: z.string().min(8).max(128).optional(),
-  // v24.5: displayName also latin-only for consistency
-  displayName: z.string().max(64).regex(/^[a-zA-Z0-9_\s.-]+$/, 'Отображаемое имя: только латинские буквы, цифры, пробелы, точки и дефисы').optional(),
+  // v25.2 FIX: displayName now allows Cyrillic (а-яА-ЯёЁ) in addition to
+  // Latin. This is a Russian-language app — users should be able to enter
+  // their real name in Cyrillic (e.g. "Иван Иванов"). Previously the
+  // regex only allowed Latin, which silently rejected every Cyrillic
+  // name with a confusing 400 error. The frontend placeholder "Иван
+  // Иванов" was actively misleading users into entering rejected input.
+  displayName: z.string().max(64).regex(/^[a-zA-Zа-яА-ЯёЁ0-9_\s.-]+$/, 'Отображаемое имя: буквы, цифры, пробелы, точки и дефисы').optional(),
   gender: z.enum(['male', 'female', 'other']).optional(),
   // v12.6: optional referral code — if present, the new user is linked
   // to the referrer and the referrer earns points.

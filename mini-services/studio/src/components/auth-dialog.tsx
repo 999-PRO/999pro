@@ -235,10 +235,11 @@ export function AuthDialog({
                     required
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="ivan_99 или Иван"
+                    placeholder="ivan_99"
                     className="rounded-2xl"
-                    pattern="[a-zA-Z0-9_а-яА-ЯёЁ]+"
+                    pattern="[a-zA-Z0-9_]+"
                     minLength={3}
+                    title="Только латинские буквы, цифры и подчёркивание"
                   />
                 </div>
                 <div className="space-y-1.5">
