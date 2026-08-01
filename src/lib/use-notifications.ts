@@ -185,9 +185,14 @@ function resolveAvatarUrl(avatar: string | null | undefined): string | null {
   if (!avatar) return null
   if (avatar.startsWith('http')) return avatar
   if (avatar.startsWith('/uploads/')) {
-    if (typeof window !== 'undefined' && window.location.hostname.endsWith('.space-z.ai')) {
-      return `${avatar}?XTransformPort=4000`
+    // v25.2-CORS-FIX: always use relative URL for browser. Next.js rewrites()
+    // proxies /uploads/* to the backend server-side. Only sandbox needs
+    // the XTransformPort query param.
+    if (typeof window !== 'undefined') {
+      const isSandbox = window.location.hostname.endsWith('.space-z.ai')
+      return isSandbox ? `${avatar}?XTransformPort=4000` : avatar
     }
+    // Server-side: use absolute URL (no CORS for server-to-server).
     return `${process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000'}${avatar}`
   }
   return null

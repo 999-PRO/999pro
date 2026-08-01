@@ -26,32 +26,43 @@ function isSandboxHost(host: string): boolean {
 }
 
 function computeApiBase(): string {
+  // Server-side (SSR/SSG): use NEXT_PUBLIC_API_BASE or default to backend directly.
+  // Next.js server-side fetch() doesn't enforce CORS, so this is safe.
   if (typeof window === 'undefined') {
     return process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000'
   }
-  const configured = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000'
-  const pageHost = window.location.hostname
 
-  // Sandbox detection — apex or any direct subdomain of space-z.ai
+  // Browser-side: ALWAYS use relative paths (empty string).
+  //
+  // v25.2-CORS-FIX: Previously this swapped `localhost` → page host (e.g.
+  // 45.11.92.23) and returned an absolute URL like `http://45.11.92.23:4000`.
+  // That made the browser send cross-origin requests to port 4000, which
+  // triggered CORS preflight (OPTIONS) on every POST. If the backend's
+  // CLIENT_ORIGIN allowlist didn't perfectly match the Origin header
+  // (e.g. due to systemd quoting, missing entry, or trailing slash), the
+  // preflight failed with "No 'Access-Control-Allow-Origin' header" and
+  // registration broke.
+  //
+  // Now: the browser ALWAYS uses relative `/api/*` paths. Next.js's
+  // `rewrites()` in next.config.ts proxies these to the backend
+  // server-side (localhost:4000). Server-to-server requests have no CORS
+  // restrictions, so the browser never sees a cross-origin request and
+  // never sends a preflight. This eliminates the entire class of CORS
+  // issues regardless of how the deployment is configured.
+  //
+  // The only exception is the sandbox preview gateway (*.space-z.ai),
+  // which still needs the XTransformPort query param — but that's also
+  // a relative-path request, just with an extra query string.
+  const pageHost = window.location.hostname
   const isPrivateIp =
     /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)/.test(pageHost)
   const isLocal = pageHost === 'localhost' || pageHost === '127.0.0.1' || isPrivateIp || pageHost.endsWith('.local')
   const isSandbox = !isLocal && isSandboxHost(pageHost)
 
-  if (isSandbox) return '' // relative paths + XTransformPort
-
-  // Local dev: if the configured base uses localhost but the page is served
-  // from a LAN IP, swap the hostname so the backend is reachable.
-  try {
-    const url = new URL(configured)
-    if ((url.hostname === 'localhost' || url.hostname === '127.0.0.1') && pageHost !== 'localhost' && pageHost !== '127.0.0.1') {
-      url.hostname = pageHost
-      return url.toString().replace(/\/$/, '')
-    }
-    return configured
-  } catch {
-    return configured
-  }
+  // Both sandbox and non-sandbox return '' (relative paths).
+  // The only difference is buildUrl() adds XTransformPort for sandbox.
+  void isSandbox // kept for clarity; both branches now return ''
+  return ''
 }
 
 const LOCAL_API_BASE = computeApiBase()
@@ -103,10 +114,16 @@ export function getToken(): string | null {
 /** Build a URL that hits the backend via the sandbox gateway when applicable. */
 function buildUrl(path: string): string {
   const cleanPath = path.startsWith('/') ? path : `/${path}`
-  if (isSandbox) {
+  // v25.2-CORS-FIX: Browser always uses relative paths (LOCAL_API_BASE === '').
+  // Only sandbox (*.space-z.ai) needs the XTransformPort query param so the
+  // public gateway knows which internal port to forward to.
+  if (isSandbox && typeof window !== 'undefined' && isSandboxHost(window.location.hostname)) {
     const sep = cleanPath.includes('?') ? '&' : '?'
     return `${cleanPath}${sep}XTransformPort=${SANDBOX_BACKEND_PORT}`
   }
+  // All other cases (localhost, LAN IP, public IP, domain): relative path.
+  // Next.js rewrites() in next.config.ts proxies /api/* → backend:4000
+  // server-side, so no CORS preflight from the browser.
   return `${LOCAL_API_BASE}${cleanPath}`
 }
 
@@ -136,13 +153,20 @@ export function assetUrl(path: string | null | undefined): string {
 
 /** Build a socket.io connection URL for the backend. */
 export function socketUrl(): { url: string; query: Record<string, string> } {
-  if (isSandbox) {
+  // v25.2-CORS-FIX: same logic as buildUrl — browser always uses relative
+  // path so the WebSocket connects to the same origin (no CORS). Only
+  // sandbox needs the XTransformPort query param.
+  const isBrowserSandbox =
+    typeof window !== 'undefined' && isSandboxHost(window.location.hostname)
+  if (isBrowserSandbox) {
     return {
       url: '/',
       query: { XTransformPort: String(SANDBOX_BACKEND_PORT) },
     }
   }
-  return { url: LOCAL_API_BASE, query: {} }
+  // Browser (non-sandbox) → relative '/' (proxied by Next.js rewrites).
+  // Server-side → LOCAL_API_BASE (http://localhost:4000).
+  return { url: LOCAL_API_BASE || '/', query: {} }
 }
 
 export class ApiError extends Error {

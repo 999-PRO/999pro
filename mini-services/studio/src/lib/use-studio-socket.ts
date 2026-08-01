@@ -8,40 +8,31 @@ import { useAuthStore } from '@/lib/auth-store'
 // issues with Turbopack hot-reload during development).
 const SANDBOX_BACKEND_PORT = 4000
 
-// v13.1 (audit P1-4 fix): handle private-IP LAN hosts (192.168.x.x, 10.x.x.x,
-// 172.16-31.x.x, 169.254.x.x) and .local mDNS — same logic as api.ts.
-// Previously only localhost/127.0.0.1 were detected. If an admin opened the
-// studio from a phone at http://192.168.1.10:3001/studio, the socket tried
-// to connect to http://localhost:4000 ON THE PHONE — which doesn't exist.
+// v25.2-CORS-FIX: same logic as api.ts — browser ALWAYS uses relative URL
+// so the WebSocket connects to the same origin (no CORS). Next.js rewrites()
+// in next.config.ts proxies /socket.io/* to the backend server-side.
+// Only sandbox (*.space-z.ai) needs the XTransformPort query param.
+//
+// IMPORTANT: Studio has basePath: '/studio'. The socket.io path must be
+// '/studio/socket.io/' so Next.js rewrites match it.
 function getSocketUrl(): { url: string; query: Record<string, string> } {
   if (typeof window === 'undefined') {
+    // Server-side: connect directly to backend (no CORS for server-to-server).
     return { url: 'http://localhost:4000', query: {} }
   }
   const pageHost = window.location.hostname
   const isSandboxHost = pageHost === 'space-z.ai' || pageHost.endsWith('.space-z.ai')
-  const isLocal = pageHost === 'localhost' || pageHost === '127.0.0.1'
-  const isPrivateLan =
-    /^192\.168\./.test(pageHost) ||
-    /^10\./.test(pageHost) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(pageHost) ||
-    /^169\.254\./.test(pageHost)
-  const isMdns = pageHost.endsWith('.local')
 
-  if (isSandboxHost && !isLocal) {
+  if (isSandboxHost) {
     // Sandbox/preview gateway: connect via the same origin and let the
     // gateway route to the backend port via XTransformPort query.
     return { url: '/', query: { XTransformPort: String(SANDBOX_BACKEND_PORT) } }
   }
-  if (isLocal) {
-    return { url: 'http://localhost:4000', query: {} }
-  }
-  if (isPrivateLan || isMdns) {
-    // v13.1: LAN/mobile dev — connect to the same host as the page but on
-    // port 4000. This lets admins test the studio from their phone.
-    return { url: `http://${pageHost}:4000`, query: {} }
-  }
-  // Fallback: assume same host with explicit backend port.
-  return { url: `http://${pageHost}:4000`, query: {} }
+
+  // All other cases (localhost, LAN IP, public IP, domain): relative URL.
+  // Use '/studio/' as the socket URL so the path becomes /studio/socket.io/
+  // which matches the Next.js rewrite (auto-prefixed with basePath).
+  return { url: '/studio/', query: {} }
 }
 
 type EventType = 'lead:status-changed' | 'lead:deleted' | 'leads:bulk-deleted' | 'order:status-changed'

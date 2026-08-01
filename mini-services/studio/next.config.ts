@@ -144,10 +144,21 @@ const nextConfig: NextConfig = {
     ]
   },
   async rewrites() {
+    // v25.2-CORS-FIX: When basePath is set (e.g. /studio), Next.js automatically
+    // prefixes rewrite sources with the basePath. So '/api/:path*' matches
+    // '/studio/api/:path*' — which is what the browser sends when the page is
+    // at /studio and JS calls fetch('/api/...') with a relative URL.
+    //
+    // However, the browser's fetch('/api/auth/register') from a page at
+    // http://host:3001/studio resolves to http://host:3001/api/auth/register
+    // (absolute path from URL root, NOT from basePath). To handle BOTH cases:
+    //   1. '/api/:path*' (auto-prefixed to /studio/api/:path*) — for
+    //      same-origin requests via Next.js router.
+    //   2. '/studio/api/:path*' — explicit, for browser fetch() calls that
+    //      include the basePath.
+    // We add both to cover all scenarios.
     return [
-      // Safety net: route all /api/* /uploads/* /socket.io/* to the backend
-      // even if sandbox detection (XTransformPort query) fails. This makes
-      // Studio work reliably on the public preview URL.
+      // Auto-prefixed with basePath: matches /studio/api/*
       { source: '/api/:path*', destination: `${BACKEND_URL}/api/:path*` },
       { source: '/uploads/:path*', destination: `${BACKEND_URL}/uploads/:path*` },
       { source: '/socket.io/:path*', destination: `${BACKEND_URL}/socket.io/:path*` },

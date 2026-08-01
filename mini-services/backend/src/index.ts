@@ -83,6 +83,17 @@ const CLIENT_ORIGIN = CLIENT_ORIGIN_RAW.split(',').map((s) => s.trim()).filter(B
 /**
  * CORS origin checker.
  *
+ * v25.2-CORS-FIX: When origin is NOT allowed, we now pass an Error to the
+ * callback (callback(err)) instead of callback(null, false). This makes
+ * cors() respond with 500 + error message instead of passing the request
+ * through to Express (which would respond 200 + Allow header without any
+ * Access-Control-Allow-Origin, confusing the browser).
+ *
+ * In practice this shouldn't matter anymore because the frontend now uses
+ * relative /api/* paths (no cross-origin), but this is defense-in-depth:
+ * if someone manually calls the backend from a different origin, they get
+ * a clear error instead of a silent 200-without-CORS-header.
+ *
  * In development: allow any origin on localhost or LAN IPs (so the app works
  * when opened from a phone at http://192.168.x.x:3000), plus any *.space-z.ai
  * subdomain (the sandbox/preview gateway) and the wildcard `*` if configured.
@@ -99,7 +110,7 @@ function corsOrigin(origin: string | undefined, callback: (err: Error | null, ok
   if (CLIENT_ORIGIN.includes('*')) {
     if (isProd) {
       logger.warn('CORS CLIENT_ORIGIN=* forbidden in production', { module: 'cors', origin })
-      return callback(null, false)
+      return callback(new Error(`CORS: wildcard origin forbidden in production (got ${origin})`))
     }
     return callback(null, true)
   }
@@ -114,7 +125,12 @@ function corsOrigin(origin: string | undefined, callback: (err: Error | null, ok
         return callback(null, true)
       }
     } catch {}
-    return callback(null, false)
+    logger.warn('CORS origin rejected (production allowlist)', {
+      module: 'cors',
+      origin,
+      allowlist: CLIENT_ORIGIN,
+    })
+    return callback(new Error(`CORS: origin ${origin} not in CLIENT_ORIGIN allowlist`))
   }
 
   // Development: allow localhost + LAN IPs on any port
@@ -136,7 +152,12 @@ function corsOrigin(origin: string | undefined, callback: (err: Error | null, ok
   } catch {}
   // Fallback: allow configured origins
   if (CLIENT_ORIGIN.includes(origin)) return callback(null, true)
-  callback(null, false)
+  logger.warn('CORS origin rejected (development)', {
+    module: 'cors',
+    origin,
+    allowlist: CLIENT_ORIGIN,
+  })
+  return callback(new Error(`CORS: origin ${origin} not allowed`))
 }
 
 // ============================================================================

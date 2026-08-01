@@ -72,16 +72,15 @@ export class StudioErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoun
         }
         // Build URL: in sandbox/preview, append ?XTransformPort=4000 so the
         // public gateway routes to the backend port. Locally, point directly.
-        const isLocal =
-          window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-        const isPrivateLan = /^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\.|^169\.254\./.test(
-          window.location.hostname,
-        )
-        const url = isLocal
-          ? 'http://localhost:4000/api/audit/client-error'
-          : isPrivateLan
-            ? `http://${window.location.hostname}:4000/api/audit/client-error`
-            : '/api/audit/client-error?XTransformPort=4000'
+        // v25.2-CORS-FIX: always use relative URL. Next.js rewrites() proxies
+        // /api/* to the backend server-side (no CORS preflight).
+        // Studio has basePath: '/studio' — prepend it so the rewrite matches.
+        const isSandbox =
+          window.location.hostname === 'space-z.ai' ||
+          window.location.hostname.endsWith('.space-z.ai')
+        const url = isSandbox
+          ? '/api/audit/client-error?XTransformPort=4000'
+          : '/studio/api/audit/client-error'
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (token) headers.Authorization = `Bearer ${token}`
         fetch(url, {
