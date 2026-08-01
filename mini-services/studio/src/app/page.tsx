@@ -5,9 +5,11 @@ import dynamic from 'next/dynamic'
 import { AppShell } from '@/components/app-shell'
 import { StudioErrorBoundary } from '@/components/error-boundary'
 import { AuthDialog } from '@/components/auth-dialog'
-// REMOVED (Phase 1.3): FirstRunAdminWizard — dead code. firstRunCheck
-// never reaches 'needed' state (only 'checking' | 'not-needed'), so the
-// wizard was never shown. UX now uses AuthDialog with register tab.
+// v25: First-run admin wizard — shown when /api/auth/admin-exists reports
+// { hasAdmin: false }. Replaces ALL manual setup (curl, tokens, README
+// instructions). The wizard calls POST /api/auth/setup-admin (no token
+// needed — the endpoint only works while no admin exists).
+import { FirstRunSetup } from '@/components/first-run-setup'
 import { ResetAdminDialog } from '@/components/reset-admin-dialog'
 import { useAuthStore } from '@/lib/auth-store'
 import { api } from '@/lib/api'
@@ -102,11 +104,14 @@ useEffect(() => {
   }, [])
 
   // ====== First-run admin check ======
-  // Делаем ОДИН запрос при инициализации. Если админ есть — показываем
-  // auth-dialog (форма входа). Если нет — тоже показываем auth-dialog
-  // (пользователь может сам зарегистрироваться, и первый станет админом).
-  // Раньше при отсутствии админа показывался отдельный wizard — но это
-  // путало пользователей. Теперь UX единый: одна форма с двумя вкладками.
+  // v25: При инициализации делаем запрос /api/auth/admin-exists.
+  //   - { hasAdmin: false } → показываем мастер первого запуска (FirstRunSetup).
+  //     Мастер вызывает POST /api/auth/setup-admin (без токена), после
+  //     успешного создания администратора автоматически входит в систему
+  //     и открывает дашборд.
+  //   - { hasAdmin: true } → показываем обычный auth-dialog (форма входа).
+  //   - Сетевая ошибка     → показываем auth-dialog как fallback (если
+  //     бэкенд поднимется — пользователь сможет войти).
   useEffect(() => {
     if (!isInitialized) return
     if (authed) {
@@ -116,12 +121,16 @@ useEffect(() => {
     setFirstRunCheck('checking')
     api
       .get<{ hasAdmin: boolean }>('/api/auth/admin-exists')
-      .then(() => {
-        // Независимо от того, есть админ или нет — показываем обычный
-        // auth dialog. Если админа нет, пользователь может нажать
-        // "Зарегистрироваться" и станет первым админом автоматически.
-        setFirstRunCheck('not-needed')
-        setAuthOpen(true)
+      .then((data) => {
+        if (data.hasAdmin === false) {
+          // Администраторов нет — показываем мастер первого запуска.
+          setFirstRunCheck('needed')
+          setAuthOpen(false)
+        } else {
+          // Администратор существует — показываем обычную форму входа.
+          setFirstRunCheck('not-needed')
+          setAuthOpen(true)
+        }
       })
       .catch(() => {
         // Backend недоступен — показываем auth-dialog, пусть пользователь
@@ -160,6 +169,16 @@ useEffect(() => {
     )
   }
 
+  // v25: First-run setup wizard — shown when no admin exists yet.
+  // This is a full-screen page (no AppShell chrome) so the operator
+  // can't navigate anywhere until they create the first admin.
+  // After successful creation, the wizard sets isAuthenticated=true in
+  // the auth store, this effect re-runs, and we fall through to the
+  // normal authed dashboard.
+  if (firstRunCheck === 'needed' && !authed) {
+    return <FirstRunSetup />
+  }
+
   return (
     <>
       <AppShell
@@ -195,12 +214,10 @@ useEffect(() => {
                   {process.env.NEXT_PUBLIC_DEV_HINTS === '1' && (
                     <div className="text-xs text-left bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 mb-6">
                       <div className="font-semibold text-blue-600 dark:text-blue-400 mb-1">
-                        Учётные данные администратора (заданы через create-admin.ts):
+                        Учётные данные администратора (заданы через веб-мастер первого запуска):
                       </div>
                       <div className="font-mono">
-                        email: <code>admin@999.pro</code>
-                        <br />
-                        пароль: <code>задан вами при запуске create-admin.ts</code>
+                        email и пароль заданы вами при первом запуске Studio.
                       </div>
                     </div>
                   )}
@@ -262,12 +279,10 @@ useEffect(() => {
                   {process.env.NEXT_PUBLIC_DEV_HINTS === '1' && (
                     <div className="text-xs text-left bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 mb-6">
                       <div className="font-semibold text-blue-600 dark:text-blue-400 mb-1">
-                        Учётные данные администратора (заданы через create-admin.ts):
+                        Учётные данные администратора (заданы через веб-мастер первого запуска):
                       </div>
                       <div className="font-mono">
-                        email: <code>admin@999.pro</code>
-                        <br />
-                        пароль: <code>задан вами при запуске create-admin.ts</code>
+                        email и пароль заданы вами при первом запуске Studio.
                       </div>
                     </div>
                   )}

@@ -1,12 +1,42 @@
-// «Три девятки» — Prisma schema
-// SQLite database. Run `npm run db:push` to apply changes.
+// «Три девятки» — Prisma schema (PostgreSQL — production default)
+// ============================================================================
+// v25.1: PostgreSQL is now the DEFAULT database provider, replacing SQLite
+// as the production backend. SQLite remains available for local dev via
+// schema.sqlite.prisma (auto-selected by scripts/setup.js when
+// BACKEND_DATABASE_URL starts with "file:").
+//
+// Why PostgreSQL over SQLite for production:
+//   • True concurrent writes (SQLite locks the whole file on write —
+//     Postgres uses MVCC, so readers never block writers and vice versa).
+//   • Connection pooling (PgBouncer / Prisma's built-in pool) — scales to
+//     hundreds of concurrent users without "database is locked" errors.
+//   • Native `Decimal(10,2)` type — exact numeric math for prices/orders
+//     (SQLite stores Decimal as TEXT, losing precision guarantees).
+//   • Native `JSONB` type — faster queries on the moderation / AI KB
+//     JSON columns (can index inside JSON with GIN).
+//   • Row-level locking, FOR UPDATE, partial indexes, full-text search —
+//     all available when needed.
+//
+// Connection pool: configured in lib/prisma.ts via the
+// `?connection_limit=10&pool_timeout=10` query-string params appended
+// to BACKEND_DATABASE_URL. Tuned for a typical 2-4 GB VPS.
+//
+// Migration baseline: prisma/migrations/0_postgres_baseline/migration.sql
+//   (generated from this schema via `prisma migrate diff --from-empty`).
+//   To apply: `npx prisma migrate deploy` (idempotent — skips if applied).
+//
+// To switch back to SQLite for local dev:
+//   1. Run `npm run setup` and answer "sqlite" when prompted, OR
+//   2. Set BACKEND_DATABASE_URL="file:./dev.db" in mini-services/backend/.env
+//      and run `node scripts/use-sqlite.js` to swap the schema file.
+// ============================================================================
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("BACKEND_DATABASE_URL")
 }
 
@@ -23,7 +53,7 @@ model User {
   avatar      String?
   bio         String?
   gender      String?  // male | female | other — для гендерных градиентов в чате
-  role        String   @default("user") // user | admin | manager
+  role        String   @default("user") // user | admin
   isOnline    Boolean  @default(false)
   // tokenVersion is included in every JWT and checked on every protected
   // request. Incrementing it (on password change / logout-everywhere /
@@ -31,7 +61,7 @@ model User {
   tokenVersion Int     @default(0)
   lastSeen    DateTime @default(now())
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @default(now()) @updatedAt
   // Phase 7.1: Soft delete — instead of CASCADE deleting user's orders,
   // messages, reviews (which destroys financial records and other users'
   // chat history), we mark the user as deleted and anonymize PII.
@@ -50,15 +80,11 @@ model User {
   // S-CRIT-007 fix: email verification on registration.
   // emailVerified is null until the user clicks the verification link.
   emailVerified DateTime?
-  // v19.0: 2FA backup codes (JSON array of bcrypt hashes). Generated on
-  // TOTP setup. Each code can be used once to bypass TOTP if the user
-  // loses their authenticator device.
-  totpBackupCodes    String?  // JSON: ["$2b$10$...", "$2b$10$...", ...]
+  // v19.0: 2FA backup codes (JSON array of bcrypt hashes) + email 2FA placeholder.
+  totpBackupCodes            String?
   totpBackupCodesGeneratedAt DateTime?
-  // v19.0: email-based 2FA — pending email code + expiry (for users
-  // without TOTP who chose email 2FA). Cleared after successful verify.
-  emailTwoFactorCode     String?
-  emailTwoFactorExpires  DateTime?
+  emailTwoFactorCode         String?
+  emailTwoFactorExpires      DateTime?
 
   // v12.3.1: stories relation RESTORED (was incorrectly removed with Feed).
   // Stories is a standalone module — Feed (posts/comments/likes) remains deleted.
@@ -115,7 +141,6 @@ model User {
   pointsTransactions    PointsTransaction[]
 
   // v16.9 MODERATION — back-relations for the moderation system.
-  // All named explicitly to avoid Prisma P1012 "Ambiguous relation".
   reportsMade           ModerationReport[]  @relation("UserReportsMade")
   reportsReviewed       ModerationReport[]  @relation("UserReportsReviewed")
   moderationActions     ModerationLog[]     @relation("UserModerationActions")
@@ -128,6 +153,14 @@ model User {
   @@index([role])
   @@index([isOnline])
   @@index([deletedAt])
+  // v25.1 production indexes — composite indexes for the most common
+  // backend queries. Each one replaces a sequence of single-column index
+  // scans with a single index scan, dramatically cutting query time on
+  // large tables (100k+ users).
+  @@index([role, deletedAt])              // admin-exists, admin list
+  @@index([isOnline, lastSeen])           // online-users dashboard
+  @@index([deletedAt, createdAt])         // paginated user list (Studio)
+  @@index([role, isOnline, deletedAt])    // "show online admins" query
 }
 
 // ============================================================
@@ -137,8 +170,8 @@ model Product {
   id           String   @id @default(cuid())
   title        String
   description  String?
-  price        Decimal // Wave 4 (B-DB-001): was Float, rounding errors. Decimal = exact numeric
-  oldPrice     Decimal? // Wave 4 (B-DB-001): was Float
+  price        Decimal @db.Decimal(10, 2) // v8-audit: should be Decimal when migrating to PostgreSQL (Float OK for integer ruble prices)
+  oldPrice     Decimal? @db.Decimal(10, 2) // v8-audit: same as price
   currency     String   @default("RUB")
   category     String?
   images       String   // JSON array of URLs (SQLite has no native arrays)
@@ -165,13 +198,12 @@ model Product {
   purchases    Int      @default(0) // incremented when an order containing this product is created
   cartAdds     Int      @default(0) // incremented when item is added to cart
   favoriteAdds Int      @default(0) // incremented when item is favorited
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // v24.4: Department link — each product belongs to a department (Реклама, Подарки, etc.)
-  // When set, the product page shows the department's contacts (manager phone, WhatsApp, etc.)
+  // v24.6-audit (C-DB-1 fix): departmentId was missing from postgres schema —
+  // all /api/departments/* routes + Product.departmentId FK would have crashed
+  // at runtime on Postgres prod. Mirrors the SQLite schema.
   departmentId String?
-  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
 
   favorites  Favorite[]
   cartItems  CartItem[]
@@ -185,6 +217,8 @@ model Product {
   shareLink   ShareLink?
   // Smart Share events pointing at this product
   shareEvents ShareEvent[]
+  // v24.6-audit (C-DB-1 fix): Department relation (was missing in postgres schema)
+  department  Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
 
   @@index([isPopular])
   @@index([category])
@@ -271,7 +305,7 @@ model CartItem {
 model Order {
   id        String   @id @default(cuid())
   userId    String
-  total     Decimal // Wave 4 (B-DB-001): was Float
+  total     Decimal @db.Decimal(10, 2)
   status    String   @default("new") // new | in_work | production | ready | in_delivery | done | cancelled
   // v12.7: checkout fields — collected in the CheckoutSheet form
   name           String?
@@ -283,24 +317,25 @@ model Order {
   receiptUrl     String?
   // v12.7: coupon applied at checkout (server-validated)
   couponCode     String?
-  discount       Decimal  @default(0) // Wave 4 (B-DB-001): was Float
-  // v19.0: promo code applied at checkout (separate from club coupon)
+  discount       Decimal @db.Decimal(10, 2)  @default(0)
+  // v19.0: promo code + bonus points
   promoCode      String?
-  promoDiscount  Decimal  @default(0)
-  // v19.0: bonus points spent (negative delta from user balance) + discount
-  pointsSpent    Int      @default(0)
-  pointsDiscount Decimal  @default(0)
-  // v19.0: bonus points earned for this order (computed at checkout)
-  pointsEarned   Int      @default(0)
+  promoDiscount  Decimal @db.Decimal(10, 2)  @default(0)
+  pointsSpent    Int     @default(0)
+  pointsDiscount Decimal @db.Decimal(10, 2)  @default(0)
+  pointsEarned   Int     @default(0)
   // v16: delivery system — coordinates, zone, fee, map link
   lat            Float?
   lng            Float?
   mapUrl         String?   // universal maps URL (geo: or https) for "open in maps"
   deliveryZoneId String?
-  deliveryFee    Decimal   @default(0)
-  // v16.5: category (for Studio filtering — Реклама/Подарки/Мебель/Полиграфия/Интерьер)
+  deliveryFee    Decimal @db.Decimal(10, 2) @default(0)
+  // v16.5: category (for Studio filtering)
   category       String?
   createdAt DateTime @default(now())
+  // C6 fix: @default(now()) добавлено, чтобы INSERT без явного значения
+  // updatedAt не падал. Раньше Prisma требовала явное значение для NOT NULL
+  // поля без дефолта — это ломало создание заказа в Postgres.
   updatedAt DateTime @default(now()) @updatedAt
 
   user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -312,15 +347,10 @@ model Order {
   @@index([status])
   @@index([createdAt])
   @@index([category])
-  // Composite index for the common Studio query: list orders by user+status+date
   @@index([userId, status, createdAt])
   @@index([status, createdAt])
 }
 
-// ============================================================
-//  ORDER STATUS HISTORY — v16.5: track every status change for audit
-//  + revert capability. Each row = one transition (from → to).
-// ============================================================
 model OrderStatusHistory {
   id          String   @id @default(cuid())
   orderId     String
@@ -344,11 +374,11 @@ model DeliveryZone {
   id          String   @id @default(cuid())
   name        String   // e.g. "По городу", "По республике", "По России"
   description String?
-  cost        Decimal  @default(0) // flat fee now; future: formula/radius/polygon
+  cost        Decimal @db.Decimal(10, 2) @default(0)
   isActive    Boolean  @default(true)
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @default(now()) @updatedAt
 
   orders Order[]
 
@@ -360,7 +390,7 @@ model OrderItem {
   orderId   String
   productId String
   quantity  Int
-  price     Decimal // Wave 4 (B-DB-001): was Float
+  price     Decimal @db.Decimal(10, 2)
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   // v8-audit-fix: Restrict prevents deleting a product with existing orders
@@ -410,7 +440,7 @@ model Conversation {
   //               sorted to the top of the chat list)
   type      String   @default("direct")
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
 
   participants ConversationParticipant[]
   messages     Message[]
@@ -462,10 +492,7 @@ model Message {
   // for everyone (content/mediaUrl are nulled in that case).
   deletedFor     String   @default("[]")
   deletedForAll  Boolean  @default(false)
-  // v16.8-final: optional self-destruct timer for voice messages. When set,
-  // a background scheduler deletes the message for everyone (and removes
-  // the audio file) after the deadline. Null = no auto-delete.
-  // Set by the sender via the ⏱️ Timer button in the voice record panel.
+  // v16.8-final: optional self-destruct timer for voice messages.
   selfDestructAt DateTime?
   createdAt      DateTime @default(now())
 
@@ -484,6 +511,12 @@ model Message {
   @@index([senderId, clientMessageId])
   // v16.8-final: index for the self-destruct scheduler's due-query.
   @@index([selfDestructAt])
+  // v25.1 production indexes — chat is the highest-traffic table.
+  // DESC order is implicit (Postgres can scan indexes in both directions),
+  // so we don't need a separate "createdAt DESC" index.
+  @@index([conversationId, createdAt, senderId])  // paginated chat history
+  @@index([senderId, createdAt])                  // "my messages across all chats"
+  @@index([selfDestructAt, conversationId])       // scheduler batch query
 }
 
 // ============================================================
@@ -519,7 +552,9 @@ model Call {
 // ============================================================
 model Banner {
   id          String   @id @default(cuid())
-  // v13.0: title is now nullable — image-only banners have no text overlay.
+  // C5 fix: title теперь nullable (как в SQLite-схеме) — image-only баннеры
+  // не имеют текстового overlay. Раньше в Postgres поле было NOT NULL,
+  // что ломало создание баннера без title.
   title       String?
   subtitle    String?
   cta         String   @default("Смотреть")
@@ -533,7 +568,7 @@ model Banner {
   link        String?
   order       Int      @default(0)
   isActive    Boolean  @default(true)
-  // v12.6.4 (now actually wired through the schema):
+  // C5 fix: mode + objectFit добавлены (v12.6.4) — синхронизация с SQLite.
   //   mode       — 'image-text' (default, classic banner with text overlay)
   //              | 'image-only' (raw image, no text/overlay)
   //   objectFit  — 'cover'   (default, fills the banner box, may crop)
@@ -541,7 +576,7 @@ model Banner {
   mode        String   @default("image-text")
   objectFit   String   @default("cover")
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @default(now()) @updatedAt
 
   @@index([isActive, order])
 }
@@ -558,31 +593,18 @@ model AppSetting {
 //  INFO PAGES — редактируемые информационные страницы приложения.
 //  Полностью управляются через Studio (CRUD + reorder + publish).
 //  Frontend рендерит страницу по slug через /api/info-pages/:slug.
-//  Slug'и зарезервированы: 'about', 'privacy', 'terms', 'cookies',
-//  'rights', 'contacts', 'help', 'company' — но администратор может
-//  создавать любые новые страницы с произвольными slug'ами.
 // ============================================================
 model InfoPage {
   id          String   @id @default(cuid())
-  // URL-идентификатор: /info/<slug>. Латиница, цифры, дефис. Уникальный.
   slug        String   @unique
-  // Заголовок страницы (отображается в шапке и в<title>).
   title       String
-  // Подзаголовок/описание (необязательно).
   subtitle    String?
-  // Тело страницы в HTML (редактор Studio отправляет sanitize-ированный HTML).
   content     String   @default("")
-  // Необязательные изображения (JSON-массив URL'ов в /uploads/...).
   images      String   @default("[]")
-  // Иконка (lucide-react имя) для отображения в меню/списках.
   icon        String   @default("FileText")
-  // Порядок отображения в списке страниц (меньше = выше).
   order       Int      @default(0)
-  // Опубликована ли страница (false = скрыта от пользователей).
   isPublished Boolean  @default(true)
-  // Показывать ли страницу в меню "Ещё" (more-sheet) автоматически.
   showInMenu  Boolean  @default(true)
-  // SEO meta description (необязательно).
   metaDescription String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -601,12 +623,15 @@ model PushSubscription {
   endpoint  String   @unique
   keys      String   // JSON: { p256dh, auth }
   userAgent String?
-  scope     String?  // SW scope: "/" (main app) or "/studio/" (admin panel) — used to dedup duplicate subs
+  // C5 fix: scope добавлен — SW scope: "/" (main app) или "/studio/" (admin).
+  // Используется для дедупликации подписок между основным приложением и Studio.
+  scope     String?
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  // C5 fix: composite index для дедупликации (main app vs studio).
   @@index([userId, userAgent])
 }
 
@@ -626,7 +651,7 @@ model Review {
   photos    String   @default("[]") // JSON array of upload URLs
   isHidden  Boolean  @default(false) // admin moderation
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -669,7 +694,7 @@ model Lead {
   // notification when the app is closed.
   userId        String?
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(now()) @updatedAt
 
   user User? @relation("UserLeads", fields: [userId], references: [id], onDelete: SetNull)
 
@@ -750,7 +775,7 @@ model ShareLink {
   installsCount   Int  @default(0) // first-run detection from a share link
   ordersCount     Int  @default(0) // orders placed after visiting a share link
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @default(now()) @updatedAt
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   events  ShareEvent[]
@@ -833,7 +858,7 @@ model ClubGift {
   active      Boolean  @default(true)
   order       Int      @default(0)
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @default(now()) @updatedAt
 
   claims ClubGiftClaim[]
 
@@ -873,7 +898,7 @@ model ClubPromo {
   active         Boolean  @default(true)
   order          Int      @default(0)
   createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  updatedAt      DateTime @default(now()) @updatedAt
 
   @@index([active, order])
   @@index([endsAt])
@@ -896,7 +921,7 @@ model ClubGiveaway {
   active           Boolean  @default(true)
   order            Int      @default(0)
   createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  updatedAt        DateTime @default(now()) @updatedAt
 
   participants ClubGiveawayParticipant[]
 
@@ -931,7 +956,7 @@ model ClubBonus {
   active        Boolean  @default(true)
   order         Int      @default(0)
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(now()) @updatedAt
 
   claims ClubBonusClaim[]
 
@@ -970,7 +995,7 @@ model ClubTask {
   active        Boolean  @default(true)
   order         Int      @default(0)
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(now()) @updatedAt
 
   completions ClubTaskCompletion[]
 
@@ -1017,7 +1042,7 @@ model ClubCoupon {
   active        Boolean  @default(true)
   order         Int      @default(0)
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(now()) @updatedAt
 
   claims ClubCouponClaim[]
 
@@ -1053,7 +1078,7 @@ model ClubEvent {
   active      Boolean  @default(true)
   order       Int      @default(0)
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime @default(now()) @updatedAt
 
   registrations ClubEventRegistration[]
 
@@ -1098,43 +1123,31 @@ model PointsTransaction {
 
 // ============================================================
 //  MODERATION SYSTEM (v16.9)
-//
-//  Production-grade two-level moderation:
-//    Level 1 — local check (stop-words, spam, flood, links) in lib/moderation.ts
-//    Level 2 — AI check (semantic analysis) in lib/moderation-ai.ts
-//
-//  Privacy by design: only flagged/reported/blocked content is stored.
-//  Regular private chats are NEVER bulk-stored in moderation tables.
 // ============================================================
 
-// Stop-words dictionary — fully managed via Studio.
-// Each word is normalized (lowercase, trim) before storage.
-// Categories: profanity | insult | extremism | terrorism | violence | drugs | fraud | spam | ads | custom
 model StopWord {
   id        String   @id @default(cuid())
-  word      String   // normalized: lowercase, trimmed
+  word      String
   category  String   @default("custom")
   isActive  Boolean  @default(true)
-  severity  String   @default("medium") // low | medium | high
+  severity  String   @default("medium")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  createdBy String?  // admin user id (null = system default)
+  createdBy String?
 
   @@index([category, isActive])
   @@index([word])
   @@index([isActive])
 }
 
-// User-submitted reports (from chat context menu "Пожаловаться").
-// Each report references a target entity (message, review, profile).
 model ModerationReport {
   id           String    @id @default(cuid())
   reporterId   String
-  targetType   String    // message | review | profile | user
-  targetId     String    // id of the reported entity
-  reason       String    // spam | insult | threat | fraud | forbidden | other
-  comment      String?   // optional description from reporter
-  status       String    @default("pending") // pending | reviewed | dismissed | actioned
+  targetType   String
+  targetId     String
+  reason       String
+  comment      String?
+  status       String    @default("pending")
   reviewedBy   String?
   reviewedAt   DateTime?
   decision     String?
@@ -1149,18 +1162,15 @@ model ModerationReport {
   @@index([createdAt])
 }
 
-// Audit log of ALL moderation actions (AI + admin + system).
-// This is separate from AuditLog because moderation actions are higher-volume
-// and have different retention/query patterns.
 model ModerationLog {
   id          String   @id @default(cuid())
-  actorType   String   // ai | admin | system
-  actorId     String?  // admin user id (null for AI/system)
-  action      String   // block_message | hide_message | warn_user | ban_user | restrict_chat | restrict_reviews | delete_review | restore_message | unban_user | stopword_add | stopword_delete | setting_change | ...
-  targetType  String   // message | review | profile | user | stopword | setting
+  actorType   String
+  actorId     String?
+  action      String
+  targetType  String
   targetId    String?
   reason      String?
-  details     String   @default("{}") // JSON snapshot
+  details     String   @default("{}")
   createdAt   DateTime @default(now())
 
   actor       User?    @relation("UserModerationActions", fields: [actorId], references: [id], onDelete: SetNull)
@@ -1171,16 +1181,15 @@ model ModerationLog {
   @@index([action, createdAt])
 }
 
-// Warnings issued to users (manual by admin or automatic by AI).
 model ModerationWarning {
   id              String    @id @default(cuid())
   userId          String
   reason          String
   message         String?
-  severity        String    @default("medium") // low | medium | high
-  expiresAt       DateTime? // null = permanent until acknowledged
+  severity        String    @default("medium")
+  expiresAt       DateTime?
   acknowledgedAt  DateTime?
-  createdBy       String?   // admin user id or "ai" or "system"
+  createdBy       String?
   createdAt       DateTime  @default(now())
 
   user            User      @relation("UserWarnings", fields: [userId], references: [id], onDelete: Cascade)
@@ -1190,20 +1199,18 @@ model ModerationWarning {
   @@index([acknowledgedAt])
 }
 
-// Per-user moderation stats (1:1 with User).
-// Denormalized counters for fast dashboard queries.
 model UserModerationStats {
   id                       String    @id @default(cuid())
   userId                   String    @unique
   violationsCount          Int       @default(0)
-  reportsCount             Int       @default(0) // reports AGAINST this user
+  reportsCount             Int       @default(0)
   deletedMessagesCount     Int       @default(0)
   deletedReviewsCount      Int       @default(0)
   warningsCount            Int       @default(0)
   bansCount                Int       @default(0)
   chatRestrictedUntil      DateTime?
   reviewsRestrictedUntil   DateTime?
-  commentsRestrictedUntil  DateTime? // reserved (no comments system yet)
+  commentsRestrictedUntil  DateTime?
   isBanned                 Boolean   @default(false)
   banReason                String?
   bannedUntil              DateTime?
@@ -1220,19 +1227,16 @@ model UserModerationStats {
   @@index([bannedUntil])
 }
 
-// AI-flagged content — only content that AI scored as potentially dangerous.
-// This is the ONLY place where message content is stored outside the Message
-// table, and ONLY for flagged content. Regular chats are never stored here.
 model AIFlag {
   id          String    @id @default(cuid())
   userId      String
-  targetType  String    // message | review | profile | username
+  targetType  String
   targetId    String?
-  content     String    // the flagged content (truncated to 2000 chars)
-  reason      String    // categories detected (comma-separated)
-  confidence  Float     @default(0) // 0-1
-  severity    String    @default("medium") // low | medium | high
-  action      String    @default("flagged") // blocked | flagged | hidden
+  content     String
+  reason      String
+  confidence  Float     @default(0)
+  severity    String    @default("medium")
+  action      String    @default("flagged")
   reviewed    Boolean   @default(false)
   reviewedBy  String?
   reviewedAt  DateTime?
@@ -1246,16 +1250,10 @@ model AIFlag {
   @@index([severity, createdAt])
 }
 
-// ============================================================================
-//  AI KNOWLEDGE BASE  (v18.5 — AI Assistant)
-// ----------------------------------------------------------------------------
-//  DeepSeek NEVER stores product / price info. The backend always reads from
-//  these tables and feeds ready numbers to the model. The model only formats
-//  the final response in natural language.
-// ============================================================================
+// ============================================================
+//  v18.5 — AI Knowledge Base (categories, products, services, FAQs, settings, conversation log)
+// ============================================================
 
-// A category groups KB products (e.g. "Баннеры", "Вывески", "Подарки").
-// Categories are managed via Studio — full CRUD, no code changes.
 model AIKB_Category {
   id          String   @id @default(cuid())
   name        String
@@ -1267,69 +1265,33 @@ model AIKB_Category {
   products    AIKB_Product[]
 }
 
-// A product in the AI Knowledge Base. Distinct from the marketplace Product
-// model — KB products can have rich pricing logic, services, instructions.
-// A KB product MAY reference a marketplace Product id (optional link) so the
-// studio admin can keep both in sync, but it is not required.
 model AIKB_Product {
   id            String   @id @default(cuid())
-  // Optional link to the marketplace Product (so KB can reuse catalog data).
   marketplaceProductId String?
   name          String
   slug          String   @unique
   description   String?
-  // Short summary used as the AI's product card (one paragraph).
   shortSummary  String?
-  // Materials (JSON array of strings, e.g. ["Акрил 3мм","ПВХ 5мм"])
   materials     String   @default("[]")
-  // Tech specs (JSON object: { "Вес": "1.2 кг", "Срок службы": "5 лет" })
   specs         String   @default("{}")
-  // Manufacturing time / lead time in human form, e.g. "2–4 рабочих дня"
   leadTime      String?
-  // Warranty text, e.g. "12 месяцев на материал и монтаж"
   warranty      String?
-
-  // Pricing type drives how `basePrice` is interpreted.
-  //   fixed            — single price (mug, photostone)
-  //   per_unit         — per piece
-  //   per_sq_meter     — per m² (banners, signs by area)
-  //   per_linear_meter — per linear meter (strips, moldings)
-  //   per_set          — per kit/bundle
-  //   range            — min/max price (use basePrice=minimum, maxPrice=maximum)
-  //   quote            — "по запросу" — AI should ask for details
   pricingType   String   @default("fixed")
-  basePrice     Float    @default(0)   // RUB
-  maxPrice      Float?                 // for "range" type
+  basePrice     Float    @default(0)
+  maxPrice      Float?
   currency      String   @default("RUB")
-  minOrderValue Float?                 // optional minimum order cost
-
-  // Free-form formula description shown to the AI:
-  //   "Ширина × Высота × Цена_за_м² + Дизайн + Монтаж + Доставка"
+  minOrderValue Float?
   formula       String?
-  // Structured formula spec (JSON) used by the calculation engine.
-  // See backend src/lib/ai-calc.ts for the supported schema.
   formulaSpec   String   @default("{}")
-
-  // Per-product AI instruction (multi-line text). The admin writes this in
-  // Studio and the backend injects it into the system prompt when this
-  // product is mentioned.
-  // Example:
-  //   "Если клиент не указал размеры — сначала спросить ширину и высоту.
-  //    Потом предложить дизайн. Потом монтаж. Потом доставку."
   aiInstruction String?
-
-  images        String   @default("[]") // JSON array of URLs
+  images        String   @default("[]")
   isActive      Boolean  @default(true)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-
   categoryId    String?
   category      AIKB_Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-
-  // Additional services that may be added to this product (design, mount…)
   services      AIKB_Service[]
-  // Frequent questions and their authoritative answers.
   faqs          AIKB_FAQ[]
 
   @@index([categoryId])
@@ -1338,27 +1300,15 @@ model AIKB_Product {
   @@index([slug])
 }
 
-// Additional service that can be attached to a product (design, mount,
-// delivery, urgency surcharge, etc.). Each service has its own pricing.
 model AIKB_Service {
   id          String   @id @default(cuid())
   productId   String
   product     AIKB_Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  name        String   // "Дизайн", "Монтаж", "Доставка"
+  name        String
   description String?
-  // Service pricing type:
-  //   fixed       — flat price (e.g. design = 1500 RUB)
-  //   percent     — % of the base product cost (e.g. mount = 15%)
-  //   per_unit    — per square meter / per piece etc. (uses pricePer)
-  //   per_sq_meter, per_linear_meter — same as product
   pricingType String   @default("fixed")
   price       Float    @default(0)
-  // For percent type, `price` holds the percent value (e.g. 15 = 15%).
-  // For per_* types, `price` is the unit price.
-  // Whether this service is included by default in the calculation.
   isDefault   Boolean  @default(false)
-  // Optional condition code (free-form, shown to AI only):
-  //   "Применяется только при заказе от 5000 ₽"
   condition   String?
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
@@ -1367,12 +1317,10 @@ model AIKB_Service {
   @@index([productId])
 }
 
-// Frequent question + authoritative answer. AI may use these verbatim.
 model AIKB_FAQ {
   id          String   @id @default(cuid())
   productId   String?
   product     AIKB_Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
-  // If productId is null — this is a global FAQ (applies to everything).
   question    String
   answer      String
   sortOrder   Int      @default(0)
@@ -1384,40 +1332,24 @@ model AIKB_FAQ {
   @@index([isActive])
 }
 
-// Global AI settings — system prompt preamble, fallback message, etc.
-// Stored as a single-row table (key/value pairs merged into one JSON).
 model AIKB_Settings {
   id             String   @id @default("default")
-  // Global system prompt prepended to every AI conversation.
-  // The admin writes the "personality" + business rules here.
   systemPrompt   String   @default("")
-  // Fallback response when AI cannot help (e.g. KB has no matching product).
   fallbackMessage String  @default("Извините, я не нашёл информацию по вашему запросу. Уточните, пожалуйста, детали — и я обязательно помогу.")
-  // Greeting shown when the assistant opens (before the user has typed).
   greeting       String   @default("Здравствуйте! Я Агент 999. Чем могу помочь?")
-  // Assistant persona name shown in the UI.
   assistantName  String   @default("Агент 999")
   updatedAt      DateTime @updatedAt
 }
 
-// Audit log for AI conversations (optional — used to improve KB over time).
-// Stores user message + assistant reply + extracted parameters.
 model AIKB_Conversation {
   id          String   @id @default(cuid())
   userId      String?
-  // Context: which view was open when the user invoked the assistant.
   context     String?
-  // The user's message (transcribed if voice).
   userMessage String
-  // The assistant's reply.
   assistantReply String
-  // Extracted parameters (JSON: { product, width, height, services[] })
   parameters  String?
-  // Calculated total price (if any), for analytics.
   totalPrice  Float?
-  // Whether the conversation was served from local cache (no DeepSeek call).
   localHandled Boolean @default(false)
-  // ISO timestamp
   createdAt   DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -1427,21 +1359,18 @@ model AIKB_Conversation {
 
 // ============================================================
 //  v19.0 — MULTI-PROVIDER AI CONFIG
-//  Allows admin to configure multiple AI providers (DeepSeek,
-//  OpenAI, Gemini, Claude, Grok, OpenRouter, custom) and switch
-//  between them at runtime via Studio.
-//  API keys are encrypted at rest with AES-256-GCM (see lib/crypto.ts).
 // ============================================================
+
 model AIProvider {
   id          String   @id @default(cuid())
   name        String
-  type        String   @default("deepseek") // deepseek|openai|gemini|claude|grok|openrouter|ollama|custom
-  apiKeyEnc   String   @default("") // AES-256-GCM encrypted
+  type        String   @default("deepseek")
+  apiKeyEnc   String   @default("")
   baseUrl     String   @default("")
   model       String   @default("")
   enabled     Boolean  @default(true)
   isDefault   Boolean  @default(false)
-  params      String   @default("{}") // JSON: temperature, maxTokens, systemPrompt override
+  params      String   @default("{}")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -1452,14 +1381,15 @@ model AIProvider {
 // ============================================================
 //  v19.0 — PROMO CODES (standalone, redeemable at checkout)
 // ============================================================
+
 model PromoCode {
   id              String   @id @default(cuid())
   code            String   @unique
   description     String?
-  discountType    String   @default("percent") // percent | fixed
-  discountValue   Decimal  @default(0)
-  minOrderTotal   Decimal  @default(0)
-  maxDiscount     Decimal?
+  discountType    String   @default("percent")
+  discountValue   Decimal  @db.Decimal(10, 2) @default(0)
+  minOrderTotal   Decimal  @db.Decimal(10, 2) @default(0)
+  maxDiscount     Decimal? @db.Decimal(10, 2)
   maxUses         Int?
   maxUsesPerUser  Int?
   usedCount       Int      @default(0)
@@ -1492,12 +1422,13 @@ model PromoCodeUsage {
 // ============================================================
 //  v19.0 — BONUS POINTS SETTINGS (single-row)
 // ============================================================
+
 model BonusPointsSettings {
   id                      String   @id @default("default")
-  earnRate                Decimal  @default(1)  // points per `earnPerCurrencyUnit` RUB
-  earnPerCurrencyUnit     Decimal  @default(100)
-  pointValue              Decimal  @default(1)  // 1 point = 1 RUB discount
-  minOrderTotalToSpend    Decimal  @default(0)
+  earnRate                Decimal  @db.Decimal(10, 2) @default(1)
+  earnPerCurrencyUnit     Decimal  @db.Decimal(10, 2) @default(100)
+  pointValue              Decimal  @db.Decimal(10, 2) @default(1)
+  minOrderTotalToSpend    Decimal  @db.Decimal(10, 2) @default(0)
   maxPercentOfOrder       Int      @default(50)
   maxPointsBalance        Int?
   expiryDays              Int?
@@ -1509,6 +1440,7 @@ model BonusPointsSettings {
 // ============================================================
 //  v19.0 — SECURITY SETTINGS (single-row)
 // ============================================================
+
 model SecuritySettings {
   id                            String   @id @default("default")
   emailVerificationRequired     Boolean  @default(false)
@@ -1516,7 +1448,7 @@ model SecuritySettings {
   totpRequiredForUsers          Boolean  @default(false)
   totpAllowBackupCodes          Boolean  @default(true)
   allowLoginWithoutVerification Boolean  @default(true)
-  sessionTimeoutMin             Int      @default(10080) // 7 days
+  sessionTimeoutMin             Int      @default(10080)
   refreshTokenTTLDays           Int      @default(30)
   maxFailedLogins               Int      @default(5)
   lockoutDurationMin            Int      @default(15)
@@ -1531,10 +1463,9 @@ model SecuritySettings {
 }
 
 // ============================================================
-//  DEPARTMENT — v24.4
-//  Universal contacts system by direction (Реклама, Подарки, Мебель, etc.)
-//  Each department has its own contacts (phone, WhatsApp, Telegram, email, address, manager name).
-//  Products are linked to departments so users see the right manager's contacts.
+//  DEPARTMENTS — v24.6-audit (C-DB-1 fix): was missing from postgres schema.
+//  Mirrors the SQLite schema model 1:1. Used by /api/departments/* routes
+//  and the multi-department contacts system (Stage 20 of audit).
 // ============================================================
 model Department {
   id          String   @id @default(cuid())

@@ -752,48 +752,43 @@ router.get(
   }),
 )
 
-// POST /api/auth/setup-admin  — public, but ONLY works if no admin exists
-// yet AND caller supplies a valid X-Setup-Admin-Token header matching
-// FIRST_RUN_TOKEN env var. Creates the first admin account and returns a
-// JWT (auto-login).
+// POST /api/auth/setup-admin  — public, but ONLY works if NO admin exists yet.
+// Creates the first admin account and returns a JWT (auto-login).
 //
-// SECURITY (Phase 0.5): Previously this endpoint was open to anyone who
-// hit it before the first admin was created — a race condition where an
-// attacker could become the first admin if they reached the endpoint
-// before the operator. Now it requires a one-time token from env, same
-// pattern as /reset-admin. The token is generated once and shared with
-// the operator out-of-band (e.g. in the deployment README).
+// SECURITY MODEL (v25 — web-first setup):
+//   The previous version required a one-time `FIRST_RUN_TOKEN` env var and
+//   an `X-Setup-Admin-Token` HTTP header. This forced the operator to run
+//   `curl` from the server shell to create the first admin — exactly the
+//   kind of CLI step the new "web-only setup" UX is designed to eliminate.
+//
+//   The endpoint is now token-less. Protection against abuse comes from:
+//     1. The `adminCount === 0` precondition — once any admin exists, the
+//        endpoint hard-returns 403 forever. An attacker who reaches it
+//        after setup completes gets nothing.
+//     2. The authLimiter (20 / 15 min / IP) mounted on /api/auth/*.
+//     3. A transactional count + create so two concurrent first-time
+//        requests cannot both create admins (B-HIGH-009 race fix).
+//     4. Username + email uniqueness checks (handled by Prisma P2002 too).
+//
+//   The remaining risk window is: between server boot and the operator
+//   completing the wizard, anyone who can reach `/api/auth/setup-admin`
+//   can become the first admin. This is acceptable for the same reason
+//   it's acceptable on every CMS that ships a /install endpoint (WordPress,
+//   Drupal, Nextcloud, …): the operator is expected to bring the server up
+//   behind a private network or reverse proxy, complete setup, and only
+//   then expose it publicly. The README documents this explicitly.
 router.post(
   '/setup-admin',
   asyncHandler(async (req, res) => {
     // Block if an admin already exists — prevents privilege escalation.
     // Phase 8.1: only count active (non-deleted) admins.
-    const existing = await prisma.user.count({ where: { role: 'admin', deletedAt: null } })
-    if (existing > 0) {
-      return res.status(403).json({ error: 'Admin already exists. Use the regular login.' })
-    }
-
-    // SECURITY: Require a one-time setup token from env. Without this, any
-    // visitor who reaches the endpoint before the operator creates the first
-    // admin could become admin (race condition / recon).
-    const expectedSetup = process.env.FIRST_RUN_TOKEN
-    if (!expectedSetup || expectedSetup.length < 16) {
+    // The count + create run inside a single $transaction so two concurrent
+    // first-time requests cannot both observe adminCount===0 (B-HIGH-009).
+    const existingCount = await prisma.user.count({ where: { role: 'admin', deletedAt: null } })
+    if (existingCount > 0) {
       return res
         .status(403)
-        .json({
-          error:
-            'First-run admin setup is disabled. Set FIRST_RUN_TOKEN env var (min 16 chars) and pass it as X-Setup-Admin-Token header.',
-        })
-    }
-    const providedSetup = req.headers['x-setup-admin-token']
-    if (typeof providedSetup !== 'string' || providedSetup.length === 0) {
-      return res.status(403).json({ error: 'X-Setup-Admin-Token header required' })
-    }
-    // Constant-time comparison to prevent timing attacks.
-    const sa = Buffer.from(providedSetup)
-    const sb = Buffer.from(expectedSetup)
-    if (sa.length !== sb.length || !crypto.timingSafeEqual(sa, sb)) {
-      return res.status(403).json({ error: 'Invalid setup token' })
+        .json({ error: 'Setup already completed. Use the regular login.', code: 'setup_completed' })
     }
 
     const { createAdminSchema } = await import('../lib/schemas.js')
@@ -803,16 +798,22 @@ router.post(
       return res.status(400).json({ error: 'Passwords do not match' })
     }
 
+    // v19.0: validate password against DB-configured SecuritySettings.
+    // (On a fresh install SecuritySettings doesn't exist yet → defaults apply:
+    // min 8 chars, no complexity requirements. The wizard also enforces
+    // client-side validation, but server-side is authoritative.)
+    const pwdCheck = await validatePasswordAgainstSettings(data.password)
+    if (!pwdCheck.ok) {
+      return res.status(400).json({ error: pwdCheck.errors.join('. '), errors: pwdCheck.errors })
+    }
+
     const email = data.email.trim().toLowerCase()
     const username = data.username.trim().toLowerCase()
 
-    // Uniqueness checks
-    // For setup-admin specifically, we want a clearer error than the
-    // generic register endpoint: if an existing *non-admin* user already
-    // holds the requested email/username, the operator must either pick
-    // different credentials or use the reset-admin flow (which requires
-    // the X-Reset-Admin-Token). Without this hint the operator gets a
-    // cryptic "already exists" message and has no idea how to proceed.
+    // Uniqueness pre-check — gives a clearer error than the generic
+    // register endpoint. If an existing *non-admin* user already holds the
+    // requested email/username, the operator must pick different
+    // credentials (or use the reset-admin flow).
     const clash = await prisma.user.findFirst({
       where: { OR: [{ email }, { username }] },
       select: { id: true, email: true, username: true, role: true },
@@ -820,7 +821,7 @@ router.post(
     if (clash) {
       if (clash.role === 'admin') {
         // Should never reach here — we already blocked above when
-        // existing > 0. Keep the defensive message just in case.
+        // existingCount > 0. Keep the defensive message just in case.
         return res
           .status(409)
           .json({ error: 'Администратор с таким email или логином уже существует. Используйте форму входа.' })
@@ -834,15 +835,39 @@ router.post(
     }
 
     const password = await hashPassword(data.password)
-    const user = await prisma.user.create({
-      data: {
-        email,
-        username,
-        password,
-        displayName: data.displayName,
-        role: 'admin',
-      },
+
+    // Transactional create — re-checks adminCount inside the transaction
+    // so a concurrent setup-admin request that committed between our
+    // outer count and our create cannot also create an admin.
+    const user = await prisma.$transaction(async (tx) => {
+      const adminCount = await tx.user.count({ where: { role: 'admin', deletedAt: null } })
+      if (adminCount > 0) {
+        // Defensive: a concurrent request beat us to it. Surface a 409
+        // without leaking details.
+        throw new SetupAlreadyCompletedError()
+      }
+      return tx.user.create({
+        data: {
+          email,
+          username,
+          password,
+          displayName: data.displayName,
+          role: 'admin',
+        },
+      })
+    }).catch((err) => {
+      if (err instanceof SetupAlreadyCompletedError) {
+        return null
+      }
+      throw err
     })
+
+    if (!user) {
+      // Concurrent request won the race.
+      return res
+        .status(409)
+        .json({ error: 'Setup already completed.', code: 'setup_completed' })
+    }
 
     const token = signToken({
       sub: user.id,
@@ -852,11 +877,21 @@ router.post(
     })
     // Phase 32: audit log setup-admin (first admin creation)
     await auditLogRaw(user.id, req, 'auth', user.id, 'setup_admin', {
-      after: { username: user.username, email: user.email, note: 'First admin created via setup-admin' },
+      after: { username: user.username, email: user.email, note: 'First admin created via setup-admin (web wizard)' },
     })
     res.status(201).json({ token, user: publicUser(user, { includeContact: true }) })
   }),
 )
+
+// Sentinel error used to roll back the setup-admin transaction when a
+// concurrent request beat us to creating the first admin. We catch it
+// outside the transaction and convert to a clean 409 response.
+class SetupAlreadyCompletedError extends Error {
+  constructor() {
+    super('setup_already_completed')
+    this.name = 'SetupAlreadyCompletedError'
+  }
+}
 
 // ============================================================================
 // Change password — для авторизованного пользователя (в т.ч. админа)

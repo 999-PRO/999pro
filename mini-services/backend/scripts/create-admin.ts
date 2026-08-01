@@ -4,6 +4,21 @@ import bcrypt from 'bcryptjs'
 // ============================================================
 // create-admin.ts — Create or reset the admin account.
 // ============================================================
+// DEPRECATED in v25 — kept for legacy/automation use only.
+//
+// The recommended way to create the first admin is now the web-based
+// setup wizard at /studio. After all services are running:
+//   1. Open http://localhost:3001/studio in your browser.
+//   2. If no admin exists, the wizard opens automatically.
+//   3. Fill in the form (name, username, email, password) and click
+//      "Create administrator".
+//   4. You're logged in automatically — no second login needed.
+//
+// This script is still useful for:
+//   - Headless/automated deployments where no browser is available.
+//   - Resetting a forgotten admin password (use --force).
+//   - Promoting an existing user to admin.
+//
 // FIXED (Phase 2): Previously this script:
 //   1. Hardcoded password 'admin12345' (in top-1000 brute-force list)
 //   2. Used bcrypt rounds=10 (below OWASP 2024 recommendation of 12)

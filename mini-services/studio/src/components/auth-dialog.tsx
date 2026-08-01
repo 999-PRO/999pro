@@ -484,8 +484,8 @@ export function AuthDialog({
 
           {mode === 'login' && process.env.NEXT_PUBLIC_DEV_HINTS === '1' && (
             <div className="text-xs text-center text-muted-foreground border-t border-border/40 pt-3 mt-2">
-              Используйте логин и пароль, заданные через{' '}
-              <code className="font-mono text-[10px]">ADMIN_PASSWORD=... bunx tsx scripts/create-admin.ts</code>
+              Используйте логин и пароль, заданные при первичной настройке через
+              веб-мастер первого запуска.
             </div>
           )}
         </form>

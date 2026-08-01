@@ -18,7 +18,7 @@
 # Keep .env.example tracked (negate above)
 !.env.example
 
-# --- Database (SQLite dev only — Postgres used in prod) ---
+# --- Database (v25.1: PostgreSQL is default; SQLite still supported) ---
 *.db
 *.db-journal
 *.db-shm
@@ -27,6 +27,8 @@ mini-services/backend/prisma/dev.db
 mini-services/backend/prisma/dev.db-shm
 mini-services/backend/prisma/dev.db-wal
 mini-services/backend/prisma/*.db-journal
+# v25.1: generated Prisma client (regenerated on install)
+mini-services/backend/node_modules/.prisma/
 
 # --- User uploads (production data — must never be in git) ---
 mini-services/backend/uploads/

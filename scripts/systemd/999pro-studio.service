@@ -1,0 +1,46 @@
+# ============================================================================
+# 999 PRO Studio — systemd unit template
+# ----------------------------------------------------------------------------
+# Next.js standalone admin panel (basePath=/studio) on port 3001.
+# ============================================================================
+
+[Unit]
+Description=999 PRO Studio (Next.js standalone admin panel)
+Documentation=https://github.com/999pro/999pro
+After=network.target 999pro-backend.service
+Wants=999pro-backend.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__STUDIO__
+
+EnvironmentFile=__STUDIO__/.env
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=HOSTNAME=0.0.0.0
+
+ExecStart=__NODE__ .next/standalone/server.js
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+MemoryMax=512M
+MemoryHigh=384M
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=999pro-studio
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
