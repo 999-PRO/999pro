@@ -17,6 +17,11 @@
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react'
+// v25.4 (TZ-2 task #1): render via portal so the share sheet is always on
+// top of every other overlay (ProductPage z-[350], CheckoutSheet z-[450],
+// etc.). Without a portal, the sheet inherits its parent's stacking context
+// and gets clipped/hidden behind the product card.
+import { createPortal } from 'react-dom'
 // Wave 2 (F-BUG-003): shared scroll-lock hook (refcount-safe)
 import { useScrollLock } from '@/lib/use-scroll-lock'
 import { motion } from 'framer-motion'
@@ -370,15 +375,19 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
 
   if (!open) return null
 
-  return (
-    <>
-      <motion.div
-        className="fixed inset-0 z-[100] flex items-end md:items-center justify-center"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-      >
+  // v25.4 (TZ-2 task #1): render via portal at document.body so the share
+  // sheet is always on top of every other overlay (ProductPage z-[350],
+  // CheckoutSheet z-[450], etc.). Without a portal, the sheet inherits its
+  // parent's stacking context and gets clipped/hidden behind the product card.
+  // z-[9999] — higher than any other overlay in the app.
+  return createPortal(
+    <motion.div
+      className="fixed inset-0 z-[9999] flex items-end md:items-center justify-center"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+    >
         {/* Backdrop */}
         <div
           className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -526,7 +535,6 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             </div>
           </div>
         </motion.div>
-      </motion.div>
 
       {/* Smart Story generator modal */}
       {storyOpen && (
@@ -550,7 +558,8 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
         onPick={handleSendToChat}
         title="Отправить товар в чат"
       />
-    </>
+    </motion.div>,
+    document.body,
   )
 }
 

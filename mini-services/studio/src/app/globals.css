@@ -115,13 +115,32 @@
   /* Main content scrolls UNDER the fixed translucent glass header.
      v16.6: add padding-bottom on mobile so the fixed BottomNav (~64px)
      doesn't overlap the last rows of any manager. */
-  .app-main { padding-top: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem); }
+  /* v25.3 (TZ task #4): GLOBAL safe-area fix for ALL Studio pages.
+     Previously `.app-main` had `padding-top: 0` and each manager had to
+     opt-in to safe-area-aware top padding via the `.page-top-padding` class.
+     ~16 managers were missing it, so their titles/headers went UNDER the
+     iOS status bar / Android notch.
+
+     Now `.app-main` itself gets the safe-area-inset-top padding on mobile,
+     so EVERY page (including ones that forgot the .page-top-padding class)
+     is automatically correct. On desktop (md+) the sidebar takes the full
+     height and the main column starts at the top — no safe area to worry
+     about, so padding-top: 0 there. */
+  .app-main {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  }
   @media (min-width: 768px) {
-    .app-main { padding-bottom: 0; }
+    .app-main { padding-top: 0; padding-bottom: 0; }
   }
 
+  /* v25.3: keep .page-top-padding as a NO-OP for backward compat.
+     Existing managers that use it shouldn't double-pad. The class now
+     only adds a tiny extra space on mobile for visual breathing room
+     above the page heading — the safe-area-inset-top is already provided
+     by .app-main. On desktop it's still 0 (sidebar layout). */
   .page-top-padding {
-    padding-top: calc(env(safe-area-inset-top) + 4.5rem);
+    padding-top: 0;
   }
   @media (min-width: 768px) {
     .page-top-padding { padding-top: 0; }

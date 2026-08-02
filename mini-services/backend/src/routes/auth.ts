@@ -270,16 +270,22 @@ router.post(
               },
             },
           })
-          // Send a welcome message from the admin so the chat isn't empty.
-          await prisma.message.create({
-            data: {
-              conversationId: conv.id,
-              senderId: admin.id,
-              content:
-                'Здравствуйте! 👋 Добро пожаловать в «Три девятки». Я — администратор и поддержка. Если у вас возникнут вопросы по товарам, заказам или работе приложения, напишите сюда, я отвечу как можно скорее.',
-              mediaType: 'text',
-            },
-          })
+          // v25.3 (TZ task #3): auto-welcome message removed.
+          //
+          // Previously a hardcoded greeting was sent to every new user as
+          // the admin — this counted as a "test message" that polluted the
+          // chat list on every fresh install. Per the technical spec, the
+          // chat must open empty after launch with no demo / sample
+          // messages of any kind.
+          //
+          // The empty support conversation still exists; the user can send
+          // the first message themselves whenever they need help. The
+          // support view's placeholder input ("Напишите сообщение…") makes
+          // the next step obvious.
+          //
+          // (Conversation created but no message — conv variable retained
+          //  in case future code wants to attach metadata.)
+          void conv
         }
       }
     } catch (e) {
@@ -1149,6 +1155,16 @@ router.post(
 // Раньше endpoint принимал любой действующий JWT — злоумышленник с украденным
 // токеном мог полностью отключить 2FA жертвы-админа (вызвать /totp/setup,
 // затем повторно через /totp/verify с тем же секретом, который он же и сгенерил).
+//
+// v25.3 — admin first-time 2FA setup (TZ task #1):
+//   - Если запрос пришёл с `totpPending: true` setup-токеном (выдаётся
+//     /api/auth/login админу без TOTP), currentPassword НЕ требуется —
+//     setup-токен уже доказывает, что пользователь только что успешно
+//     прошёл проверку пароля. Это позволяет реализовать первоначальную
+//     настройку 2FA прямо в основном приложении (AdminLoginView),
+//     без перенаправления в Studio.
+//   - Токен отклоняется requireAdmin, поэтому никаких админских действий
+//     через него выполнить нельзя — только /totp/setup и /totp/verify.
 router.post(
   '/totp/setup',
   requireAuth,
@@ -1159,9 +1175,13 @@ router.post(
     }
 
     const body = (req.body || {}) as { currentPassword?: string; code?: string }
+    // v25.3: setup-токен (totpPending) уже подтверждает аутентификацию паролем.
+    const isSetupToken = req.user?.totpPending === true
 
     // Если TOTP уже включён — требуем валидный TOTP код (re-setup).
-    // Если TOTP не включён — требуем текущий пароль (первичный setup).
+    // Если TOTP не включён и запрос НЕ через setup-токен — требуем currentPassword.
+    // Если TOTP не включён и запрос через setup-токен — пропускаем проверку
+    // (пароль уже проверен на /api/auth/login перед выдачей setup-токена).
     if (user.totpEnabled && user.totpSecret) {
       if (!body.code) {
         return res.status(400).json({ error: 'Для перегенерации TOTP введите текущий код 2FA.' })
@@ -1170,7 +1190,7 @@ router.post(
       if (!verifyTotp(body.code, user.totpSecret)) {
         return res.status(401).json({ error: 'Неверный код 2FA.' })
       }
-    } else {
+    } else if (!isSetupToken) {
       if (!body.currentPassword) {
         return res.status(400).json({ error: 'Введите текущий пароль для настройки 2FA.' })
       }

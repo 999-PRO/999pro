@@ -73,12 +73,31 @@ const isSandbox = LOCAL_API_BASE === ''
 // api.ts reads it lazily on each request via a getter registered by the store.
 // This eliminates the triple-source desync bug (localStorage vs module var
 // vs legacy 999pro_token key).
+//
+// v25.3 (TZ task #1): also support a short-lived TOTP-setup token issued by
+// /api/auth/login when an admin without TOTP logs in. The setup token carries
+// `totpPending: true` and is accepted ONLY by /api/auth/totp/setup,
+// /totp/verify, /totp/disable. It's rejected by requireAdmin so no admin
+// endpoint can be called with it. Used by AdminLoginView's inline 2FA setup
+// flow — no redirect to Studio required.
 // ============================================================================
 let authTokenGetter: (() => string | null) | null = null
+let authSetupTokenGetter: (() => string | null) | null = null
 
 /** Called once by the auth store to register the token getter. */
 export function registerTokenGetter(fn: () => string | null) {
   authTokenGetter = fn
+}
+
+/** v25.3: register the setup-token getter (TOTP enrollment flow). */
+export function registerSetupTokenGetter(fn: () => string | null) {
+  authSetupTokenGetter = fn
+}
+
+/** v25.3: read the setup token lazily (returns null if not in mid-setup state). */
+export function getSetupToken(): string | null {
+  if (authSetupTokenGetter) return authSetupTokenGetter()
+  return null
 }
 
 // v9-audit-fix: global 401 handler. When an authenticated request returns 401,
@@ -180,7 +199,16 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions extends RequestInit {
-  auth?: boolean
+  /**
+   * Auth mode:
+   *   - false / undefined → no Authorization header
+   *   - true              → use the regular JWT (full access)
+   *   - 'totp-setup'      → v25.3: use the short-lived TOTP-setup token
+   *                          (admin first-time 2FA enrollment). Accepted
+   *                          only by /api/auth/totp/setup, /totp/verify,
+   *                          /totp/disable. Rejected by every admin endpoint.
+   */
+  auth?: boolean | 'totp-setup'
   query?: Record<string, string | number | boolean | undefined>
   json?: unknown
   form?: FormData
@@ -204,22 +232,35 @@ export async function apiFetch<T = unknown>(
 
   const finalHeaders: Record<string, string> = { ...(headers as Record<string, string>) }
   if (auth) {
-    // ARCHITECTURAL CONTRACT: if `auth: true` is requested but no token is
-    // available, the request is NOT sent. This enforces the rule:
-    // "If the user is not logged in, protected requests must not be sent
-    // at all." Previously this silently sent the request without an
-    // Authorization header, causing backend 401 "Authorization header
-    // missing" errors that were impossible to distinguish from a real
-    // auth failure. Now the caller gets an immediate, local 401 ApiError
-    // and the backend never sees the request.
-    const token = getToken()
-    if (!token) {
-      throw new ApiError(
-        'Not authenticated — no token in store. Login first, then retry.',
-        401,
-      )
+    // v25.3: 'totp-setup' auth mode — use the setup token instead of the
+    // regular JWT. Used by AdminLoginView's 2FA enrollment flow.
+    if (auth === 'totp-setup') {
+      const setupToken = getSetupToken()
+      if (!setupToken) {
+        throw new ApiError(
+          'No TOTP setup token in store. Login first to obtain a setup token.',
+          401,
+        )
+      }
+      finalHeaders.Authorization = `Bearer ${setupToken}`
+    } else {
+      // ARCHITECTURAL CONTRACT: if `auth: true` is requested but no token is
+      // available, the request is NOT sent. This enforces the rule:
+      // "If the user is not logged in, protected requests must not be sent
+      // at all." Previously this silently sent the request without an
+      // Authorization header, causing backend 401 "Authorization header
+      // missing" errors that were impossible to distinguish from a real
+      // auth failure. Now the caller gets an immediate, local 401 ApiError
+      // and the backend never sees the request.
+      const token = getToken()
+      if (!token) {
+        throw new ApiError(
+          'Not authenticated — no token in store. Login first, then retry.',
+          401,
+        )
+      }
+      finalHeaders.Authorization = `Bearer ${token}`
     }
-    finalHeaders.Authorization = `Bearer ${token}`
   }
 
   let body: BodyInit | undefined
@@ -240,7 +281,10 @@ export async function apiFetch<T = unknown>(
     // 401, trigger the unauthorized callback (registered by auth store) to
     // logout and redirect to login. Prevents "stuck UI" where user appears
     // logged in but every request silently fails.
-    if (res.status === 401 && auth && unauthorizedHandler) {
+    // v25.3: don't trigger the logout handler for setup-token requests —
+    // a 401 there means the setup token is invalid/expired, NOT that the
+    // user's main session is dead. AdminLoginView surfaces the error inline.
+    if (res.status === 401 && auth === true && unauthorizedHandler) {
       unauthorizedHandler()
     }
     const message =

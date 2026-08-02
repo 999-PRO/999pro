@@ -4,24 +4,82 @@
 //  AdminLoginView — separate admin login page in the main app
 // ----------------------------------------------------------------------------
 //  Allows administrators to log in and access Studio directly from the app.
-//  Test credentials are shown for convenience.
+//
+//  v25.3 (TZ task #1): Full 2FA / TOTP enrollment flow now happens HERE —
+//  no redirect to Studio required. When an admin logs in without TOTP
+//  enrolled, the backend returns a short-lived `totpPending` setup token.
+//  We stash it in the auth store, then show an inline 4-step wizard:
+//
+//    Step 1 — Login form (login + password)
+//    Step 2 — /totp/setup → backend returns secret + otpauthUrl
+//    Step 3 — Render QR (locally via `qrcode` package, no third-party leak)
+//    Step 4 — User scans QR in authenticator app, types 6-digit code
+//             → /totp/verify → backend issues fresh regular JWT
+//             → completeTotpSetup() → navigate to Studio
+//
+//  Security notes:
+//    - The setup token is REJECTED by every admin endpoint (requireAdmin),
+//      so a leaked setup token can only be used to finish TOTP enrollment,
+//      nothing else. It also expires in 15 minutes.
+//    - The QR code is generated locally (qrcode package) — the secret
+//      never leaves the user's device. (Older versions leaked it to
+//      api.qrserver.com via URL query string.)
+//    - After successful verify, the setup token is replaced by a regular
+//      JWT via completeTotpSetup() — full admin access restored.
 // ============================================================================
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Shield, Loader2, ArrowLeft, KeyRound, User, Lock, ExternalLink } from 'lucide-react'
+import QRCode from 'qrcode'
+import { Shield, Loader2, ArrowLeft, KeyRound, User, Lock, ExternalLink, QrCode, Check, RefreshCw } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth-store'
+import { api } from '@/lib/api'
 import { toast } from '@/lib/notifications'
+import type { User as UserType } from '@/lib/types'
+
+type TotpFlow = 'none' | 'setup' | 'verify'
 
 export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onNavigate: (v: string) => void }) {
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // v25.3: 2FA enrollment state
+  const [totpFlow, setTotpFlow] = useState<TotpFlow>('none')
+  const [totpCode, setTotpCode] = useState('')
+  const [totpQrUrl, setTotpQrUrl] = useState('')
+  const [totpSecret, setTotpSecret] = useState('')
+  const [totpBusy, setTotpBusy] = useState(false)
+
   const authLogin = useAuthStore((s) => s.login)
+  const completeTotpSetup = useAuthStore((s) => s.completeTotpSetup)
+  const clearSetupToken = useAuthStore((s) => s.clearSetupToken)
   const user = useAuthStore((s) => s.user)
+  const setupToken = useAuthStore((s) => s.setupToken)
+
+  // v25.3: If the auth store already has a setupToken (e.g. page refresh
+  // during the enrollment flow), resume the wizard at the QR step.
+  useEffect(() => {
+    if (setupToken && totpFlow === 'none' && user?.role === 'admin') {
+      setTotpFlow('setup')
+      // Re-fetch the QR (the secret may have been cleared on refresh).
+      void fetchTotpSetup()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setupToken, user])
+
+  // Cleanup on unmount: if the user navigates away mid-setup, clear the
+  // setup token so it doesn't linger in localStorage.
+  useEffect(() => {
+    return () => {
+      if (useAuthStore.getState().setupToken && !useAuthStore.getState().isAuthenticated) {
+        clearSetupToken()
+      }
+    }
+  }, [clearSetupToken])
 
   // If already logged in as admin, show the admin dashboard shortcut.
-  if (user?.role === 'admin') {
+  if (user?.role === 'admin' && !setupToken) {
     return (
       <div className="min-h-screen flex items-center justify-center p-5 bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-950">
         <motion.div
@@ -65,12 +123,94 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
     )
   }
 
+  // ========================================================================
+  // v25.3: 2FA setup wizard — shown when setupToken is in the store.
+  // Step 1 (setup): fetch QR via /totp/setup using the setup token
+  // Step 2 (verify): user enters 6-digit code → /totp/verify → completeTotpSetup
+  // ========================================================================
+  async function fetchTotpSetup() {
+    setTotpBusy(true)
+    try {
+      const data = await api.post<{ secret: string; otpauthUrl: string }>(
+        '/api/auth/totp/setup',
+        { auth: 'totp-setup', json: {} },
+      )
+      setTotpQrUrl(data.otpauthUrl)
+      setTotpSecret(data.secret)
+      setTotpFlow('verify')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Не удалось получить QR-код'
+      toast.error('Ошибка настройки 2FA', { description: msg })
+      // Reset back to login form — setup token may be invalid/expired.
+      setTotpFlow('none')
+      clearSetupToken()
+    } finally {
+      setTotpBusy(false)
+    }
+  }
+
+  async function verifyTotpCode() {
+    if (totpCode.length !== 6) {
+      toast.error('Введите 6-значный код')
+      return
+    }
+    setTotpBusy(true)
+    try {
+      const result = await api.post<{ enabled: boolean; token: string; user: UserType }>(
+        '/api/auth/totp/verify',
+        { auth: 'totp-setup', json: { code: totpCode } },
+      )
+      // Swap the setup token for a regular JWT — full admin access restored.
+      completeTotpSetup(result.token, result.user)
+      toast.success('2FA настроена!', { description: 'Добро пожаловать, администратор!' })
+      // Reset local state
+      setTotpFlow('none')
+      setTotpCode('')
+      setTotpQrUrl('')
+      setTotpSecret('')
+      // Navigate to studio
+      onNavigate('studio')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Неверный код'
+      toast.error('Ошибка проверки кода', { description: msg })
+      setTotpCode('')
+    } finally {
+      setTotpBusy(false)
+    }
+  }
+
+  function cancelTotpSetup() {
+    setTotpFlow('none')
+    setTotpCode('')
+    setTotpQrUrl('')
+    setTotpSecret('')
+    clearSetupToken()
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!login.trim() || !password.trim()) return
     setLoading(true)
     try {
       const u = await authLogin(login, password)
+      // v25.3: if the auth store now has a setupToken, the backend returned
+      // totpSetupRequired — start the QR enrollment flow.
+      if (useAuthStore.getState().setupToken) {
+        if (u.role !== 'admin') {
+          // Safety: setupToken should only be issued to admins. If somehow
+          // a regular user got one, refuse and clear it.
+          toast.error('Этот аккаунт не является администратором')
+          clearSetupToken()
+          return
+        }
+        setTotpFlow('setup')
+        toast.info('Требуется настройка 2FA', {
+          description: 'Для аккаунта администратора обязательно включение двухфакторной аутентификации.',
+        })
+        await fetchTotpSetup()
+        return
+      }
+      // Normal login — admin already has TOTP enabled.
       if (u.role !== 'admin') {
         toast.error('Этот аккаунт не является администратором')
         return
@@ -87,12 +227,119 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
   // v24.6-audit (S-CRIT-2 / C-FE-2 fix): gate default-credential hint behind explicit
   // NEXT_PUBLIC_DEV_HINTS=1 env var (same gate as Studio uses). In any production /
   // staging deploy this hint is suppressed so attackers don't see default creds.
-  // v24.7 (final-release audit): removed the hardcoded 'admin12345' default
-  // password from the hint — operators must use the credentials they actually
-  // set via `ADMIN_PASSWORD=... bunx tsx scripts/create-admin.ts`. The hint
-  // now points to that script instead of leaking a default password.
   const SHOW_DEV_HINTS = process.env.NEXT_PUBLIC_DEV_HINTS === '1'
 
+  // ========================================================================
+  // 2FA setup wizard — replaces the login form when totpFlow !== 'none'
+  // ========================================================================
+  if (totpFlow !== 'none') {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-5 bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-950">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md rounded-3xl border border-border/40 bg-background/80 backdrop-blur-xl p-8 shadow-2xl"
+        >
+          {/* Header */}
+          <div className="flex flex-col items-center text-center gap-3 mb-6">
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 grid place-items-center shadow-lg shadow-amber-500/30">
+              <Shield className="h-8 w-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold">Настройка 2FA</h1>
+            <p className="text-sm text-muted-foreground">
+              Для аккаунта администратора обязательно включение двухфакторной аутентификации.
+            </p>
+          </div>
+
+          {/* Loading state — fetching QR */}
+          {totpFlow === 'setup' && (
+            <div className="py-12 grid place-items-center">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground mt-3">Генерация QR-кода…</p>
+            </div>
+          )}
+
+          {/* Verify state — QR + code input */}
+          {totpFlow === 'verify' && (
+            <div className="space-y-4">
+              <div className="space-y-2 text-sm">
+                <p className="text-muted-foreground">
+                  1. Отсканируйте QR-код в приложении-аутентификаторе (Google Authenticator, Authy, 1Password и т.п.).
+                </p>
+              </div>
+
+              {totpQrUrl && (
+                <div className="grid place-items-center bg-white p-4 rounded-2xl">
+                  <QrCodeCanvas data={totpQrUrl} size={200} />
+                </div>
+              )}
+
+              {totpSecret && (
+                <div className="text-xs">
+                  <span className="text-muted-foreground">Или введите секрет вручную: </span>
+                  <code className="font-mono bg-muted px-1.5 py-0.5 rounded break-all">{totpSecret}</code>
+                </div>
+              )}
+
+              <div className="space-y-2 text-sm">
+                <p className="text-muted-foreground">2. Введите 6-значный код из приложения:</p>
+              </div>
+
+              <input
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="000000"
+                inputMode="numeric"
+                autoFocus
+                className="w-full h-14 px-4 rounded-xl bg-background border border-border/60 outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 text-center font-mono text-2xl tracking-widest"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && totpCode.length === 6 && !totpBusy) {
+                    void verifyTotpCode()
+                  }
+                }}
+              />
+
+              <button
+                onClick={() => void verifyTotpCode()}
+                disabled={totpBusy || totpCode.length !== 6}
+                className="w-full flex items-center justify-center gap-2 h-12 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.02] transition-transform shadow-lg shadow-blue-500/30"
+              >
+                {totpBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+                Подтвердить и включить 2FA
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => void fetchTotpSetup()}
+                  disabled={totpBusy}
+                  className="flex-1 flex items-center justify-center gap-1.5 h-10 rounded-xl bg-accent hover:bg-accent/80 transition-colors text-xs font-medium disabled:opacity-40"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> Новый QR
+                </button>
+                <button
+                  onClick={cancelTotpSetup}
+                  disabled={totpBusy}
+                  className="flex-1 flex items-center justify-center gap-1.5 h-10 rounded-xl bg-accent hover:bg-accent/80 transition-colors text-xs font-medium disabled:opacity-40"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Назад
+                </button>
+              </div>
+
+              <div className="mt-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900">
+                <div className="text-xs text-muted-foreground">
+                  💡 После успешной настройки 2FA вы сможете входить в Studio и в основное приложение, используя пароль + код из аутентификатора.
+                </div>
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </div>
+    )
+  }
+
+  // ========================================================================
+  // Default — login form
+  // ========================================================================
   return (
     <div className="min-h-screen flex items-center justify-center p-5 bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-950">
       <motion.div
@@ -181,4 +428,47 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
       </motion.div>
     </div>
   )
+}
+
+// ============================================================================
+//  v25.3: Local QR code renderer — generates the QR as a <canvas> using the
+//  `qrcode` package (already a project dependency). The TOTP secret never
+//  leaves the user's device — no third-party API call (api.qrserver.com was
+//  previously used and leaked the secret via URL query string).
+// ============================================================================
+function QrCodeCanvas({ data, size = 200 }: { data: string; size?: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    if (!canvasRef.current || !data) return
+    setError(false)
+    QRCode.toCanvas(
+      canvasRef.current,
+      data,
+      {
+        width: size,
+        margin: 1,
+        color: { dark: '#000000', light: '#ffffff' },
+        errorCorrectionLevel: 'M',
+      },
+      (err: Error | null | undefined) => {
+        if (err) {
+          setError(true)
+        }
+      },
+    )
+  }, [data, size])
+
+  if (error) {
+    return (
+      <div className="text-xs text-destructive text-center p-4 border border-destructive/30 rounded-lg max-w-[200px]">
+        Ошибка генерации QR.
+        <br />
+        Введите секрет вручную ниже.
+      </div>
+    )
+  }
+
+  return <canvas ref={canvasRef} width={size} height={size} role="img" aria-label="TOTP QR code" />
 }

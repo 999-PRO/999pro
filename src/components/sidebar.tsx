@@ -10,6 +10,11 @@ import { initials } from '@/lib/format'
 import { useClubStore } from '@/modules/999-club'
 import { useAudioPlayer } from '@/lib/audio-player-manager'
 import { MediaHubIcon } from '@/components/icons/media-hub-icon'
+// v25.5 (TZ-3 task #10): module access filtering — sidebar now respects
+// the same module-access settings as the mobile bottom-nav. Hidden sections
+// don't appear, and the remaining items redistribute naturally (the sidebar
+// uses flex-col with gap, so items just stack closer when some are hidden).
+import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
 
 interface SidebarProps {
   view: string
@@ -46,8 +51,10 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
   const favoritesCount = useFavoritesStore((s) => s.ids.length)
   const cartCount = useCartStore((s) => s.count())
   const clubHasUnread = useClubStore((s) => s.hasUnread)
-  // v16.17: Track audio playback state for the Media Hub nav-item animation.
   const audioIsPlaying = useAudioPlayer((s) => s.isPlaying)
+  // v25.5: module access — filter nav items the same way as bottom-nav.
+  const modules = useModuleAccess()
+  const visibleNav = NAV.filter((item) => isModuleEnabled(modules, item.id))
 
   return (
     <aside className="hidden md:flex w-[76px] xl:w-[88px] shrink-0 fixed top-0 left-0 h-screen flex-col items-center z-50 premium-rail">
@@ -92,7 +99,9 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
       </button>
 
       {/* v39: 999 CLUB button — moved to the top section (replaces Media Hub).
-          Media Hub moved into the nav stack below. */}
+          Media Hub moved into the nav stack below.
+          v25.5: conditional on module access (club). */}
+      {isModuleEnabled(modules, 'club') && (
       <button
         onClick={() => onNavigate('club')}
         className={cn(
@@ -136,13 +145,17 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
           />
         )}
       </button>
+      )}
 
       {/* Divider */}
       <div className="my-5 h-px w-7 bg-border/60" />
 
-      {/* Nav — vertical icon stack */}
+      {/* Nav — vertical icon stack.
+          v25.5: uses `visibleNav` (filtered by module access) instead of `NAV`.
+          The sidebar uses flex-col with gap, so when items are hidden the
+          remaining items naturally stack closer — no gaps, no empty cells. */}
       <nav className="flex-1 flex flex-col items-center gap-1.5">
-        {NAV.map((item) => {
+        {visibleNav.map((item) => {
           const Icon = item.icon
           // v39: Media Hub is now a nav item — its "active" state is virtual
           // (no view behind it; it just opens an overlay). Treat it as

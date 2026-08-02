@@ -190,6 +190,48 @@ const DEMO: DemoProduct[] = [
     rating: 4.7,
     reviewsCount: 88,
   },
+  // === Ислам ===
+  // v25.3 (TZ task #8): test category for UI verification — covers Muslim
+  // lifestyle products. Two products so the category card / catalog grid
+  // render check has data to display.
+  {
+    title: 'Книга «Сорок хадисов» — подарочное издание',
+    description:
+      'Сборник сорока хадисов имама ан-Навави в подарочном оформлении. ' +
+      'Твёрдый переплёт, золотое тиснение, бумага премиум 120 г/м². ' +
+      'Подходит для подарка на праздники и памятные даты.',
+    price: 1290,
+    oldPrice: 1690,
+    category: 'Ислам',
+    images: [
+      'https://images.unsplash.com/photo-1532012197267-da84d127e765?w=600&q=80',
+      'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?w=600&q=80',
+    ],
+    isPopular: true,
+    isRecommended: true,
+    quantity: 80,
+    rating: 4.9,
+    reviewsCount: 47,
+  },
+  {
+    title: 'Мусульманские чётки из дерева (99 бусин)',
+    description:
+      'Чётки (тасбих) из натурального дерева, 99 бусин, ручная полировка. ' +
+      'Удобная форма бусин, приятная на ощупь текстура. В комплекте ' +
+      'бархатный мешочек для хранения.',
+    price: 690,
+    oldPrice: 990,
+    category: 'Ислам',
+    images: [
+      'https://images.unsplash.com/photo-1606112219348-204d7d8b94ee?w=600&q=80',
+      'https://images.unsplash.com/photo-1518452590338-2f3a2b5b1ec9?w=600&q=80',
+    ],
+    isNew: true,
+    isAction: true,
+    quantity: 120,
+    rating: 4.8,
+    reviewsCount: 23,
+  },
 ]
 
 async function main() {

@@ -127,7 +127,14 @@ export function ChatView() {
   const user = useAuthStore((s) => s.user)
   const isInitialized = useAuthStore((s) => s.isInitialized)
   const token = useAuthStore((s) => s.token)
-  const authed = isAuthenticated || (!!token && !!user)
+  // v25.4 (TZ-2 task #2): consider setupToken as "authenticated" too —
+  // the admin is mid-2FA-setup but the session IS valid (the setup token
+  // is a short-lived JWT issued by /api/auth/login after password check).
+  // Without this, opening Chat during the 2FA-setup flow would show the
+  // "log in" screen even though the user just successfully entered their
+  // password.
+  const setupToken = useAuthStore((s) => s.setupToken)
+  const authed = isAuthenticated || (!!token && !!user) || (!!setupToken && !!user)
   const messageSound = useMessageSound()
   const [messages, setMessages] = useState<Message[]>([])
   // F-HIGH-006: memoize the reversed message list so we don't allocate a new
@@ -2151,6 +2158,20 @@ export function ChatView() {
                         onScrollToMessage={scrollToMessage}
                         onImageClick={openLightbox}
                         onReply={(msg) => setReplyTo(msg)}
+                        // v25.4 (TZ-2 task #3): pass openProduct so products
+                        // opened from chat use the SAME ProductPage as the
+                        // catalog (full-screen page, not a separate modal).
+                        // This dispatches the `999pro:open-product` event
+                        // which page.tsx catches and opens ProductPage.
+                        onOpenProduct={(productId: string) => {
+                          if (typeof window !== 'undefined') {
+                            window.dispatchEvent(
+                              new CustomEvent('999pro:open-product', {
+                                detail: { productId },
+                              }),
+                            )
+                          }
+                        }}
                         registerRef={(el) => {
                           if (el) messageRefs.current.set(m.id, el)
                           else messageRefs.current.delete(m.id)

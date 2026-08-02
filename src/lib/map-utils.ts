@@ -1,14 +1,18 @@
 // Map utilities — generate universal map URLs that work on every platform.
 //
-// Strategy: use a single https://maps.google.com/?q=... link. On desktop
-// it opens Google Maps in the browser; on Android it opens the Google Maps
-// app; on iOS it opens Google Maps app if installed, otherwise Apple Maps
-// via the maps:// protocol fallback. We also provide a geo: URI for direct
-// native-app invocation on mobile.
+// v25.3 (TZ task #5): switched from Google Maps to Yandex Maps URLs.
+// Google Maps URLs were broken in the deployment region (Yandex Browser /
+// Russian locale / slow DNS) — the in-app Yandex Maps picker worked, but
+// the external "Open in maps" button pointed at maps.google.com which
+// either timed out or opened an empty page. Now every "open in maps"
+// link uses Yandex Maps, matching the working in-app picker.
 //
-// For the "Open in maps" button we use the https Google Maps URL because
-// it's the most universally compatible. For the geo: URI (used only in
-// <a href> on mobile) the OS shows the native app chooser.
+// Strategy: use a single https://yandex.ru/maps/?... link. On desktop
+// it opens Yandex Maps in the browser; on Android it opens the Yandex Maps
+// app if installed, otherwise the browser version; on iOS it opens the
+// Yandex Maps app if installed, otherwise the browser version. Yandex
+// Maps has full Russian street/POI coverage and works reliably in the
+// deployment region.
 
 export interface GeoPoint {
   lat: number
@@ -18,18 +22,36 @@ export interface GeoPoint {
 
 /**
  * Build a universal https maps URL that opens the right app per platform.
- * Uses Google Maps — on iOS it opens Apple Maps as a fallback via the
- * platform's URL handler.
+ * v25.3: uses Yandex Maps (was Google Maps — see file header for rationale).
+ *
+ * The `pt` parameter accepts `lat,lng` and an optional `style` suffix.
+ * Yandex Maps URL format:
+ *   https://yandex.ru/maps/?pt=LAT,LNG&z=16&l=map
+ *
+ * For a labelled point we use Yandex's `text` parameter, which performs a
+ * search and centres the map on the result. When only coordinates are
+ * available we use `pt` to drop a pin.
  */
 export function buildMapUrl(lat: number, lng: number, label?: string): string {
-  const q = label ? `${lat},${lng}(${encodeURIComponent(label)})` : `${lat},${lng}`
-  return `https://www.google.com/maps/search/?api=1&query=${q}`
+  // v25.3: Yandex Maps URL — works reliably in the deployment region.
+  // pt = point (lat,lng), z = zoom level, l = layer (map = standard).
+  // The `text` parameter is used when we have a label, which makes Yandex
+  // search for the label text and show it as a named pin.
+  if (label) {
+    return `https://yandex.ru/maps/?text=${encodeURIComponent(label)}&pt=${lat},${lng}&z=16&l=map`
+  }
+  return `https://yandex.ru/maps/?pt=${lat},${lng}&z=16&l=map`
 }
 
 /**
  * Build a geo: URI (RFC 5870). On mobile, opening this URL triggers the
  * native maps-app chooser. On desktop browsers it usually does nothing —
  * so only use this for the "native app" path, not as the primary link.
+ *
+ * v25.3: still uses raw geo: URI (universal standard, not vendor-specific).
+ * The user's device shows its native maps-app chooser, which on Android
+ * includes Yandex Maps if installed. On iOS the chooser shows Apple Maps
+ * (Yandex Maps iOS app can register for geo: URIs too if installed).
  */
 export function buildGeoUri(lat: number, lng: number, label?: string): string {
   return label
@@ -53,19 +75,28 @@ export function openInMaps(lat: number, lng: number, label?: string): void {
  * Build a maps URL for a route from one point to another (future: route
  * to store). Kept here so the "company card → show on map" feature has a
  * ready helper.
+ *
+ * v25.3: Yandex Maps route URL — `rtext=from~to` accepts coordinates or
+ * addresses separated by `~`. The `rtt` parameter controls route mode
+ * (auto / mt / pd = mass transit / pedestrian).
  */
 export function buildRouteUrl(from: GeoPoint | null, to: GeoPoint, label?: string): string {
-  const dest = label ? `${to.lat},${to.lng}(${encodeURIComponent(label)})` : `${to.lat},${to.lng}`
+  const dest = label ? `${encodeURIComponent(label)}` : `${to.lat},${to.lng}`
   if (from) {
-    return `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${dest}`
+    return `https://yandex.ru/maps/?rtext=${from.lat},${from.lng}~${to.lat},${to.lng}&rtt=auto&z=12&l=map`
   }
-  return `https://www.google.com/maps/dir/?api=1&destination=${dest}`
+  return `https://yandex.ru/maps/?text=${dest}&pt=${to.lat},${to.lng}&z=16&l=map`
 }
 
 /**
  * Build an OpenStreetMap embed iframe src for in-app map preview (no API
  * key required). Used by the map picker to show a preview after the user
  * selects a point.
+ *
+ * v25.3: OSM embed retained as a fallback for the in-app preview (the
+ * Yandex Maps JS API is used for the actual map picker — see
+ * components/map-picker.tsx). This OSM URL is only used for the static
+ * preview iframe, not for the "open in maps" external link.
  */
 export function buildOsmEmbedUrl(lat: number, lng: number, _zoom = 16): string {
   const delta = 0.005

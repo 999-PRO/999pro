@@ -1,10 +1,35 @@
 'use client'
 
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
-import { LayoutDashboard,
+// ============================================================================
+//  MoreSheet — full-screen "Ещё" page (v25.5, TZ-3 task #9)
+//  ----------------------------------------------------------------------------
+//  Previously a bottom-sheet modal (Sheet component). That caused the same
+//  cross-browser issues as the old ProductPage modal:
+//    - couldn't be closed reliably (swipe-down gesture didn't work in all browsers)
+//    - Back button didn't close it
+//    - in some browsers the sheet "went up" (escaped the viewport)
+//    - user could get stuck with no way back
+//
+//  v25.5 redesign: render as a NATIVE full-screen page — same pattern as
+//  the new ProductPage and CheckoutSheet:
+//    - position: fixed; inset: 0 — covers the viewport
+//    - overflow-y: auto — native browser scrolling (Safari/Chrome/Yandex/Android)
+//    - sticky top bar with explicit "Назад" button
+//    - system Back gesture support (pushState + popstate + Esc)
+//    - z-[400] — above bottom-nav (z-40) and below product page (z-350)
+//               and share sheet (z-9999)
+//
+//  ALL existing functionality is preserved: theme toggle, notifications toggle,
+//  sections (Studio/Cart/Favorites/Orders/Reviews/Support/Settings/Share),
+//  DB-backed info pages, language, privacy, logout.
+// ============================================================================
+
+import {
+  LayoutDashboard,
   Settings, Info, Star, Truck, CreditCard, Bell,
   Palette, Globe, Shield, LogOut, Share2, MessageSquare, Bookmark,
   FileText, Cookie, UserCheck, Mail, HelpCircle, Building2, Phone, Lock, BookOpen, AlertCircle,
+  ArrowLeft,
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth-store'
 import { useTheme } from 'next-themes'
@@ -14,6 +39,7 @@ import { Label } from '@/components/ui/label'
 import { toast } from '@/lib/notifications'
 import { useState, useEffect } from 'react'
 import { api } from '@/lib/api'
+import { haptic } from '@/lib/haptic'
 
 interface MoreSheetProps {
   open: boolean
@@ -40,13 +66,9 @@ interface MenuInfoPage {
 }
 
 // v16.8 (production lockdown): the "Студия" entry is only shown to admins.
-// Non-admin users must never see the Studio link, and even if they navigate
-// to /?view=studio directly, the studio-view.tsx iframe will load /studio
-// which itself enforces admin auth (see studio auth-init + backend gates).
 const buildSections = (isAdmin: boolean) => {
   const sections: { title: string; items: { id: string; label: string; icon: any; desc: string }[] }[] = []
-  // Studio section — ADMIN ONLY. Hidden entirely from non-admin users so
-  // they don't even know the route exists.
+  // Studio section — ADMIN ONLY.
   if (isAdmin) {
     sections.push({
       title: 'Управление',
@@ -66,7 +88,6 @@ const buildSections = (isAdmin: boolean) => {
   sections.push({
     title: 'Контент',
     items: [
-      // v12.3: Feed removed — 999 CLUB is now in the bottom nav.
       { id: 'reviews', label: 'Отзывы', icon: Star, desc: 'Чужие отзывы на товары' },
       { id: 'support', label: 'Поддержка', icon: MessageSquare, desc: 'Чат с командой «Три девятки»' },
     ],
@@ -75,8 +96,6 @@ const buildSections = (isAdmin: boolean) => {
     title: 'Приложение',
     items: [
       { id: 'settings', label: 'Настройки', icon: Settings, desc: 'Уведомления, язык, конфиденциальность' },
-      // v16.8: 'about' is now a DB-backed info page — added dynamically below
-      // from /api/info-pages/menu (see InfoPagesSection).
       { id: 'share', label: 'Поделиться приложением', icon: Share2, desc: 'Рассказать друзьям' },
     ],
   })
@@ -92,7 +111,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
   // v16.8: fetch DB-backed info pages for the menu.
   const [infoPages, setInfoPages] = useState<MenuInfoPage[]>([])
   useEffect(() => {
-    if (!open) return // only fetch when sheet is opened
+    if (!open) return // only fetch when opened
     api.get<{ items: MenuInfoPage[] }>('/api/info-pages/menu')
       .then((d) => setInfoPages(d.items))
       .catch((e) => {
@@ -112,20 +131,52 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
     return () => window.removeEventListener('999pro:info-pages-changed', onInfoPagesChanged as EventListener)
   }, [])
 
+  // v25.5 (TZ-3 task #9): System Back gesture + Esc key support.
+  // Push a sentinel history state when the More page opens — when the user
+  // presses the system Back button/gesture (Android) or Esc (desktop), we
+  // intercept it and close the More page (instead of navigating away).
+  useEffect(() => {
+    if (!open) return
+    if (typeof window === 'undefined') return
+    // Push a sentinel state so Back doesn't navigate away from the page.
+    window.history.pushState({ moreOverlay: true }, '')
+    const onPopState = () => {
+      // Back was pressed — close the More page (don't navigate away).
+      onOpenChange(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onOpenChange(false)
+    }
+    window.addEventListener('popstate', onPopState)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+      window.removeEventListener('keydown', onKey)
+      // If we added a history state and the More page is closing without
+      // Back being pressed, pop it so the history stack stays clean.
+      if (typeof window !== 'undefined' && window.history.state?.moreOverlay) {
+        window.history.back()
+      }
+    }
+  }, [open, onOpenChange])
+
+  const handleClose = () => {
+    haptic.tap()
+    onOpenChange(false)
+  }
+
   const handleAction = (id: string) => {
+    haptic.tap()
     switch (id) {
       case 'studio':
         onNavigate('studio')
         onOpenChange(false)
         break
-      // v12.3: 'feed' case removed — Feed module deleted.
       case 'favorites':
         onNavigate('profile')
         onOpenChange(false)
         break
       case 'cart':
-        // QW5 (F-BUG-007): dispatch open-cart event (matches MobileHeader/Sidebar/Profile pattern)
-        // instead of misleading navigation to profile + wrong toast.
         window.dispatchEvent(new CustomEvent('open-cart'))
         onOpenChange(false)
         break
@@ -145,8 +196,6 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         onNavigate('settings')
         onOpenChange(false)
         break
-      // v16.8: 'about' and 'privacy' are now DB-backed info pages.
-      // They are handled by the InfoPagesSection below (calls onNavigateToInfoPage).
       case 'share':
         if (typeof navigator !== 'undefined' && navigator.share) {
           navigator
@@ -168,36 +217,54 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
     }
   }
 
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="bottom"
-        // v9-final-fix: showCloseButton={false} — the sheet closes via
-        // swipe-down (drag handle). No X button needed.
-        showCloseButton={false}
-        // v9-final-fix: showDragHandle={true} (default) — the SheetContent
-        // renders ONE drag handle. Removed the duplicate from MoreSheet.
-        className="rounded-t-[32px] p-0 gap-0 max-h-[88vh] md:max-w-md md:mx-auto md:mb-8 md:rounded-[32px]"
-      >
-        {/* Scrollable content wrapper — v9-final-fix: this is the ONLY
-            scroll container. It has touch-action: pan-y so the user can
-            scroll the list on mobile, and overscroll-behavior: contain so
-            the scroll doesn't chain to the body when reaching the boundary. */}
-        <div
-          className="overflow-y-auto overscroll-contain"
-          style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch' }}
-          data-scroll-lock-ignore
-        >
+  if (!open) return null
 
-        <SheetHeader className="px-5 pt-2 pb-3 text-left">
-          <SheetTitle className="text-2xl font-extrabold">Ещё</SheetTitle>
-          <SheetDescription className="text-sm">
+  // v25.5: Full-screen page — same pattern as ProductPage.
+  // position: fixed; inset: 0 covers the viewport.
+  // overflow-y: auto for native scrolling.
+  // z-[400] — above bottom-nav (z-40), below product page (z-350) and
+  // share sheet (z-9999).
+  return (
+    <div
+      className="fixed inset-0 z-[400] bg-background overflow-y-auto overscroll-contain"
+      style={{
+        overscrollBehavior: 'contain',
+        WebkitOverflowScrolling: 'touch',
+      }}
+    >
+      {/* Sticky top bar — back button + title. Always visible at the top. */}
+      <div
+        className="sticky top-0 z-20 flex items-center gap-2 px-3 py-2.5 backdrop-blur-xl bg-background/85 border-b border-border/40"
+        style={{
+          paddingTop: 'max(env(safe-area-inset-top, 0px), 0.625rem)',
+        }}
+      >
+        <button
+          onClick={handleClose}
+          aria-label="Назад"
+          className="h-10 w-10 rounded-full grid place-items-center bg-foreground/5 hover:bg-foreground/10 active:scale-95 transition-all shrink-0"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-muted-foreground">Меню</div>
+          <div className="text-sm font-semibold">Ещё</div>
+        </div>
+      </div>
+
+      {/* Content — scrollable, in normal document flow. */}
+      <div className="px-5 pt-4 pb-28 space-y-5">
+
+        {/* Header */}
+        <div className="text-left">
+          <h1 className="text-2xl font-extrabold">Ещё</h1>
+          <p className="text-sm text-muted-foreground">
             Дополнительные разделы и настройки «Три девятки»
-          </SheetDescription>
-        </SheetHeader>
+          </p>
+        </div>
 
         {/* Quick toggles */}
-        <div className="px-5 pb-4">
+        <div>
           <div className="glass rounded-3xl p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -246,139 +313,132 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         </div>
 
         {/* Sections */}
-        <div className="px-5 pb-5 space-y-5">
-          {buildSections(user?.role === 'admin').map((section) => (
-            <div key={section.title}>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
-                {section.title}
-              </h3>
-              <div className="glass rounded-3xl overflow-hidden divide-y divide-border/30">
-                {section.items.map((item) => {
-                  const Icon = item.icon
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => handleAction(item.id)}
-                      className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
-                    >
-                      <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
-                        <Icon className="h-5 w-5 text-primary" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold">{item.label}</div>
-                        <div className="text-xs text-muted-foreground truncate">{item.desc}</div>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
+        {buildSections(user?.role === 'admin').map((section) => (
+          <div key={section.title}>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
+              {section.title}
+            </h3>
+            <div className="glass rounded-3xl overflow-hidden divide-y divide-border/30">
+              {section.items.map((item) => {
+                const Icon = item.icon
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => handleAction(item.id)}
+                    className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
+                  >
+                    <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
+                      <Icon className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold">{item.label}</div>
+                      <div className="text-xs text-muted-foreground truncate">{item.desc}</div>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-          ))}
+          </div>
+        ))}
 
-          {/* v16.8: DB-backed info pages section (about, privacy, terms, etc.) */}
-          {infoPages.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
-                Информация
-              </h3>
-              <div className="glass rounded-3xl overflow-hidden divide-y divide-border/30">
-                {infoPages.map((p) => {
-                  const Icon = ICON_MAP[p.icon] || FileText
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => {
-                        if (onNavigateToInfoPage) {
-                          onNavigateToInfoPage(p.slug)
-                        } else {
-                          // Fallback: legacy hard view if handler not provided.
-                          if (p.slug === 'about') onNavigate('about')
-                          else if (p.slug === 'privacy') onNavigate('privacy')
-                          else toast.info('Откройте через основное меню')
-                        }
-                        onOpenChange(false)
-                      }}
-                      className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
-                    >
-                      <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
-                        <Icon className="h-5 w-5 text-primary" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold">{p.title}</div>
-                        {p.subtitle && (
-                          <div className="text-xs text-muted-foreground truncate">{p.subtitle}</div>
-                        )}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
+        {/* DB-backed info pages section */}
+        {infoPages.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
+              Информация
+            </h3>
+            <div className="glass rounded-3xl overflow-hidden divide-y divide-border/30">
+              {infoPages.map((p) => {
+                const Icon = ICON_MAP[p.icon] || FileText
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      haptic.tap()
+                      if (onNavigateToInfoPage) {
+                        onNavigateToInfoPage(p.slug)
+                      } else {
+                        if (p.slug === 'about') onNavigate('about')
+                        else if (p.slug === 'privacy') onNavigate('privacy')
+                        else toast.info('Откройте через основное меню')
+                      }
+                      onOpenChange(false)
+                    }}
+                    className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
+                  >
+                    <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
+                      <Icon className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold">{p.title}</div>
+                      {p.subtitle && (
+                        <div className="text-xs text-muted-foreground truncate">{p.subtitle}</div>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-          )}
-
-          {/* Footer: language + logout */}
-          <div className="glass rounded-3xl overflow-hidden divide-y divide-border/30">
-            <button
-              onClick={() => { onNavigate('settings'); onOpenChange(false) }}
-              className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
-            >
-              <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
-                <Globe className="h-5 w-5 text-primary" />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold">Язык</div>
-                <div className="text-xs text-muted-foreground">Русский</div>
-              </div>
-            </button>
-            {/* v16.8: privacy button now uses the DB-backed info page.
-                If onNavigateToInfoPage is provided and a 'privacy' page exists
-                in infoPages, we route through it; otherwise fall back to the
-                legacy static PrivacyView. */}
-            <button
-              onClick={() => {
-                const privacyPage = infoPages.find((p) => p.slug === 'privacy')
-                if (privacyPage && onNavigateToInfoPage) {
-                  onNavigateToInfoPage('privacy')
-                } else {
-                  onNavigate('privacy')
-                }
-                onOpenChange(false)
-              }}
-              className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
-            >
-              <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
-                <Shield className="h-5 w-5 text-primary" />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold">Конфиденциальность</div>
-                <div className="text-xs text-muted-foreground">Политика и данные</div>
-              </div>
-            </button>
           </div>
+        )}
 
-          {user && (
-            <Button
-              variant="outline"
-              className="w-full rounded-2xl h-12 text-destructive hover:text-destructive hover:bg-destructive/5"
-              onClick={async () => {
-                toast.success('Вы вышли из аккаунта')
-                onOpenChange(false)
-                onNavigate('home')
-                // Fire-and-forget the async unsubscribe — the UI already
-                // reflects the logged-out state immediately.
-                void logout()
-              }}
-            >
-              <LogOut className="h-4 w-4 mr-2" /> Выйти из аккаунта
-            </Button>
-          )}
+        {/* Footer: language + logout */}
+        <div className="glass rounded-3xl overflow-hidden divide-y divide-border/30">
+          <button
+            onClick={() => { haptic.tap(); onNavigate('settings'); onOpenChange(false) }}
+            className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
+          >
+            <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
+              <Globe className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-semibold">Язык</div>
+              <div className="text-xs text-muted-foreground">Русский</div>
+            </div>
+          </button>
+          <button
+            onClick={() => {
+              haptic.tap()
+              const privacyPage = infoPages.find((p) => p.slug === 'privacy')
+              if (privacyPage && onNavigateToInfoPage) {
+                onNavigateToInfoPage('privacy')
+              } else {
+                onNavigate('privacy')
+              }
+              onOpenChange(false)
+            }}
+            className="w-full flex items-center gap-3 p-3.5 hover:bg-accent/40 active:bg-accent/60 transition-colors text-left"
+          >
+            <div className="h-10 w-10 rounded-2xl gradient-soft grid place-items-center shrink-0">
+              <Shield className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-semibold">Конфиденциальность</div>
+              <div className="text-xs text-muted-foreground">Политика и данные</div>
+            </div>
+          </button>
+        </div>
 
-          <div className="text-center text-xs text-muted-foreground pt-1 pb-1">
-            999 · Три девятки · версия 1.0.0
-          </div>
+        {user && (
+          <Button
+            variant="outline"
+            className="w-full rounded-2xl h-12 text-destructive hover:text-destructive hover:bg-destructive/5"
+            onClick={async () => {
+              haptic.tap()
+              toast.success('Вы вышли из аккаунта')
+              onOpenChange(false)
+              onNavigate('home')
+              void logout()
+            }}
+          >
+            <LogOut className="h-4 w-4 mr-2" /> Выйти из аккаунта
+          </Button>
+        )}
+
+        <div className="text-center text-xs text-muted-foreground pt-1 pb-1">
+          999 · Три девятки · версия 1.0.0
         </div>
-        </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </div>
   )
 }

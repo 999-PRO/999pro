@@ -14,6 +14,12 @@
  *
  * Submits to POST /api/orders with new delivery fields
  * (lat, lng, mapUrl, deliveryZoneId).
+ *
+ * v25.4 (TZ-2 task #4 & #5): on mobile, renders as a FULL-SCREEN page (not a
+ * bottom sheet) — native scrolling, sticky top bar with explicit "Назад"
+ * button, sticky bottom submit bar. Supports the system Back gesture
+ * (Android) and Esc key (desktop) to close. On desktop, keeps the previous
+ * centered modal layout.
  */
 
 import { useState, useRef, useEffect } from 'react'
@@ -21,7 +27,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   X, ShoppingBag, User, Phone, MapPin, MessageSquare,
   Truck, Store, Check, Loader2, Star, Navigation, Clock, Search, Ticket,
-  MailCheck, ArrowRight, RefreshCw,
+  MailCheck, ArrowRight, RefreshCw, ArrowLeft,
 } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
 import { useCartStore } from '@/lib/cart-store'
@@ -138,6 +144,38 @@ export function CheckoutSheet({
   useEffect(() => {
     if (open) fetchDelivery()
   }, [open, fetchDelivery])
+
+  // v25.4 (TZ-2 task #4): System Back gesture + Esc key support.
+  // On Android, the system Back button/gesture should close the checkout
+  // (instead of navigating away from the app). We do this by pushing a
+  // history state when the checkout opens, and listening for popstate —
+  // when the user presses Back, we intercept it and close the checkout.
+  // On desktop, Esc closes the checkout too.
+  useEffect(() => {
+    if (!open) return
+    // Push a sentinel state so Back doesn't navigate away from the page.
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ checkoutOverlay: true }, '')
+    }
+    const onPopState = () => {
+      // Back was pressed — close the checkout (don't navigate away).
+      onClose()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('popstate', onPopState)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('popstate', onPopState)
+      window.removeEventListener('keydown', onKey)
+      // If we added a history state and the checkout is closing without
+      // Back being pressed, pop it so the history stack stays clean.
+      if (typeof window !== 'undefined' && window.history.state?.checkoutOverlay) {
+        window.history.back()
+      }
+    }
+  }, [open, onClose])
 
   // Default deliveryMethod based on what's enabled
   useEffect(() => {
@@ -324,6 +362,13 @@ export function CheckoutSheet({
 
   const storeHasCoords = deliverySettings?.storeLat != null && deliverySettings?.storeLng != null
 
+  if (!open) return null
+
+  // v25.4 (TZ-2 task #4 & #5): Mobile = full-screen page, Desktop = centered modal.
+  // Both share the same content body — only the outer container differs.
+  // Mobile uses native scrolling (works perfectly on Safari/Chrome/Yandex/Android),
+  // sticky top bar with "Назад" button, sticky bottom submit bar.
+  // The system Back gesture is handled by the useEffect above (pushState + popstate).
   return (
     <>
       <MapPicker
@@ -340,7 +385,7 @@ export function CheckoutSheet({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[450] flex items-end md:items-center justify-center"
+          className="fixed inset-0 z-[450] flex items-stretch md:items-center justify-stretch md:justify-center"
           style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
           onClick={onClose}
         >
@@ -349,7 +394,8 @@ export function CheckoutSheet({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: '100%', opacity: 0 }}
             transition={{ type: 'spring', stiffness: 260, damping: 30 }}
-            className="relative w-full md:max-w-lg max-h-[92vh] flex flex-col rounded-t-[32px] md:rounded-[32px] overflow-hidden glass-strong border border-border/40 shadow-glow-lg"
+            // v25.4: mobile = full screen, desktop = centered modal
+            className="relative w-full md:max-w-lg h-full md:h-auto md:max-h-[92vh] flex flex-col md:rounded-[32px] overflow-hidden glass-strong border border-border/40 shadow-glow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Success overlay */}
@@ -374,8 +420,20 @@ export function CheckoutSheet({
               </motion.div>
             )}
 
-            {/* Header */}
-            <div className="shrink-0 p-5 pb-4 border-b border-border/30 flex items-center gap-3">
+            {/* Header — sticky top bar with back button (mobile) / close button (desktop) */}
+            <div
+              className="shrink-0 px-4 py-3 border-b border-border/30 flex items-center gap-3"
+              style={{
+                paddingTop: 'max(env(safe-area-inset-top, 0px), 0.75rem)',
+              }}
+            >
+              <button
+                onClick={onClose}
+                aria-label="Назад"
+                className="md:hidden h-10 w-10 rounded-full grid place-items-center bg-foreground/5 hover:bg-foreground/10 active:scale-95 transition-all shrink-0"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
               <div className="h-10 w-10 rounded-2xl grid place-items-center shrink-0 gradient-brand shadow-glow">
                 <ShoppingBag className="h-5 w-5 text-white" />
               </div>
@@ -383,7 +441,7 @@ export function CheckoutSheet({
                 <h2 className="text-lg font-bold tracking-tight">Оформление заказа</h2>
                 <p className="text-xs text-muted-foreground">{items.length} товаров · {formatPrice(grandTotal)}</p>
               </div>
-              <button onClick={onClose} aria-label="Закрыть" className="h-9 w-9 rounded-full grid place-items-center hover:bg-foreground/10 transition-colors shrink-0">
+              <button onClick={onClose} aria-label="Закрыть" className="hidden md:grid h-9 w-9 rounded-full place-items-center hover:bg-foreground/10 transition-colors shrink-0">
                 <X className="h-5 w-5" />
               </button>
             </div>

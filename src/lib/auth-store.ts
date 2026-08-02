@@ -2,12 +2,25 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { api, registerTokenGetter, registerUnauthorizedHandler, ApiError } from '@/lib/api'
+import { api, registerTokenGetter, registerSetupTokenGetter, registerUnauthorizedHandler, ApiError } from '@/lib/api'
 import type { User } from '@/lib/types'
 
 interface AuthState {
   user: User | null
   token: string | null
+  /**
+   * v25.3 (TZ task #1): short-lived TOTP-setup JWT (15-min expiry).
+   * Issued by /api/auth/login when an admin logs in with correct password
+   * but TOTP is not yet enrolled. Carries `totpPending: true`; accepted
+   * ONLY by /api/auth/totp/setup, /totp/verify, /totp/disable. Rejected
+   * by every admin endpoint.
+   *
+   * When `setupToken` is set but `token` is null, the session is
+   * "mid-setup": the user is NOT authenticated (isAuthenticated=false)
+   * but CAN call the three TOTP endpoints via `auth: 'totp-setup'`.
+   * AdminLoginView reads `setupToken` to show the QR-code enrollment UI.
+   */
+  setupToken: string | null
   isAuthenticated: boolean
   isInitialized: boolean
   login: (login: string, password: string) => Promise<User>
@@ -42,6 +55,15 @@ interface AuthState {
   pendingVerificationToken: string | null
   /** v20: login with a stashed token (used after verification completes). */
   activateWithToken: (token: string, user: User) => void
+  /**
+   * v25.3 (TZ task #1): Complete the admin TOTP-setup flow. Called by
+   * AdminLoginView after /api/auth/totp/verify succeeds. Swaps the
+   * setup token for a fresh regular JWT (no totpPending) issued by the
+   * backend, marks the session as authenticated, and clears setupToken.
+   */
+  completeTotpSetup: (token: string, user: User) => void
+  /** v25.3: clear the setup token (cancel 2FA enrollment). */
+  clearSetupToken: () => void
   logout: () => Promise<void>
   updateUser: (patch: Partial<User>) => void
   fetchMe: () => Promise<void>
@@ -54,6 +76,8 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       isAuthenticated: false,
       isInitialized: false,
+      // v25.3: stashed TOTP-setup token (admin first-time 2FA enrollment).
+      setupToken: null,
       // v20: stashed registration token — used to activate the session after
       // the user confirms their email without requiring a second login.
       pendingVerificationToken: null,
@@ -70,15 +94,13 @@ export const useAuthStore = create<AuthState>()(
         //                                       → admin must enroll TOTP.
         //                                          Backend issues a short-lived
         //                                          `totpPending` setup token.
-        //                                          Main app does NOT have a
-        //                                          TOTP setup UI — surface a
-        //                                          clear error directing the
-        //                                          admin to Studio. NEVER store
-        //                                          the setup token as a regular
-        //                                          token: it would be rejected
-        //                                          by /api/auth/me (403) and
-        //                                          cause an immediate logout
-        //                                          loop via fetchMe().
+        //                                          v25.3: main app now handles
+        //                                          this case inline via
+        //                                          AdminLoginView (QR + verify).
+        //                                          We stash the setup token so
+        //                                          `auth: 'totp-setup'`
+        //                                          requests work, and surface
+        //                                          the result to the caller.
         const data = await api.post<{
           token?: string
           user: User
@@ -89,11 +111,30 @@ export const useAuthStore = create<AuthState>()(
           json: { login: loginField, password },
         })
 
+        // v25.3 (TZ task #1): admin must enroll TOTP. Stash the setup token
+        // (NOT the regular token) so the session is NOT marked authenticated,
+        // but /totp/setup and /totp/verify can be called via `auth: 'totp-setup'`.
+        // The caller (AdminLoginView) reads `setupToken` from the store to
+        // know it should show the QR-code enrollment UI.
         if (data.totpSetupRequired) {
-          throw new Error(
-            data.message ||
-              'Для аккаунта администратора обязательно включение 2FA. Войдите через Studio (админ-панель), чтобы настроить двухфакторную аутентификацию.',
-          )
+          if (!data.token) {
+            // Backend contract violation — should never happen.
+            throw new Error(
+              data.message ||
+                'Сервер вернул totpSetupRequired без setup-токена. Обратитесь к администратору.',
+            )
+          }
+          set({
+            user: data.user,
+            token: null,
+            setupToken: data.token,
+            isAuthenticated: false,
+            isInitialized: true,
+          })
+          // Return the data so the caller can read the message + user info.
+          // Throw would lose context — caller checks `setupToken` in store
+          // OR inspects the returned object.
+          return data.user as User & { _totpSetupRequired?: boolean }
         }
 
         if (data.totpRequired) {
@@ -109,6 +150,7 @@ export const useAuthStore = create<AuthState>()(
         set({
           user: data.user,
           token: data.token,
+          setupToken: null,
           isAuthenticated: true,
           isInitialized: true,
         })
@@ -168,6 +210,27 @@ export const useAuthStore = create<AuthState>()(
         })
       },
 
+      // v25.3 (TZ task #1): swap the setup token for a regular JWT.
+      // Called by AdminLoginView after /api/auth/totp/verify succeeds —
+      // the backend issues a fresh regular token (no totpPending), giving
+      // the admin full access. Clears the setup token so subsequent
+      // `auth: 'totp-setup'` requests fail loudly if mistakenly used.
+      completeTotpSetup(token, user) {
+        set({
+          token,
+          user,
+          setupToken: null,
+          isAuthenticated: true,
+          isInitialized: true,
+        })
+      },
+
+      // v25.3: cancel the 2FA enrollment flow (user pressed "Назад").
+      // Clears the setup token without affecting any existing session.
+      clearSetupToken() {
+        set({ setupToken: null })
+      },
+
       // v20: Convenience wrapper — activates the session using the stashed
       // pending token, then refreshes the user from the backend to pick up
       // the updated `emailVerified` timestamp.
@@ -215,7 +278,7 @@ export const useAuthStore = create<AuthState>()(
         } catch {
           // Non-critical — proceed with logout regardless.
         }
-        set({ user: null, token: null, isAuthenticated: false })
+        set({ user: null, token: null, setupToken: null, isAuthenticated: false })
       },
 
       updateUser(patch) {
@@ -230,8 +293,16 @@ export const useAuthStore = create<AuthState>()(
         } catch (e) {
           // Only log the user out on auth failures (401/403).
           // Network errors (5xx, timeouts, offline) should NOT log the user out.
+          // v25.3: a 403 with `totpSetupRequired: true` from /me means the
+          // session is mid-TOTP-setup (setup token was used by mistake).
+          // Don't logout — keep the setupToken so AdminLoginView can retry.
+          if (e instanceof ApiError && e.status === 403 && e.details &&
+              typeof e.details === 'object' && 'totpSetupRequired' in e.details) {
+            set({ isInitialized: true })
+            return
+          }
           if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-            set({ user: null, token: null, isAuthenticated: false, isInitialized: true })
+            set({ user: null, token: null, setupToken: null, isAuthenticated: false, isInitialized: true })
           } else {
             // Transient error — keep the user logged in but mark as initialized
             // so the UI doesn't hang on a loading state forever.
@@ -260,10 +331,13 @@ export const useAuthStore = create<AuthState>()(
         user: s.user,
         token: s.token,
         isAuthenticated: s.isAuthenticated,
+        // v25.3: persist setupToken so a page refresh during the 2FA enrollment
+        // flow doesn't lose the setup token (the admin would have to re-login).
+        setupToken: s.setupToken,
         // v20: persist pendingVerificationToken so a page refresh during the
         // verification modal doesn't lose the stashed token.
         pendingVerificationToken: s.pendingVerificationToken,
-      }) as Pick<AuthState, 'user' | 'token' | 'isAuthenticated' | 'pendingVerificationToken'>,
+      }) as Pick<AuthState, 'user' | 'token' | 'isAuthenticated' | 'setupToken' | 'pendingVerificationToken'>,
     },
   ),
 )
@@ -272,6 +346,9 @@ export const useAuthStore = create<AuthState>()(
 // store (single source of truth). No more module-level variable, no more
 // legacy localStorage keys.
 registerTokenGetter(() => useAuthStore.getState().token)
+// v25.3: register the setup-token getter too, so AdminLoginView's
+// `auth: 'totp-setup'` requests can read it from the same store.
+registerSetupTokenGetter(() => useAuthStore.getState().setupToken)
 
 // v9-audit-fix: register global 401 handler. When any authenticated API
 // request returns 401 (expired/revoked token), trigger a fetchMe to verify.

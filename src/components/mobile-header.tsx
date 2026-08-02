@@ -10,6 +10,8 @@ import { useClubStore } from '@/modules/999-club'
 import { useAudioPlayer } from '@/lib/audio-player-manager'
 import { CountBadge } from '@/components/ui/count-badge'
 import type { HeaderImageSetting } from '@/lib/types'
+// v25.5 (TZ-3 task #10): module access filtering — CLUB button conditional.
+import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
 
 export function MobileHeader({
   view,
@@ -94,6 +96,8 @@ export function MobileHeader({
 
   // v39: CLUB unread state for the header badge
   const clubHasUnread = useClubStore((s) => s.hasUnread)
+  // v25.5: module access — CLUB button is conditional on the 'club' module.
+  const modules = useModuleAccess()
 
   // If header image is enabled, render it as the header background
   const showImage = headerImage?.enabled && headerImage?.url
@@ -194,7 +198,9 @@ export function MobileHeader({
         {/* v39: 999 CLUB button — moved here from the bottom-nav center slot.
             Media Hub moved to the bottom-nav center (replaces CLUB there).
             Club uses the same round glass style + amber gradient to match
-            the desktop sidebar treatment. */}
+            the desktop sidebar treatment.
+            v25.5: conditional on module access (club). */}
+        {isModuleEnabled(modules, 'club') && (
         <motion.button
           type="button"
           aria-label="999 CLUB"
@@ -233,6 +239,7 @@ export function MobileHeader({
             />
           )}
         </motion.button>
+        )}
 
         <div className="flex-1" />
 

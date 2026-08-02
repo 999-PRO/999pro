@@ -1116,29 +1116,19 @@ router.post(
       },
     })
 
-    // Send an automatic welcome message from the support team so the user
-    // sees something in the chat immediately (not an empty screen).
-    await prisma.message.create({
-      data: {
-        conversationId: conv.id,
-        senderId: supportAdmin.id,
-        content: 'Здравствуйте! Я из команды поддержки «Три девятки». Чем могу помочь?',
-        mediaType: 'text',
-      },
-    }).catch(() => {
-      // Non-critical — the conversation is still created.
-    })
+    // v25.3 (TZ task #3): automatic welcome message removed.
+    //
+    // Previously the backend created a "Здравствуйте! Я из команды поддержки…"
+    // message on every new support conversation, which counted as a test /
+    // demo message polluting the chat list. Per the technical spec, the chat
+    // must open empty after launch — no demo / sample / placeholder messages
+    // of any kind.
+    //
+    // The empty support conversation is returned as-is; the support view's
+    // placeholder input ("Напишите сообщение…") makes the next step obvious
+    // to the user.
 
-    // Re-fetch with the welcome message.
-    const fullConv = await prisma.conversation.findUnique({
-      where: { id: conv.id },
-      include: {
-        participants: { include: { user: { select: userSelect } } },
-        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
-      },
-    })
-
-    res.status(201).json({ conversation: formatConversation(fullConv, meId) })
+    res.status(201).json({ conversation: formatConversation(conv, meId) })
   }),
 )
 

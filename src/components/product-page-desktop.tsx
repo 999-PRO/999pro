@@ -275,11 +275,12 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                     >
                       <div
                         ref={galleryRef}
-                        // v24.3: changed aspect-[4/3] → aspect-square so desktop
-                        // product images match mobile (1:1). Previously desktop
-                        // used 4:3 which cropped images differently and made
-                        // text on images unreadable. Now all devices show square.
-                        className="relative aspect-square w-full max-w-[680px] max-h-[calc(100vh-20rem)] rounded-[20px] overflow-hidden bg-slate-100/60 dark:bg-slate-900/40 select-none cursor-zoom-in ring-1 ring-white/30 dark:ring-white/10 shadow-[0_24px_70px_-24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
+                        // v25.4 (TZ-2 task #6): 3:4 aspect ratio on desktop too,
+                        // matching mobile. The taller format gives product photos
+                        // more vertical space (better for showing apparel, full-body
+                        // product shots, etc.) and keeps the visual language
+                        // consistent across devices.
+                        className="relative aspect-[3/4] w-full max-w-[560px] max-h-[calc(100vh-12rem)] rounded-[20px] overflow-hidden bg-slate-100/60 dark:bg-slate-900/40 select-none cursor-zoom-in ring-1 ring-white/30 dark:ring-white/10 shadow-[0_24px_70px_-24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
                         onMouseMove={handleMouseMove}
                         onMouseEnter={() => setZoomed(true)}
                         onMouseLeave={() => setZoomed(false)}

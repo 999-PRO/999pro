@@ -10,6 +10,8 @@
 
 import { motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
+// v25.4 (TZ-2 task #1): render via portal so the QR modal is always on top.
+import { createPortal } from 'react-dom'
 import { X, Download, Copy, Check } from 'lucide-react'
 import { toast } from '@/lib/notifications'
 import { generateQrMatrix, drawQrToCanvas } from './qr-renderer'
@@ -81,9 +83,11 @@ export function QrModal({ open, onClose, url, title, shortId }: Props) {
     }
   }
 
-  return (
+  // v25.4 (TZ-2 task #1): render via portal at document.body with z-[9999]
+  // so the QR modal appears above the share sheet (z-[9999] too — sibling).
+  return createPortal(
     <motion.div
-      className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -157,6 +161,7 @@ export function QrModal({ open, onClose, url, title, shortId }: Props) {
           </div>
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   )
 }

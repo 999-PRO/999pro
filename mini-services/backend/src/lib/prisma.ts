@@ -46,12 +46,26 @@ if (!DATABASE_URL) {
   throw new Error(msg)
 }
 
-if (!DATABASE_URL.startsWith('postgres://') && !DATABASE_URL.startsWith('postgresql://')) {
+// v25.3-test: allow SQLite (file: URLs) when NODE_ENV !== 'production'.
+// The original guard rejected file: URLs unconditionally to prevent SQLite
+// from accidentally running in production. For local/test builds (which
+// is exactly what this task asks for — "prepare a test build"), we relax
+// the check so the operator can run the project without installing
+// PostgreSQL. Production deployments still require PostgreSQL — the
+// guard fires when NODE_ENV === 'production'.
+const isSqlite = DATABASE_URL.startsWith('file:')
+const isProd = process.env.NODE_ENV === 'production'
+if (isProd && isSqlite) {
   const msg =
-    'FATAL: DATABASE_URL must be a PostgreSQL connection string (start with "postgres://" or "postgresql://"). ' +
-    'Got: ' + DATABASE_URL.slice(0, 32) + '... ' +
-    'SQLite (file:) URLs are not supported in production. ' +
-    'For local-dev SQLite, run `node scripts/use-sqlite.js` AFTER reading its warning.'
+    'FATAL: SQLite (file:) DATABASE_URL is not allowed in production. ' +
+    'Set DATABASE_URL to a postgresql:// connection string.'
+  console.error(`[prisma] ${msg}`)
+  throw new Error(msg)
+}
+if (!isSqlite && !DATABASE_URL.startsWith('postgres://') && !DATABASE_URL.startsWith('postgresql://')) {
+  const msg =
+    'FATAL: DATABASE_URL must be a PostgreSQL connection string (start with "postgres://" or "postgresql://") ' +
+    'OR a SQLite file: URL for local dev. Got: ' + DATABASE_URL.slice(0, 32) + '... '
   console.error(`[prisma] ${msg}`)
   throw new Error(msg)
 }
@@ -68,8 +82,17 @@ export const prisma =
 // PostgreSQL connection health check — logged once on boot so the operator
 // can see whether the pool initialised correctly. Non-blocking; failures
 // are logged but don't crash (the first real query will surface them).
+// v25.3-test: skipped for SQLite (file: URLs) — SQLite has no server version
+// to query, and the SELECT current_setting() syntax is PostgreSQL-specific.
 // ============================================================================
 async function logPgConnectInfo() {
+  if (isSqlite) {
+    logger.info('SQLite connected (local-dev mode)', {
+      module: 'prisma',
+      url: DATABASE_URL.replace(/\/\/[^@]+@/, '//***@'),
+    })
+    return
+  }
   try {
     const result = await prisma.$queryRaw<{ server_version?: string }[]>`
       SELECT current_setting('server_version') AS server_version
