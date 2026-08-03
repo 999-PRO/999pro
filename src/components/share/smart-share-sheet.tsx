@@ -245,6 +245,9 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
           // open the share intent in a new tab.
           // v24.3: pass price + currency so WhatsApp share includes the full
           // product info (name + price + description + link), not just the link.
+          // v25.6 (Task #5): if window.open is blocked (popup blocker) or
+          // returns null, fall back to copying the link to clipboard so the
+          // user can still paste it manually into the target app.
           const url = buildShareUrl(target.platform, {
             title: product.title,
             description: product.description,
@@ -253,7 +256,37 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             currency: product.currency,
           })
           if (url) {
-            window.open(url, '_blank', 'noopener,noreferrer,width=600,height=600')
+            // Try window.open first (works on desktop + most mobile browsers).
+            const win = window.open(url, '_blank', 'noopener,noreferrer,width=600,height=600')
+            // If the popup was blocked (win === null), copy the link instead
+            // so the user still has a path forward.
+            if (!win) {
+              try {
+                await navigator.clipboard?.writeText(url)
+                toast.info('Ссылка скопирована', {
+                  description: 'Откройте нужное приложение и вставьте ссылку вручную.',
+                  duration: 6000,
+                })
+              } catch {
+                // Last-resort: legacy execCommand fallback.
+                try {
+                  const ta = document.createElement('textarea')
+                  ta.value = url
+                  ta.style.position = 'fixed'
+                  ta.style.opacity = '0'
+                  document.body.appendChild(ta)
+                  ta.select()
+                  document.execCommand('copy')
+                  ta.remove()
+                  toast.info('Ссылка скопирована', {
+                    description: 'Откройте нужное приложение и вставьте ссылку вручную.',
+                    duration: 6000,
+                  })
+                } catch {
+                  toast.error('Не удалось открыть приложение для шеринга')
+                }
+              }
+            }
           }
           return
         }

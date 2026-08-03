@@ -45,19 +45,25 @@ const AdminLoginView = dynamic(() => import('@/components/admin-login-view').the
 // Lazy-load new views added in v0.1: orders, reviews, support, settings, etc.
 const OrdersView = dynamic(() => import('@/components/orders-view').then((m) => m.OrdersView), { ssr: false })
 const ReviewsView = dynamic(() => import('@/components/reviews-view').then((m) => m.ReviewsView), { ssr: false })
+// v25.6 (Task #2 + #7): SupportView kept for backward-compat with deep links,
+// but the user-facing menu entries now route to ContactsView instead.
 const SupportView = dynamic(() => import('@/components/support-view').then((m) => m.SupportView), { ssr: false })
+const ContactsView = dynamic(() => import('@/components/contacts-view').then((m) => m.ContactsView), { ssr: false })
 const SettingsView = dynamic(() => import('@/components/settings-view').then((m) => m.SettingsView), { ssr: false })
 const PrivacyView = dynamic(() => import('@/components/privacy-view').then((m) => m.PrivacyView), { ssr: false })
 const AboutView = dynamic(() => import('@/components/about-view').then((m) => m.AboutView), { ssr: false })
 const InfoPageView = dynamic(() => import('@/components/info-page-view').then((m) => m.InfoPageView), { ssr: false })
 
-type View = 'home' | 'catalog' | 'club' | 'chat' | 'profile' | 'search' | 'studio' | 'orders' | 'reviews' | 'support' | 'settings' | 'privacy' | 'about' | 'info' | 'admin-login' | 'analytics'
+type View = 'home' | 'catalog' | 'club' | 'chat' | 'profile' | 'search' | 'studio' | 'orders' | 'reviews' | 'support' | 'contacts' | 'settings' | 'privacy' | 'about' | 'info' | 'admin-login' | 'analytics'
 
 function getInitialView(): View {
   if (typeof window === 'undefined') return 'home'
   const params = new URLSearchParams(window.location.search)
   const v = params.get('view')
-  const validViews: View[] = ['home', 'catalog', 'club', 'chat', 'profile', 'search', 'studio', 'orders', 'reviews', 'support', 'settings', 'privacy', 'about', 'info', 'admin-login']
+  // v25.6: 'support' is kept as a valid view for backward-compat with deep
+  // links, but it now resolves to ContactsView (see routing below). Old
+  // bookmarks /?view=support still work — they show Contacts.
+  const validViews: View[] = ['home', 'catalog', 'club', 'chat', 'profile', 'search', 'studio', 'orders', 'reviews', 'support', 'contacts', 'settings', 'privacy', 'about', 'info', 'admin-login']
   if (v && validViews.includes(v as View)) return v as View
   return 'home'
 }
@@ -362,6 +368,27 @@ export default function Home() {
     return () => window.removeEventListener('999pro:open-product', onOpenProduct as EventListener)
   }, [openProductOverlay])
 
+  // v25.6 (Task #1): Listen for "switch-product" requests from the Similar
+  // Products block inside ProductPage. Previously, the SimilarProducts click
+  // handler did `pushState + dispatchEvent(popstate)` — but popstate is also
+  // intercepted by ProductPage's own Back-button handler, which closed the
+  // card instead of switching the product.
+  // Now SimilarProducts dispatches `999pro:switch-product` and we call
+  // `openProduct(id)` which:
+  //   1. Sets activeProductId → ProductPage refetches the new product.
+  //   2. Pushes ?product=<id> to the URL (so a reload works).
+  //   3. Does NOT close the card.
+  useEffect(() => {
+    const onSwitchProduct = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { productId?: string } | undefined
+      if (detail?.productId) {
+        openProduct(detail.productId)
+      }
+    }
+    window.addEventListener('999pro:switch-product', onSwitchProduct as EventListener)
+    return () => window.removeEventListener('999pro:switch-product', onSwitchProduct as EventListener)
+  }, [openProduct])
+
   // Listen for "open-film" overlay requests — same pattern as product.
   // Used by FilmChatCard in chat to open FilmBottomSheet as overlay.
   useEffect(() => {
@@ -550,9 +577,15 @@ export default function Home() {
             <ReviewsView key="reviews-children" onNavigate={navigate} />
           </RetryableErrorBoundary>
         )}
-        {view === 'support' && (
-          <RetryableErrorBoundary key="support">
-            <SupportView key="support-children" onNavigate={navigate} />
+        {/* v25.6 (Task #2 + #7): 'support' view now resolves to ContactsView.
+            Old SupportView (chat with support) is fully removed from the UI —
+            user-facing entries route to 'contacts' instead. The 'support'
+            branch is kept only so that old deep links (/?view=support from
+            notifications, AI assistant actions, etc.) still land somewhere
+            useful instead of showing a blank screen. */}
+        {(view === 'support' || view === 'contacts') && (
+          <RetryableErrorBoundary key="contacts">
+            <ContactsView key="contacts-children" onNavigate={navigate} />
           </RetryableErrorBoundary>
         )}
         {view === 'settings' && (

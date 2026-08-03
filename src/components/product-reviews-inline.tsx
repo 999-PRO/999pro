@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Star, StarHalf, X, Camera, Loader2, PenLine, Trash2, MessageSquare, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
@@ -316,17 +317,27 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
         onReviewChanged={onReviewChanged}
       />
 
-      {/* Review form modal */}
-      <AnimatePresence>
-        {showForm && (
+      {/* Review form modal.
+          v25.6 (Task #8): rendered via portal to document.body so it always
+          covers the full viewport, regardless of any `backdrop-filter` /
+          `transform` ancestors that would otherwise create a containing block
+          for `position: fixed` children. On desktop, the ProductPageDesktop
+          layout uses GlassCard with `backdrop-blur-2xl` for both the reviews
+          card AND the similar-products card — without a portal, the form's
+          `fixed inset-0 z-50` was constrained to the reviews card's bounds,
+          causing the submit button to be clipped/overlapped by the
+          similar-products card below. */}
+      {showForm && typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
           <ReviewForm
             product={product}
             existingReview={myReview}
             onClose={() => setShowForm(false)}
             onSaved={handleSaved}
           />
-        )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body,
+      )}
 
       {/* Phase 10: custom confirm dialog for delete */}
       <ConfirmDialog
@@ -519,7 +530,7 @@ function PhotoLightbox({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="fixed inset-0 z-[70] bg-black/95 backdrop-blur-md grid place-items-center"
+      className="fixed inset-0 z-[10005] bg-black/95 backdrop-blur-md grid place-items-center"
       onClick={onClose}
     >
       {/* Close button */}
@@ -712,7 +723,10 @@ function ReviewForm({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black/50 backdrop-blur grid place-items-end md:place-items-center p-0 md:p-4"
+      // v25.6 (Task #8): z-[10000] — above ProductPageDesktop (z-80) and
+      // above SmartShareSheet (z-9999) so the form is always on top.
+      // Rendered via portal to document.body (see ProductReviewsInline).
+      className="fixed inset-0 z-[10000] bg-black/50 backdrop-blur grid place-items-end md:place-items-center p-0 md:p-4"
       onClick={onClose}
     >
       <motion.div

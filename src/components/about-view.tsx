@@ -31,6 +31,8 @@ const BUILD_INFO = {
 
 export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
   const handleShare = async () => {
+    // v25.6 (Task #4): Web Share API with proper clipboard fallback.
+    // Toast "Ссылка скопирована" only after successful copy.
     const shareData = {
       title: '999 — Три девятки',
       text: 'Современный маркетплейс нового поколения с голосовым AI-агентом',
@@ -40,12 +42,28 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
       try {
         await navigator.share(shareData)
       } catch {
-        // User cancelled
+        // User cancelled — non-critical, no toast.
+      }
+    } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareData.url)
+        toast.success('Ссылка скопирована')
+      } catch {
+        toast.error('Не удалось скопировать ссылку')
       }
     } else {
+      // Legacy fallback: execCommand on hidden textarea.
       try {
-        await navigator.clipboard?.writeText(shareData.url)
-        toast.success('Ссылка скопирована')
+        const ta = document.createElement('textarea')
+        ta.value = shareData.url
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand('copy')
+        ta.remove()
+        if (ok) toast.success('Ссылка скопирована')
+        else toast.error('Не удалось скопировать ссылку')
       } catch {
         toast.error('Не удалось скопировать ссылку')
       }

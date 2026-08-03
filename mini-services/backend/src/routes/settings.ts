@@ -17,10 +17,10 @@ const router = Router()
 //                    primaryButton: {text, view, link}, secondaryButton: {...}, gradient }
 
 // Whitelist of settings readable without auth (public)
-const PUBLIC_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'heroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen'])
+const PUBLIC_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'address', 'workingHours', 'heroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen'])
 
 // Whitelist of all known setting keys (so attackers can't fill the DB with junk)
-const KNOWN_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'heroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen'])
+const KNOWN_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'address', 'workingHours', 'heroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen'])
 
 // Zod schema for the headerImage setting value
 const headerImageValueSchema = z.object({
@@ -68,10 +68,10 @@ const heroBlockValueSchema = z.object({
   mode: z.enum(['image-text', 'image-only']).default('image-text').optional(),
 })
 
-// String-valued settings (whatsapp, telegram, email, phone). Stored as
-// JSON-encoded strings. Validation rejects objects (which would corrupt
+// String-valued settings (whatsapp, telegram, email, phone, address, workingHours).
+// Stored as JSON-encoded strings. Validation rejects objects (which would corrupt
 // the value on round-trip — see audit finding H1).
-const STRING_SETTING_KEYS = new Set(['whatsapp', 'telegram', 'email', 'phone', 'appTitle'])
+const STRING_SETTING_KEYS = new Set(['whatsapp', 'telegram', 'email', 'phone', 'address', 'workingHours', 'appTitle'])
 const stringValueSchema = z.union([
   z.string().max(512),
   z.null(),

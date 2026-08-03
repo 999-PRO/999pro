@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Plus, Trash2, Pencil, ArrowUp, ArrowDown, Eye, EyeOff,
   FileText, ExternalLink, GripVertical, Menu, Eye as EyeIcon,
+  Shield as ShieldIcon, BookOpen as BookOpenIcon,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { InfoPage } from '@/lib/types'
@@ -59,11 +60,26 @@ export function InfoPagesManager() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<InfoPage | null>(null)
   const [creating, setCreating] = useState(false)
+  // v25.6 (Task #6): when the admin clicks a legal-doc shortcut (privacy/
+  // terms/rules) and the page doesn't exist yet, we pre-seed the editor
+  // with the slug + a default title so the admin only needs to enter content.
+  const [presetSlug, setPresetSlug] = useState<string | null>(null)
+  const [presetTitle, setPresetTitle] = useState<string>('')
   const [moving, setMoving] = useState(false)
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [menuTogglingId, setMenuTogglingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useConfirmDialog()
+
+  // v25.6 (Task #6): open the editor pre-filled with a slug + title for one
+  // of the 3 system legal documents (privacy / terms / rules). Used when
+  // the page doesn't exist yet — the admin clicks the shortcut card and
+  // the editor opens with the slug locked in.
+  const setCreatingWithSlug = useCallback((slug: string, title: string, _desc?: string) => {
+    setPresetSlug(slug)
+    setPresetTitle(title)
+    setCreating(true)
+  }, [])
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -155,7 +171,16 @@ const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useCon
             {items.length} страниц · {items.filter((p) => p.isPublished).length} опубликовано · {items.filter((p) => p.showInMenu).length} в меню
           </p>
         </div>
-        <Button onClick={() => setCreating(true)} className="rounded-full gradient-brand text-white shadow-glow h-11 px-5">
+        <Button
+          onClick={() => {
+            // v25.6: clear any preset slug/title so the "Add" button starts
+            // a clean new page (not pre-filled with a legal-doc slug).
+            setPresetSlug(null)
+            setPresetTitle('')
+            setCreating(true)
+          }}
+          className="rounded-full gradient-brand text-white shadow-glow h-11 px-5"
+        >
           <Plus className="h-4 w-4" /> Добавить
         </Button>
       </div>
@@ -166,6 +191,56 @@ const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useCon
         Содержимое поддерживает HTML (заголовки, списки, ссылки).
       </div>
 
+      {/* v25.6 (Task #6): Quick-access shortcuts to the 3 system legal documents.
+          These are not separate entities — they're regular info pages with
+          reserved slugs (privacy / terms / rules) that the app's PrivacyView
+          loads dynamically. Clicking opens the existing editor on that page. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+        {[
+          { slug: 'privacy', title: 'Политика конфиденциальности', desc: 'Сбор, использование, защита данных', icon: ShieldIcon },
+          { slug: 'terms',   title: 'Пользовательское соглашение',  desc: 'Права и обязанности сторон',     icon: FileText },
+          { slug: 'rules',   title: 'Правила сервиса',              desc: 'Правила поведения на платформе', icon: BookOpenIcon },
+        ].map((doc) => {
+          const page = items.find((p) => p.slug === doc.slug)
+          return (
+            <button
+              key={doc.slug}
+              onClick={() => {
+                if (page) {
+                  setEditing(page)
+                } else {
+                  toast.info('Страница будет создана из шаблона при первом сохранении', {
+                    description: `Slug: ${doc.slug}`,
+                  })
+                  // Pre-fill the editor with the slug so the admin only needs
+                  // to enter the title + content. We simulate a "new page"
+                  // with the slug pre-set.
+                  setCreatingWithSlug(doc.slug, doc.title, doc.desc)
+                }
+              }}
+              className="glass rounded-2xl p-4 text-left hover:bg-accent/40 active:bg-accent/60 transition-colors group"
+            >
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-xl gradient-brand grid place-items-center text-white shrink-0">
+                  <doc.icon className="h-5 w-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm">{doc.title}</div>
+                  <div className="text-xs text-muted-foreground truncate">{doc.desc}</div>
+                  <div className="text-[10px] text-muted-foreground/70 mt-1">
+                    {page ? (
+                      <>Обновлено: {new Date(page.updatedAt).toLocaleDateString('ru-RU')}</>
+                    ) : (
+                      <span className="text-amber-600 dark:text-amber-400">Не создано — нажмите чтобы создать</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-20 rounded-2xl skeleton" />)}
@@ -174,7 +249,14 @@ const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useCon
         <div className="py-16 text-center">
           <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
           <p className="text-muted-foreground mb-4">Нет информационных страниц</p>
-          <Button onClick={() => setCreating(true)} className="rounded-full gradient-brand text-white">
+          <Button
+            onClick={() => {
+              setPresetSlug(null)
+              setPresetTitle('')
+              setCreating(true)
+            }}
+            className="rounded-full gradient-brand text-white"
+          >
             <Plus className="h-4 w-4" /> Создать первую
           </Button>
         </div>
@@ -255,8 +337,21 @@ const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useCon
       {(editing || creating) && (
         <InfoPageEditor
           page={editing}
-          onClose={() => { setEditing(null); setCreating(false) }}
-          onSaved={() => { setEditing(null); setCreating(false); refresh() }}
+          presetSlug={creating ? presetSlug : null}
+          presetTitle={creating ? presetTitle : ''}
+          onClose={() => {
+            setEditing(null)
+            setCreating(false)
+            setPresetSlug(null)
+            setPresetTitle('')
+          }}
+          onSaved={() => {
+            setEditing(null)
+            setCreating(false)
+            setPresetSlug(null)
+            setPresetTitle('')
+            refresh()
+          }}
         />
       )}
 
@@ -269,22 +364,39 @@ const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useCon
 // InfoPageEditor — Dialog for creating/editing an info page.
 // ============================================================================
 
-function InfoPageEditor({ page, onClose, onSaved }: { page: InfoPage | null; onClose: () => void; onSaved: () => void }) {
-  const [slug, setSlug] = useState(page?.slug || '')
-  const [title, setTitle] = useState(page?.title || '')
+function InfoPageEditor({
+  page,
+  presetSlug,
+  presetTitle,
+  onClose,
+  onSaved,
+}: {
+  page: InfoPage | null
+  // v25.6 (Task #6): when creating a new page from a legal-doc shortcut,
+  // these pre-fill the slug + title fields (slug is locked, can't be edited).
+  presetSlug?: string | null
+  presetTitle?: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [slug, setSlug] = useState(page?.slug || presetSlug || '')
+  const [title, setTitle] = useState(page?.title || presetTitle || '')
   const [subtitle, setSubtitle] = useState(page?.subtitle || '')
   const [content, setContent] = useState(page?.content || '')
-  const [icon, setIcon] = useState(page?.icon || 'FileText')
-  const [customIcon, setCustomIcon] = useState(!ICON_OPTIONS.some((o) => o.id === (page?.icon || 'FileText')))
+  // v25.6: choose icon based on presetSlug (privacy→Shield, terms/rules→FileText).
+  const defaultIcon = presetSlug === 'privacy' ? 'Shield' : 'FileText'
+  const [icon, setIcon] = useState(page?.icon || defaultIcon)
+  const [customIcon, setCustomIcon] = useState(!ICON_OPTIONS.some((o) => o.id === (page?.icon || defaultIcon)))
   const [images, setImages] = useState<string[]>(page?.images || [])
   const [isPublished, setIsPublished] = useState(page?.isPublished ?? true)
   const [showInMenu, setShowInMenu] = useState(page?.showInMenu ?? true)
   const [metaDescription, setMetaDescription] = useState(page?.metaDescription || '')
   const [saving, setSaving] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
-// Auto-generate slug from title (only for new pages, when slug is empty)
+// Auto-generate slug from title (only for new pages, when slug is empty
+// AND there's no preset slug from a legal-doc shortcut).
   useEffect(() => {
-    if (!page && !slug && title) {
+    if (!page && !slug && !presetSlug && title) {
       // Транслитерация базовая — заменяем пробелы на дефисы, lowercase
       const generated = title
         .toLowerCase()
@@ -294,7 +406,7 @@ function InfoPageEditor({ page, onClose, onSaved }: { page: InfoPage | null; onC
         .replace(/^-|-$/g, '')
       if (generated) setSlug(generated)
     }
-  }, [title, slug, page])
+  }, [title, slug, page, presetSlug])
 
   const save = async () => {
     if (!title.trim()) return toast.error('Введите заголовок')
@@ -357,11 +469,18 @@ function InfoPageEditor({ page, onClose, onSaved }: { page: InfoPage | null; onC
                 onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
                 className="rounded-2xl flex-1 font-mono"
                 placeholder="privacy"
-                disabled={!!page}
+                // v25.6: disabled when editing an existing page OR when the
+                // slug was pre-set from a legal-doc shortcut (presetSlug).
+                disabled={!!page || !!presetSlug}
               />
             </div>
             <p className="text-xs text-muted-foreground">
               Только латиница (a-z), цифры и дефисы. После создания slug нельзя изменить.
+              {presetSlug && (
+                <span className="block mt-1 text-primary font-medium">
+                  Системный slug для юридического документа.
+                </span>
+              )}
             </p>
           </div>
 

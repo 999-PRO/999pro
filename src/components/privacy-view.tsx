@@ -1,38 +1,86 @@
 'use client'
 
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Shield, FileText, Cookie, Mail, Phone, ChevronLeft, ChevronRight,
-  Lock, UserCheck, AlertCircle, ExternalLink, MessageCircle, Send,
+  Shield, FileText, Cookie, ChevronLeft, ChevronRight,
+  Lock, UserCheck, AlertCircle, Mail, Phone, MessageCircle, Send,
+  RefreshCw,
 } from 'lucide-react'
 import { useContacts, buildWhatsAppUrl, buildTelUrl, buildTelegramUrl, buildMailtoUrl } from '@/lib/use-contacts'
+import { api } from '@/lib/api'
+import DOMPurify from 'dompurify'
 
 // ============================================================================
 // PrivacyView — full privacy policy + terms of service section.
 //
-// Contains:
-// - Политика конфиденциальности (data collection, storage, sharing)
-// - Пользовательское соглашение (terms of use)
-// - Обработка персональных данных (GDPR-style rights)
-// - Использование Cookies (what cookies we set + why)
-// - Права пользователя (access, rectification, erasure, portability)
-// - Контакты (email, phone, address)
+// v25.6 (Task #6): rewritten to pull all legal documents from the DB
+// (Studio → Инфо-страницы) instead of using hardcoded Russian text.
+// Three documents are loaded by slug:
+//   • privacy  — Политика конфиденциальности
+//   • terms    — Пользовательское соглашение
+//   • rules    — Правила сервиса (NEW slug, seeded by seed-info-pages.ts)
+// All three are fully editable in Studio and changes appear instantly in
+// the app via the `999pro:info-pages-changed` live-refresh event.
+//
+// Two additional tabs remain mostly hardcoded (Cookies + Your Rights + Contacts)
+// for backward compat, but the Contacts tab now uses the same dynamic
+// `useContacts()` hook as the new ContactsView.
 // ============================================================================
 
-type Tab = 'policy' | 'terms' | 'cookies' | 'rights' | 'contacts'
+type Tab = 'policy' | 'terms' | 'rules' | 'cookies' | 'rights' | 'contacts'
 
-const TABS: { id: Tab; label: string; icon: typeof Shield }[] = [
-  { id: 'policy', label: 'Политика', icon: Shield },
-  { id: 'terms', label: 'Соглашение', icon: FileText },
-  { id: 'cookies', label: 'Cookies', icon: Cookie },
-  { id: 'rights', label: 'Ваши права', icon: UserCheck },
-  { id: 'contacts', label: 'Контакты', icon: Mail },
+const TABS: { id: Tab; label: string; icon: typeof Shield; slug?: string }[] = [
+  { id: 'policy',  label: 'Политика',  icon: Shield,    slug: 'privacy' },
+  { id: 'terms',   label: 'Соглашение', icon: FileText, slug: 'terms' },
+  { id: 'rules',   label: 'Правила',   icon: FileText, slug: 'rules' },
+  { id: 'cookies', label: 'Cookies',   icon: Cookie },
+  { id: 'rights',  label: 'Ваши права', icon: UserCheck },
+  { id: 'contacts',label: 'Контакты',  icon: Mail },
 ]
+
+// Fetch a DB-backed info page by slug. Returns sanitised HTML or null.
+function useInfoPage(slug: string | undefined) {
+  const [html, setHtml] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  useEffect(() => {
+    if (!slug) { setHtml(null); return }
+    let alive = true
+    setLoading(true)
+    api.get<{ content: string }>(`/api/info-pages/${slug}`)
+      .then((data) => { if (alive) setHtml(data.content || '') })
+      .catch(() => { if (alive) setHtml(null) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [slug, refreshKey])
+
+  // Live-refresh: refetch when Studio saves any info page change.
+  useEffect(() => {
+    const onInfoPagesChanged = () => setRefreshKey((k) => k + 1)
+    window.addEventListener('999pro:info-pages-changed', onInfoPagesChanged as EventListener)
+    return () => window.removeEventListener('999pro:info-pages-changed', onInfoPagesChanged as EventListener)
+  }, [])
+
+  return { html, loading, refresh: () => setRefreshKey((k) => k + 1) }
+}
+
+function sanitiseHtml(html: string): string {
+  if (typeof window === 'undefined') return html
+  return DOMPurify.sanitize(html, {
+    FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'script', 'form', 'input', 'button'],
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onmouseenter', 'onmouseleave', 'onsubmit', 'onchange', 'oninput', 'onfocus', 'onblur', 'style'],
+    ALLOW_DATA_ATTR: false,
+  })
+}
 
 export function PrivacyView({ onNavigate }: { onNavigate: (v: string) => void }) {
   const [tab, setTab] = useState<Tab>('policy')
+
+  // Look up the slug for the active tab; tabs without a slug use a hardcoded fallback.
+  const activeTab = TABS.find((t) => t.id === tab)
+  const { html, loading, refresh } = useInfoPage(activeTab?.slug)
 
   return (
     <div className="page-top-padding pb-28 md:pb-6">
@@ -86,11 +134,20 @@ export function PrivacyView({ onNavigate }: { onNavigate: (v: string) => void })
             transition={{ duration: 0.2 }}
             className="glass rounded-3xl p-5 md:p-6 prose prose-sm dark:prose-invert max-w-none"
           >
-            {tab === 'policy' && <PolicyContent />}
-            {tab === 'terms' && <TermsContent />}
             {tab === 'cookies' && <CookiesContent />}
             {tab === 'rights' && <RightsContent />}
             {tab === 'contacts' && <ContactsContent />}
+            {/* v25.6 (Task #6): the three legal documents are loaded from
+                the DB. If the admin has not yet edited them, the seed
+                defaults are shown (seed-info-pages.ts seeds privacy + terms;
+                rules is new and is seeded with a sensible default). */}
+            {(tab === 'policy' || tab === 'terms' || tab === 'rules') && (
+              <DbDocumentContent
+                html={html}
+                loading={loading}
+                onRetry={refresh}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -99,159 +156,54 @@ export function PrivacyView({ onNavigate }: { onNavigate: (v: string) => void })
 }
 
 // ============================================================================
-// Policy content — privacy policy in Russian.
+// DbDocumentContent — renders a DB-backed legal document (privacy/terms/rules).
 // ============================================================================
 
-function PolicyContent() {
+function DbDocumentContent({
+  html,
+  loading,
+  onRetry,
+}: {
+  html: string | null
+  loading: boolean
+  onRetry: () => void
+}) {
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-4 rounded-full skeleton" style={{ width: `${60 + Math.random() * 35}%` }} />
+        ))}
+      </div>
+    )
+  }
+
+  if (!html || !html.trim()) {
+    // Empty state — admin hasn't filled the document yet.
+    return (
+      <div className="text-center py-8">
+        <AlertCircle className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+        <h2 className="text-xl font-bold mb-2">Документ пока не заполнен</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Администратор может добавить текст в Studio → Информационные страницы.
+        </p>
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-1.5 text-sm text-primary font-semibold hover:underline"
+        >
+          <RefreshCw className="h-3.5 w-3.5" /> Повторить
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-4 text-sm">
-      <h2 className="text-xl font-bold">Политика конфиденциальности</h2>
-      <p className="text-muted-foreground">
-        Настоящая Политика описывает, как 999 — Три девятки («мы», «нас», «наш») собирает, использует и
-        защищает персональные данные пользователей приложения. Используя приложение, вы соглашаетесь
-        с условиями данной Политики.
-      </p>
-
-      <div>
-        <h3 className="font-semibold mb-1.5 flex items-center gap-2">
-          <Lock className="h-4 w-4 text-primary" /> 1. Какие данные мы собираем
-        </h3>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-          <li><strong>Учётные данные:</strong> имя пользователя, email, телефон, пароль (в виде хеша).</li>
-          <li><strong>Профиль:</strong> отображаемое имя, аватар, био, гендер (опционально).</li>
-          <li><strong>Заказы:</strong> состав заказов, адрес доставки, статус.</li>
-          <li><strong>Чаты:</strong> сообщения, медиафайлы (фото, документы).</li>
-          <li><strong>Устройство:</strong> User-Agent, IP-адрес (для безопасности), push-подписки.</li>
-          <li><strong>Аналитика:</strong> агрегированные данные о использовании приложения.</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5 flex items-center gap-2">
-          <UserCheck className="h-4 w-4 text-primary" /> 2. Как мы используем данные
-        </h3>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-          <li>Для предоставления услуг: создание заказов, общение в чате, отзывы.</li>
-          <li>Для уведомлений: push-уведомления о новых сообщениях и заказах.</li>
-          <li>Для безопасности: защита от спама, фрода, несанкционированного доступа.</li>
-          <li>Для поддержки: обработка обращений в службу поддержки.</li>
-          <li>Для улучшения продукта: анализ пользовательского поведения (агрегированно).</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5 flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 text-primary" /> 3. Передача данных третьим лицам
-        </h3>
-        <p className="text-muted-foreground">
-          Мы не продаём и не передаём ваши персональные данные третьим лицам, за исключением:
-        </p>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground mt-2">
-          <li>Платёжные провайдеры (для обработки оплат — передаются только данные заказа).</li>
-          <li>Службы доставки (для отправки заказов — передаётся адрес и состав заказа).</li>
-          <li>Push-сервисы (Apple APNS, Google FCM, Mozilla Push — для доставки уведомлений).</li>
-          <li>Уполномоченные органы по законному требованию (полицейский запрос, суд и т.д.).</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5">4. Хранение данных</h3>
-        <p className="text-muted-foreground">
-          Данные хранятся на серверах, расположенных в Российской Федерации. Срок хранения:
-        </p>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground mt-2">
-          <li>Учётная запись — до удаления пользователем.</li>
-          <li>Заказы — 5 лет с момента закрытия (требование бухгалтерского учёта).</li>
-          <li>Сообщения чата — до удаления пользователем.</li>
-          <li>Логи безопасности — 90 дней.</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5">5. Безопасность</h3>
-        <p className="text-muted-foreground">
-          Мы используем шифрование TLS 1.3 для передачи данных, bcrypt (12 раундов) для хеширования
-          паролей, JWT с ограниченным сроком действия для аутентификации. Доступ к данным имеют
-          только уполномоченные сотрудники, прошедшие проверку.
-        </p>
-      </div>
-
-      <div className="text-xs text-muted-foreground border-t border-border/30 pt-3 mt-4">
-        Последнее обновление: 29 июня 2026 г.
-      </div>
-    </div>
+    <div dangerouslySetInnerHTML={{ __html: sanitiseHtml(html) }} />
   )
 }
 
 // ============================================================================
-// Terms content — user agreement.
-// ============================================================================
-
-function TermsContent() {
-  return (
-    <div className="space-y-4 text-sm">
-      <h2 className="text-xl font-bold">Пользовательское соглашение</h2>
-      <p className="text-muted-foreground">
-        Настоящее Соглашение регулирует отношения между «Три девятки» и пользователем приложения.
-        Используя приложение, вы подтверждаете, что ознакомились и согласны с условиями.
-      </p>
-
-      <div>
-        <h3 className="font-semibold mb-1.5">1. Регистрация и аккаунт</h3>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-          <li>Регистрация доступна лицам старше 16 лет.</li>
-          <li>Пользователь несёт ответственность за сохранность пароля.</li>
-          <li>Запрещено передавать аккаунт третьим лицам.</li>
-          <li>Запрещено создавать несколько аккаунтов для обхода ограничений.</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5">2. Контент пользователя</h3>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-          <li>Пользователь несёт ответственность за размещаемый контент (сообщения, отзывы, фото).</li>
-          <li>Запрещён контент: незаконный, оскорбительный, спам, нарушение авторских прав.</li>
-          <li>«Три девятки» вправе удалить контент без предупреждения при нарушении правил.</li>
-          <li>Размещая контент, вы предоставляете «Три девятки» лицензию на его использование в рамках приложения.</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5">3. Заказы и оплата</h3>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-          <li>Заказ считается оформленным после подтверждения на стороне «Три девятки».</li>
-          <li>Оплата производится через доступные платёжные методы.</li>
-          <li>Возврат осуществляется согласно Закону РФ «О защите прав потребителей».</li>
-          <li>Срок доставки указывается при оформлении заказа и может меняться.</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5">4. Ответственность</h3>
-        <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-          <li>«Три девятки» не несёт ответственности за временные сбои в работе приложения.</li>
-          <li>«Три девятки» не отвечает за действия других пользователей.</li>
-          <li>Пользователь возмещает ущерб, причинённый нарушением Соглашения.</li>
-        </ul>
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-1.5">5. Изменения Соглашения</h3>
-        <p className="text-muted-foreground">
-          «Три девятки» вправе изменять условия Соглашения. Новая версия вступает в силу с момента
-          публикации в приложении. Продолжая использовать приложение, вы соглашаетесь с обновлёнными условиями.
-        </p>
-      </div>
-
-      <div className="text-xs text-muted-foreground border-t border-border/30 pt-3 mt-4">
-        Последнее обновление: 29 июня 2026 г.
-      </div>
-    </div>
-  )
-}
-
-// ============================================================================
-// Cookies content.
+// Cookies content — kept hardcoded (not a legal document, just a help page).
 // ============================================================================
 
 function CookiesContent() {
@@ -307,20 +259,15 @@ function CookiesContent() {
           передаём им содержимое ваших сообщений.
         </p>
       </div>
-
-      <div className="text-xs text-muted-foreground border-t border-border/30 pt-3 mt-4">
-        Последнее обновление: 29 июня 2026 г.
-      </div>
     </div>
   )
 }
 
 // ============================================================================
-// Rights content — user rights under GDPR-style framework.
+// Rights content — GDPR-style user rights. Uses dynamic email.
 // ============================================================================
 
 function RightsContent() {
-  // v16.7: use dynamic email from Studio settings for the "contact us" text
   const { email } = useContacts()
   const supportEmail = email || 'support@999.pro'
 
@@ -349,7 +296,7 @@ function RightsContent() {
           desc="Вы можете удалить аккаунт через Настройки → Удалить аккаунт. Все ваши данные будут стёрты в течение 30 дней, кроме данных, обязательных к хранению по закону (заказы, бухгалтерия)."
         />
         <RightCard
-          icon={<ExternalLink className="h-5 w-5" />}
+          icon={<Mail className="h-5 w-5" />}
           title="Право на переносимость"
           desc={`Вы можете запросить экспорт ваших данных в машиночитаемом формате (JSON). Запрос на ${supportEmail}.`}
         />
@@ -392,22 +339,19 @@ function RightCard({ icon, title, desc }: { icon: React.ReactNode; title: string
 }
 
 // ============================================================================
-// Contacts content.
+// Contacts content — pulls all 6 contact fields dynamically from Studio.
 // ============================================================================
 
 function ContactsContent() {
-  // v16.7: contacts are loaded dynamically from Studio settings (not hardcoded).
-  // Hook auto-refreshes when admin changes any contact in Studio → instant update.
-  const { whatsapp, telegram, email, phone } = useContacts()
+  const { whatsapp, telegram, email, phone, address, workingHours } = useContacts()
 
-  // Build URLs with normalization (strip +, @, spaces, etc.)
   const waUrl = buildWhatsAppUrl(whatsapp)
   const telUrl = buildTelUrl(phone)
   const tgUrl = buildTelegramUrl(telegram)
   const mailUrl = buildMailtoUrl(email)
 
-  // Count how many contacts are configured (to show empty state if none)
   const configuredCount = [waUrl, telUrl, tgUrl, mailUrl].filter(Boolean).length
+  const hasAny = configuredCount > 0 || Boolean(address?.trim()) || Boolean(workingHours?.trim())
 
   return (
     <div className="space-y-4 text-sm">
@@ -416,66 +360,45 @@ function ContactsContent() {
         Свяжитесь с нами любым удобным способом. Мы отвечаем в течение 24 часов в будние дни.
       </p>
 
-      {configuredCount === 0 ? (
+      {!hasAny ? (
         <div className="p-4 rounded-2xl bg-accent/30 text-center text-muted-foreground">
           Контакты ещё не настроены. Администратор может добавить их в Studio → Контакты.
         </div>
       ) : (
-        <div className="space-y-3">
-          {mailUrl && (
-            <ContactCard
-              icon={<Mail className="h-5 w-5" />}
-              label="Email"
-              value={email!}
-              href={mailUrl}
-            />
+        <>
+          <div className="space-y-3">
+            {mailUrl && (
+              <ContactCard icon={<Mail className="h-5 w-5" />} label="Email" value={email!} href={mailUrl} />
+            )}
+            {telUrl && (
+              <ContactCard icon={<Phone className="h-5 w-5" />} label="Телефон" value={phone!} href={telUrl} />
+            )}
+            {waUrl && (
+              <ContactCard icon={<MessageCircle className="h-5 w-5" />} label="WhatsApp" value={whatsapp!} href={waUrl} />
+            )}
+            {tgUrl && (
+              <ContactCard icon={<Send className="h-5 w-5" />} label="Telegram" value={telegram!} href={tgUrl} />
+            )}
+          </div>
+
+          {(address?.trim() || workingHours?.trim()) && (
+            <div className="space-y-3 mt-3">
+              {address?.trim() && (
+                <div className="p-3 rounded-2xl bg-accent/30">
+                  <div className="font-semibold text-sm mb-1">Адрес</div>
+                  <p className="text-xs text-muted-foreground whitespace-pre-line">{address}</p>
+                </div>
+              )}
+              {workingHours?.trim() && (
+                <div className="p-3 rounded-2xl bg-accent/30">
+                  <div className="font-semibold text-sm mb-1">Время работы</div>
+                  <p className="text-xs text-muted-foreground whitespace-pre-line">{workingHours}</p>
+                </div>
+              )}
+            </div>
           )}
-          {telUrl && (
-            <ContactCard
-              icon={<Phone className="h-5 w-5" />}
-              label="Телефон"
-              value={phone!}
-              href={telUrl}
-            />
-          )}
-          {waUrl && (
-            <ContactCard
-              icon={<MessageCircle className="h-5 w-5" />}
-              label="WhatsApp"
-              value={whatsapp!}
-              href={waUrl}
-            />
-          )}
-          {tgUrl && (
-            <ContactCard
-              icon={<Send className="h-5 w-5" />}
-              label="Telegram"
-              value={telegram!}
-              href={tgUrl}
-            />
-          )}
-        </div>
+        </>
       )}
-
-      <div className="p-4 rounded-2xl bg-accent/30">
-        <div className="font-semibold text-sm mb-1">Юридический адрес</div>
-        <p className="text-xs text-muted-foreground">
-          ООО «Три девятки»<br />
-          123456, г. Москва, ул. Примерная, д. 1, оф. 999<br />
-          ИНН 1234567890 · ОГРН 1234567890123
-        </p>
-      </div>
-
-      <div className="p-4 rounded-2xl bg-primary/10 border border-primary/20">
-        <div className="font-semibold text-sm mb-1">Чат в приложении</div>
-        <p className="text-xs text-muted-foreground mb-2">
-          Самый быстрый способ получить помощь — написать в чат поддержки прямо в приложении.
-        </p>
-      </div>
-
-      <div className="text-xs text-muted-foreground border-t border-border/30 pt-3 mt-4">
-        Режим работы поддержки: Пн–Пт 9:00–21:00 (МСК), Сб 10:00–18:00, Вс — выходной.
-      </div>
     </div>
   )
 }

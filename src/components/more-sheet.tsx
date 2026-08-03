@@ -89,7 +89,10 @@ const buildSections = (isAdmin: boolean) => {
     title: 'Контент',
     items: [
       { id: 'reviews', label: 'Отзывы', icon: Star, desc: 'Чужие отзывы на товары' },
-      { id: 'support', label: 'Поддержка', icon: MessageSquare, desc: 'Чат с командой «Три девятки»' },
+      // v25.6 (Task #2 + #7): replaced "Поддержка / Чат с поддержкой" with
+      // "Контакты" — routes to the new ContactsView which pulls all 6
+      // contact fields dynamically from Studio → Контакты.
+      { id: 'contacts', label: 'Контакты', icon: Phone, desc: 'Связаться с нами' },
     ],
   })
   sections.push({
@@ -165,7 +168,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
     onOpenChange(false)
   }
 
-  const handleAction = (id: string) => {
+  const handleAction = async (id: string) => {
     haptic.tap()
     switch (id) {
       case 'studio':
@@ -188,8 +191,12 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         onNavigate('reviews')
         onOpenChange(false)
         break
+      // v25.6 (Task #2 + #7): 'contacts' replaces 'support' in the menu.
+      // Old 'support' case kept as a fallback for any code path that still
+      // dispatches it (both now route to ContactsView via app/page.tsx).
+      case 'contacts':
       case 'support':
-        onNavigate('support')
+        onNavigate('contacts')
         onOpenChange(false)
         break
       case 'settings':
@@ -197,19 +204,42 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         onOpenChange(false)
         break
       case 'share':
+        // v25.6 (Task #4): Web Share API with proper clipboard fallback.
+        // Notification "Ссылка скопирована" is shown ONLY after a successful
+        // copy — not when Web Share API is cancelled or fails.
         if (typeof navigator !== 'undefined' && navigator.share) {
-          navigator
-            .share({
+          try {
+            await navigator.share({
               title: '999 — Три девятки',
               text: 'Современный маркетплейс нового поколения с голосовым AI-агентом',
               url: window.location.origin,
             })
-            .catch(() => {})
+          } catch {
+            // User cancelled — non-critical, no toast.
+          }
+        } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(window.location.origin)
+            toast.success('Ссылка скопирована')
+          } catch {
+            toast.error('Не удалось скопировать ссылку')
+          }
         } else {
-          navigator.clipboard?.writeText(window.location.origin).then(
-            () => toast.success('Ссылка скопирована'),
-            () => toast.error('Не удалось скопировать'),
-          )
+          // Final fallback: legacy execCommand on a hidden textarea.
+          try {
+            const ta = document.createElement('textarea')
+            ta.value = window.location.origin
+            ta.style.position = 'fixed'
+            ta.style.opacity = '0'
+            document.body.appendChild(ta)
+            ta.select()
+            const ok = document.execCommand('copy')
+            ta.remove()
+            if (ok) toast.success('Ссылка скопирована')
+            else toast.error('Не удалось скопировать ссылку')
+          } catch {
+            toast.error('Не удалось скопировать ссылку')
+          }
         }
         break
       default:

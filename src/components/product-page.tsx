@@ -728,11 +728,20 @@ function SimilarProducts({ product }: { product: Product }) {
             href={`?product=${p.id}`}
             onClick={(e) => {
               e.preventDefault()
+              // v25.6 (Task #1): dispatch a custom switch-product event
+              // instead of `popstate`. Previously, dispatching `popstate`
+              // triggered ProductPage's own Back-button handler → the card
+              // closed instead of switching to the new product.
+              // `app/page.tsx` listens for `999pro:switch-product` and calls
+              // `openProduct(id)` which:
+              //   1. Updates activeProductId state → ProductPage refetches.
+              //   2. Pushes ?product=<id> to the URL (so reload works).
+              //   3. Does NOT close the card.
               if (typeof window !== 'undefined') {
-                const url = new URL(window.location.href)
-                url.searchParams.set('product', p.id)
-                window.history.pushState({}, '', url.toString())
-                window.dispatchEvent(new PopStateEvent('popstate'))
+                haptic.tap()
+                window.dispatchEvent(
+                  new CustomEvent('999pro:switch-product', { detail: { productId: p.id } }),
+                )
               }
             }}
             className="shrink-0 w-36 rounded-[18px] overflow-hidden bg-foreground/5 ring-1 ring-border/30 hover:shadow-[0_12px_32px_-12px_rgba(0,0,0,0.25)] hover:bg-foreground/10 transition-all hover:-translate-y-1"
@@ -761,10 +770,16 @@ function SimilarProducts({ product }: { product: Product }) {
 }
 
 // ============================================================================
-//  v24.4: DepartmentContacts — shows the right manager's contacts based on
-//  the product's department. Each product is linked to a department
-//  (Реклама, Подарки, Мебель, etc.) and the user sees the specific
-//  manager's phone, WhatsApp, Telegram, email, address.
+//  v24.4 / v25.6 (Task #3): DepartmentContacts — shows the right manager's
+//  contacts based on the product's department. Each product is linked to a
+//  department (Реклама, Подарки, Мебель, etc.) and the user sees the specific
+//  manager's phone, WhatsApp, Telegram, email.
+//
+//  v25.6 changes:
+//   • Renamed UI heading to «Связаться по товару» (was the department name).
+//   • Only existing methods are shown (already the case, kept).
+//   • Block placement: after price/buy buttons (already on mobile).
+//   • Added to desktop ProductPageDesktop as well (separate edit).
 // ============================================================================
 interface Department {
   id: string
@@ -777,7 +792,9 @@ interface Department {
   managerName?: string | null
 }
 
-function DepartmentContacts({ department }: { department: Department }) {
+// v25.6 (Task #3): export DepartmentContacts so the desktop ProductPageDesktop
+// can reuse the same component (previously it was a private function).
+export function DepartmentContacts({ department }: { department: Department }) {
   const waLink = department.whatsapp
     ? department.whatsapp.startsWith('http')
       ? department.whatsapp
@@ -795,7 +812,8 @@ function DepartmentContacts({ department }: { department: Department }) {
   const telLink = department.phone ? `tel:${department.phone.replace(/[^0-9+]/g, '')}` : null
   const mailLink = department.email ? `mailto:${department.email}` : null
 
-  if (!department.phone && !department.whatsapp && !department.telegram && !department.email && !department.address) {
+  // v25.6: hide the block entirely if no contact methods are configured.
+  if (!telLink && !waLink && !tgLink && !mailLink && !department.address) {
     return null
   }
 
@@ -806,12 +824,18 @@ function DepartmentContacts({ department }: { department: Department }) {
           <div className="h-8 w-8 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 grid place-items-center">
             <Store className="h-4 w-4 text-white" />
           </div>
-          <div>
-            <h2 className="text-sm font-bold leading-tight">{department.name}</h2>
+          <div className="flex-1 min-w-0">
+            {/* v25.6 (Task #3): heading is now «Связаться по товару» so the
+                user understands these are the contacts for THIS product's
+                direction/department (not the general app support). */}
+            <h2 className="text-sm font-bold leading-tight">Связаться по товару</h2>
             {department.managerName && (
-              <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                <User className="h-3 w-3" /> {department.managerName}
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1 truncate">
+                <User className="h-3 w-3 shrink-0" /> {department.name} · {department.managerName}
               </p>
+            )}
+            {!department.managerName && (
+              <p className="text-[11px] text-muted-foreground truncate">{department.name}</p>
             )}
           </div>
         </div>

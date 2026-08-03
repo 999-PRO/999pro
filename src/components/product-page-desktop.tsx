@@ -37,6 +37,9 @@ import { ProductReviewsInline } from './product-reviews-inline'
 import { useShareLink } from '@/lib/use-share-link'
 import { SmartShareSheet } from './share/smart-share-sheet'
 import { QrModal } from './share/qr-modal'
+// v25.6 (Task #3): reuse the same DepartmentContacts component used on mobile
+// so the "Связаться по товару" block looks + behaves identically on desktop.
+import { DepartmentContacts } from './product-page'
 
 interface ProductPageDesktopProps {
   productId: string
@@ -532,6 +535,19 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                         </div>
                       </div>
 
+                      {/* v25.6 (Task #3): «Связаться по товару» block — placed
+                          AFTER the buy/cart buttons + stock badges, BEFORE the
+                          description. Renders only when the product has a
+                          department with at least one configured contact
+                          method (phone / WhatsApp / Telegram / email / address).
+                          The contacts auto-detect from the product's department
+                          (Реклама, Подарки, etc.) — no per-product config. */}
+                      {product.department && (
+                        <div className="mb-5">
+                          <DepartmentContacts department={product.department} />
+                        </div>
+                      )}
+
                       {/* Stock + delivery badges — v11: 3 stock states */}
                       <div className="flex flex-wrap gap-2 mb-6">
                         {(() => {
@@ -750,11 +766,12 @@ function SimilarProductsVertical({ product }: { product: Product }) {
           href={`?product=${p.id}`}
           onClick={(e) => {
             e.preventDefault()
+            // v25.6 (Task #1): dispatch a custom switch-product event
+            // instead of `popstate`. Same fix as mobile product-page.tsx.
             if (typeof window !== 'undefined') {
-              const url = new URL(window.location.href)
-              url.searchParams.set('product', p.id)
-              window.history.pushState({}, '', url.toString())
-              window.dispatchEvent(new PopStateEvent('popstate'))
+              window.dispatchEvent(
+                new CustomEvent('999pro:switch-product', { detail: { productId: p.id } }),
+              )
             }
           }}
           initial={{ opacity: 0, y: 8 }}

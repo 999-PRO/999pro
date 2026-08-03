@@ -140,6 +140,9 @@ export function SettingsView({ onNavigate }: SettingsViewProps) {
   }
 
   const handleShare = async () => {
+    // v25.6 (Task #4): Web Share API with proper clipboard fallback.
+    // The "Ссылка скопирована" toast is shown ONLY after a successful copy —
+    // not when Web Share API is cancelled (AbortError) or fails.
     const shareData = {
       title: '999 — Три девятки',
       text: language === 'ru'
@@ -151,13 +154,28 @@ export function SettingsView({ onNavigate }: SettingsViewProps) {
       try {
         await navigator.share(shareData)
       } catch {
-        // User cancelled — non-critical
+        // User cancelled — non-critical, no toast.
+      }
+    } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareData.url)
+        toast.success(language === 'ru' ? 'Ссылка скопирована' : 'Link copied')
+      } catch {
+        toast.error(language === 'ru' ? 'Не удалось скопировать' : 'Failed to copy')
       }
     } else {
-      // Fallback: copy to clipboard
+      // Legacy fallback: execCommand on hidden textarea.
       try {
-        await navigator.clipboard?.writeText(shareData.url)
-        toast.success(language === 'ru' ? 'Ссылка скопирована' : 'Link copied')
+        const ta = document.createElement('textarea')
+        ta.value = shareData.url
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand('copy')
+        ta.remove()
+        if (ok) toast.success(language === 'ru' ? 'Ссылка скопирована' : 'Link copied')
+        else toast.error(language === 'ru' ? 'Не удалось скопировать' : 'Failed to copy')
       } catch {
         toast.error(language === 'ru' ? 'Не удалось скопировать' : 'Failed to copy')
       }
@@ -263,6 +281,25 @@ export function SettingsView({ onNavigate }: SettingsViewProps) {
             checked={soundsEnabled}
             onChange={handleSoundsToggle}
           />
+          {/* v25.6 (Task #9): explicit notice that the app uses built-in
+              notification sounds. Browsers (especially iOS Safari + PWA)
+              do not allow apps to pick a custom notification sound — the
+              sound played for incoming push notifications is controlled by
+              the OS / browser, not the app. The toggle above only controls
+              IN-APP sounds (button taps, send message, etc.), not push
+              notification sounds. */}
+          <div className="px-4 py-3 text-xs text-muted-foreground bg-amber-500/5 border-t border-amber-500/15">
+            <strong className="text-amber-700 dark:text-amber-400">
+              ℹ️ О звуках push-уведомлений
+            </strong>
+            <p className="mt-1 leading-relaxed">
+              Звук входящих push-уведомлений определяется операционной системой
+              и браузером (iOS Safari, Android Chrome, Яндекс.Браузер) —
+              приложение не может его изменить. Этот переключатель управляет
+              только звуками внутри приложения (нажатия, отправка сообщений,
+              добавление в корзину).
+            </p>
+          </div>
           <ToggleRow
             icon={<Vibrate className="h-5 w-5 text-primary" />}
             title="Вибрация"
@@ -356,13 +393,15 @@ export function SettingsView({ onNavigate }: SettingsViewProps) {
           />
         </Section>
 
-        {/* Support shortcut */}
-        <Section title="Поддержка">
+        {/* v25.6 (Task #2 + #7): Contacts section — replaces the old
+            "Чат с поддержкой". Routes to the new ContactsView which pulls
+            all 6 contact fields dynamically from Studio → Контакты. */}
+        <Section title="Контакты">
           <NavRow
             icon={<Headphones className="h-5 w-5 text-primary" />}
-            title="Чат с поддержкой"
-            desc="Связаться с командой «Три девятки»"
-            onClick={() => onNavigate('support')}
+            title="Контакты"
+            desc="Телефон, WhatsApp, Telegram, Email, адрес, время работы"
+            onClick={() => onNavigate('contacts')}
           />
         </Section>
 

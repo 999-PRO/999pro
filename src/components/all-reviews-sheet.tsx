@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Star, StarHalf, X, Search, Loader2, PenLine, Trash2, MessageSquarePlus, SlidersHorizontal, ChevronLeft } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
@@ -187,7 +188,11 @@ export function AllReviewsSheet({ product, open, onClose, onReviewChanged }: Pro
   // Filtered count = `total` from the server (which respects q + stars filter).
   const filteredCount = total
 
-  return (
+  // v25.6 (Task #8): render via portal to document.body so the sheet is
+  // not constrained by any `backdrop-filter` / `transform` containing block
+  // in the desktop ProductPageDesktop layout (GlassCard uses backdrop-blur).
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <AnimatePresence>
       {open && (
         <>
@@ -197,7 +202,10 @@ export function AllReviewsSheet({ product, open, onClose, onReviewChanged }: Pro
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm"
+            // v25.6 (Task #8): z-[10001] — above ProductPageDesktop (z-80)
+            // and above the ReviewForm (z-10000) so the "all reviews" sheet
+            // stacks correctly when opened from inside the form's parent.
+            className="fixed inset-0 z-[10001] bg-black/60 backdrop-blur-sm"
             onClick={onClose}
           />
 
@@ -207,7 +215,7 @@ export function AllReviewsSheet({ product, open, onClose, onReviewChanged }: Pro
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: '100%', opacity: 0.5 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
-            className="fixed inset-x-0 bottom-0 md:inset-0 z-[81] flex md:items-center md:justify-center pointer-events-none"
+            className="fixed inset-x-0 bottom-0 md:inset-0 z-[10002] flex md:items-center md:justify-center pointer-events-none"
           >
             <div
               className="
@@ -469,7 +477,8 @@ export function AllReviewsSheet({ product, open, onClose, onReviewChanged }: Pro
         onConfirm={confirmDeleteReview}
         onCancel={() => setDeleteReviewId(null)}
       />
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -622,7 +631,7 @@ function PhotoLightbox({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="fixed inset-0 z-[90] bg-black/95 backdrop-blur-md grid place-items-center"
+      className="fixed inset-0 z-[10003] bg-black/95 backdrop-blur-md grid place-items-center"
       onClick={onClose}
     >
       <button
@@ -719,7 +728,7 @@ function ReviewForm({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-sm grid place-items-end md:place-items-center p-0 md:p-4"
+      className="fixed inset-0 z-[10004] bg-black/60 backdrop-blur-sm grid place-items-end md:place-items-center p-0 md:p-4"
       onClick={onClose}
     >
       <motion.div

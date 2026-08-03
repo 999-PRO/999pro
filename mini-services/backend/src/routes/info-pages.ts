@@ -33,8 +33,9 @@ const slugRegex = /^[a-z0-9][a-z0-9-]{0,99}$/
 
 // Зарезервированные slug'и — нельзя создать новую страницу с таким slug,
 // но они обновляются через PATCH (для дефолтных страниц из seed'а).
+// v25.6 (Task #6): added 'rules' for "Правила сервиса".
 const RESERVED_SLUGS = new Set([
-  'about', 'privacy', 'terms', 'cookies', 'rights', 'contacts',
+  'about', 'privacy', 'terms', 'rules', 'cookies', 'rights', 'contacts',
   'help', 'company', 'usage-terms',
 ])
 
