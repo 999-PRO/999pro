@@ -18,6 +18,9 @@ import { usePushNotifications } from '@/lib/use-push'
 import { useAuthStore } from '@/lib/auth-store'
 import { useIsDesktop } from '@/lib/use-media-query'
 import { useHomeLayout } from '@/lib/home-layout'
+// v25.7 (Issue #9): useModuleAccess so we can guard the `view === 'club'`
+// route — if the club module is disabled in Studio, redirect to home.
+import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
 import { RetryableErrorBoundary } from '@/components/retryable-error-boundary'
 import { InlineSearch } from '@/components/search/inline-search'
 import { FloatingLiveInfo } from '@/components/floating-live-info'
@@ -94,6 +97,11 @@ export default function Home() {
   const [activeInitialProduct, setActiveInitialProduct] = useState<any | null>(null)
   const [activeFilmPayload, setActiveFilmPayload] = useState<any | null>(null)
   const [searchQuery, setSearchQuery] = useState<string>('')
+  // v25.7 (Issue #9): module access — used to guard the `view === 'club'`
+  // route. If the club module is disabled in Studio and a user opens
+  // `/?view=club` (deep link, old bookmark, AI action), we redirect to home.
+  const modules = useModuleAccess()
+  const clubEnabled = isModuleEnabled(modules, 'club')
   // v16.8: info page slug — when view='info', this is the slug to display.
   const [activeInfoSlug, setActiveInfoSlug] = useState<string | null>(() => getInitialInfoSlug())
 
@@ -297,6 +305,16 @@ export default function Home() {
     }
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'auto' })
   }, [])
+
+  // v25.7 (Issue #9): guard the `view === 'club'` route — if the club module
+  // is disabled in Studio and a user opens `/?view=club` (deep link, old
+  // bookmark, AI action), redirect to home. This runs AFTER navigate is
+  // defined so it can call it safely.
+  useEffect(() => {
+    if (view === 'club' && !clubEnabled) {
+      navigate('home')
+    }
+  }, [view, clubEnabled, navigate])
 
   // v16.8: Navigate to a DB-backed info page by slug.
   // Updates the URL to ?view=info&page=<slug> so the page is shareable + bookmarkable.
@@ -522,7 +540,11 @@ export default function Home() {
             <CatalogView key="catalog-children" onOpenProduct={openProduct} />
           </RetryableErrorBoundary>
         )}
-        {view === 'club' && (
+        {/* v25.7 (Issue #9): only render ClubView if the club module is
+            enabled. If disabled, the useEffect above redirects to home,
+            so this branch never renders — but the guard is here as a
+            defensive measure in case the redirect is delayed. */}
+        {view === 'club' && clubEnabled && (
           <RetryableErrorBoundary key="club">
             <ClubView key="club-children" />
           </RetryableErrorBoundary>
@@ -657,6 +679,11 @@ function HomeView({
   // via Studio → "Главная". We only use isVisible() here; SmartBlocks already
   // renders all 10 blocks internally, so we only gate the top-level sections.
   const { isVisible } = useHomeLayout()
+  // v25.7 (Issue #9): module access — used to guard the `view === 'club'`
+  // route in the parent Home component (redirects to home if disabled).
+  // We also read it here so HomeView re-renders when modules change.
+  const modules = useModuleAccess()
+  void modules
 
   const handleQueryChange = useCallback((query: string, _hasResults: boolean) => {
     // Search is "active" when there's a query with ≥2 chars (regardless of

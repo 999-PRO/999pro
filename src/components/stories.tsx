@@ -18,6 +18,19 @@ export function Stories() {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
 
+  // v25.7 (Issue #5): broadcast a window event whenever the Stories viewer
+  // opens or closes. The AI Assistant's FloatingAIButton listens for this
+  // event and hides itself while Stories is open (so it doesn't float on
+  // top of the story). When Stories closes, the FAB re-appears.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (activeIndex !== null) {
+      window.dispatchEvent(new CustomEvent('999pro:stories-open'))
+    } else {
+      window.dispatchEvent(new CustomEvent('999pro:stories-closed'))
+    }
+  }, [activeIndex])
+
   const fetchStories = useCallback(() => {
     let alive = true
     setLoading(true)

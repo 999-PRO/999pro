@@ -15,6 +15,10 @@ import { api, assetUrl } from '@/lib/api'
 import { compressImage } from '@/lib/compress-image'
 import { toast } from '@/lib/notifications'
 import { useClubStore, clubApi } from '@/modules/999-club'
+// v25.7 (Issue #9): useModuleAccess so we can hide the CLUB card when the
+// club module is disabled in Studio → Доступ к модулям. Previously the
+// card was always rendered in Profile, letting users open a disabled Club.
+import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
 
 export function ProfileView({ onNavigate }: { onNavigate: (v: string) => void }) {
   const user = useAuthStore((s) => s.user)
@@ -25,6 +29,10 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: string) => void })
   const favoritesIds = useFavoritesStore((s) => s.ids)
   const cartItems = useCartStore((s) => s.items)
   const clubPoints = useClubStore((s) => s.points)
+  // v25.7 (Issue #9): check if the club module is enabled in Studio — if
+  // disabled, hide the CLUB card entirely (was always rendered before).
+  const modules = useModuleAccess()
+  const clubEnabled = isModuleEnabled(modules, 'club')
   const [authOpen, setAuthOpen] = useState(false)
   // v16.8 final: authMode — 'login' или 'register'. Управляет тем, в каком
   // режиме откроется AuthDialog когда пользователь кликает "Войти" или
@@ -383,35 +391,40 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: string) => void })
         </div>
       </button>
 
-      {/* v12.6: My CLUB card — points balance + link to CLUB */}
-      <button
-        onClick={() => onNavigate('club')}
-        className="w-full text-left p-5 rounded-3xl relative overflow-hidden border border-white/15 hover:shadow-glow-lg transition-all hover:-translate-y-0.5"
-        style={{
-          backgroundImage: 'linear-gradient(135deg, rgba(245,158,11,0.12) 0%, rgba(236,72,153,0.10) 50%, rgba(139,92,246,0.12) 100%)',
-        }}
-      >
-        <div aria-hidden className="absolute -top-8 -right-8 h-24 w-24 rounded-full bg-amber-500/20 blur-3xl" />
-        <div className="relative flex items-center gap-4">
-          <div
-            className="h-12 w-12 rounded-2xl grid place-items-center shrink-0 shadow-glow"
-            style={{ backgroundImage: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%)' }}
-          >
-            <Crown className="h-6 w-6 text-white" strokeWidth={2.4} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-muted-foreground text-sm">
-              <Star className="h-4 w-4 text-amber-500" fill="currentColor" />
-              999 CLUB
+      {/* v12.6: My CLUB card — points balance + link to CLUB.
+          v25.7 (Issue #9): hidden when the club module is disabled in
+          Studio → Доступ к модулям. Previously the card always rendered,
+          letting users navigate to a disabled Club view via Profile. */}
+      {clubEnabled && (
+        <button
+          onClick={() => onNavigate('club')}
+          className="w-full text-left p-5 rounded-3xl relative overflow-hidden border border-white/15 hover:shadow-glow-lg transition-all hover:-translate-y-0.5"
+          style={{
+            backgroundImage: 'linear-gradient(135deg, rgba(245,158,11,0.12) 0%, rgba(236,72,153,0.10) 50%, rgba(139,92,246,0.12) 100%)',
+          }}
+        >
+          <div aria-hidden className="absolute -top-8 -right-8 h-24 w-24 rounded-full bg-amber-500/20 blur-3xl" />
+          <div className="relative flex items-center gap-4">
+            <div
+              className="h-12 w-12 rounded-2xl grid place-items-center shrink-0 shadow-glow"
+              style={{ backgroundImage: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%)' }}
+            >
+              <Crown className="h-6 w-6 text-white" strokeWidth={2.4} />
             </div>
-            <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-2xl font-extrabold tabular-nums">{clubPoints}</span>
-              <span className="text-xs text-muted-foreground">баллов</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                <Star className="h-4 w-4 text-amber-500" fill="currentColor" />
+                999 CLUB
+              </div>
+              <div className="flex items-baseline gap-2 mt-0.5">
+                <span className="text-2xl font-extrabold tabular-nums">{clubPoints}</span>
+                <span className="text-xs text-muted-foreground">баллов</span>
+              </div>
             </div>
+            <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
           </div>
-          <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
-        </div>
-      </button>
+        </button>
+      )}
 
       {/* v12.6: Achievements grid */}
       <AchievementsGrid />

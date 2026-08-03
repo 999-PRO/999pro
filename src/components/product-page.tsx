@@ -49,6 +49,13 @@ import { sounds } from '@/lib/sounds'
 import { ProductReviewsInline } from './product-reviews-inline'
 import { useShareLink } from '@/lib/use-share-link'
 import { SmartShareSheet } from './share/smart-share-sheet'
+// v25.7 (Issue #3): re-enabled useScrollLock to fully block body scroll while
+// the product card is open. Without this, iOS Safari allows rubber-band
+// bounce / drag-down on the body behind the fixed overlay, making the card
+// feel "draggable". The hook uses a refcount + touchmove prevention so the
+// product card's own internal scrolling (marked [data-scroll-lock-ignore])
+// still works normally.
+import { useScrollLock } from '@/lib/use-scroll-lock'
 import { QrModal } from './share/qr-modal'
 // v9-premium: Desktop-only premium 3-column layout (lg+ breakpoint).
 // Mobile/tablet (md and below) keep using the original layout below.
@@ -148,13 +155,15 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
   // iOS Safari's quirks (touchmove prevention, overscroll containment, refcounting).
   // The product page itself is marked [data-scroll-lock-ignore] so its own
   // internal scrolling still works.
-  // v25.3: NOT using useScrollLock — instead the page itself is position:fixed
-  // with overflow-y:auto, so the body behind it doesn't scroll anyway. This
-  // avoids the iOS Safari scroll-lock quirks that were causing the bottom
-  // sheet to feel "stuck". The body's overflow is naturally contained because
-  // the product page covers the entire viewport.
-  // (Importing the hook but not calling it to keep the import structure stable
-  // — it's a no-op now.)
+  //
+  // v25.7 (Issue #3): RE-ENABLED. Previously disabled (v25.3) under the
+  // assumption that `position: fixed` on the overlay naturally contains body
+  // scroll. That's true on desktop, but on iOS Safari the body BEHIND the
+  // fixed overlay can still bounce (rubber-band) when the user drags down
+  // inside the card, making the card feel "draggable". Re-enabling the lock
+  // blocks touchmove on the body, eliminating the bounce while preserving
+  // the card's own vertical scroll (via [data-scroll-lock-ignore]).
+  useScrollLock(!!productId)
 
   // v12.6.1: Suppress PTR while the product page is open. This prevents
   // the page's natural scroll-to-top gesture from triggering a pull-to-refresh.
@@ -248,15 +257,59 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
         <div
           ref={scrollContainerRef}
           data-scroll-lock-ignore
-          className="lg:hidden fixed inset-0 z-[350] bg-background overflow-y-auto overscroll-contain"
+          // v25.7 (Issue #3): added `overscroll-none` and removed `overscroll-contain`
+          // to fully disable iOS Safari rubber-band / drag-down bounce that
+          // made the card feel draggable. Combined with useScrollLock(true)
+          // (enabled below), the card now only responds to native vertical
+          // scroll — no drag, no bounce, no pull-to-refresh leak.
+          className="lg:hidden fixed inset-0 z-[350] bg-background overflow-y-auto overscroll-none"
           style={{
-            // Native scrolling — no transform, no motion-value tricks.
-            // The browser handles scroll, momentum, overscroll identically
-            // across Safari / Chrome / Yandex / Firefox.
-            overscrollBehavior: 'contain',
+            overscrollBehavior: 'none',
             WebkitOverflowScrolling: 'touch',
           }}
         >
+          {/* v25.7 (Issue #2): Sticky top bar — back + share buttons.
+              Previously this overlay was `absolute` INSIDE the image carousel
+              wrapper, so it scrolled away with the photo. Now it's a sibling
+              of the scrolling content with `sticky top-0 z-30`, so it stays
+              pinned at the top of the viewport while the user scrolls.
+              The gradient + glass style is preserved so it looks good over
+              any image color, and transitions to a solid background once the
+              user scrolls past the photo (via mix-blend / backdrop-blur). */}
+          {product && (
+            <div
+              className="sticky top-0 z-30 flex items-center justify-between px-3 pb-2 pt-3 pointer-events-none"
+              style={{
+                paddingTop: 'max(env(safe-area-inset-top, 0px), 0.75rem)',
+                background: 'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.25) 60%, transparent 100%)',
+                backdropFilter: 'blur(6px)',
+                WebkitBackdropFilter: 'blur(6px)',
+              }}
+            >
+              <button
+                onClick={() => { haptic.tap(); onClose() }}
+                aria-label="Назад"
+                className="pointer-events-auto h-10 w-10 rounded-full grid place-items-center bg-black/40 backdrop-blur-md text-white hover:bg-black/55 active:scale-95 transition-all shrink-0"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+              <div className="flex items-center gap-2 pointer-events-auto">
+                {product.oldPrice && product.oldPrice > product.price && (
+                  <div className="px-3 py-1.5 rounded-full bg-destructive text-white text-xs font-bold shadow-lg">
+                    -{Math.round(100 - (product.price / product.oldPrice) * 100)}%
+                  </div>
+                )}
+                <button
+                  onClick={() => { haptic.tap(); setShareOpen(true) }}
+                  aria-label="Поделиться"
+                  className="h-10 w-10 rounded-full grid place-items-center bg-black/40 backdrop-blur-md text-white hover:bg-black/55 active:scale-95 transition-all shrink-0"
+                >
+                  <Share2 className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Content — image carousel + info, in normal document flow. */}
           {loading || !product ? (
             <div className="grid place-items-center p-12 min-h-[60vh]">
@@ -272,10 +325,11 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                   - Touches all 4 edges of the screen on mobile (no padding)
                   - Bottom gradient fades into the background color so the
                     image "melts" into the product description below
-                  - Back / Share buttons float over the image (glass style)
+                  - v25.7 (Issue #2): back/share buttons moved OUT of this
+                    wrapper to a sticky top-level bar above.
                   - Dots indicator floats at the bottom of the image, above
                     the gradient
-                  - Discount badge top-left (above the back button area) */}
+                  - Discount badge moved into the sticky bar (top-right). */}
               <div
                 className="relative w-full aspect-[3/4] overflow-hidden bg-slate-100 dark:bg-slate-900 select-none"
                 onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX }}
@@ -303,38 +357,10 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                   ))}
                 </div>
 
-                {/* Top overlay — back + share buttons + discount badge.
-                    Glass style so they're visible over any image color.
-                    Safe-area-aware so they don't go under the iOS notch. */}
-                <div
-                  className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-3 pb-8 pt-3"
-                  style={{
-                    paddingTop: 'max(env(safe-area-inset-top, 0px), 0.75rem)',
-                    background: 'linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.15) 60%, transparent 100%)',
-                  }}
-                >
-                  <button
-                    onClick={() => { haptic.tap(); onClose() }}
-                    aria-label="Назад"
-                    className="h-10 w-10 rounded-full grid place-items-center bg-black/30 backdrop-blur-md text-white hover:bg-black/40 active:scale-95 transition-all shrink-0"
-                  >
-                    <ArrowLeft className="h-5 w-5" />
-                  </button>
-                  <div className="flex items-center gap-2">
-                    {product.oldPrice && product.oldPrice > product.price && (
-                      <div className="px-3 py-1.5 rounded-full bg-destructive text-white text-xs font-bold shadow-lg">
-                        -{Math.round(100 - (product.price / product.oldPrice) * 100)}%
-                      </div>
-                    )}
-                    <button
-                      onClick={() => { haptic.tap(); setShareOpen(true) }}
-                      aria-label="Поделиться"
-                      className="h-10 w-10 rounded-full grid place-items-center bg-black/30 backdrop-blur-md text-white hover:bg-black/40 active:scale-95 transition-all shrink-0"
-                    >
-                      <Share2 className="h-5 w-5" />
-                    </button>
-                  </div>
-                </div>
+                {/* v25.7 (Issue #2): top overlay with back/share buttons was
+                    moved OUT of this carousel wrapper to a sticky top-level
+                    bar above (so it stays pinned during scroll). The
+                    discount badge is also rendered in that sticky bar now. */}
 
                 {/* Arrows (desktop only — mobile uses swipe) */}
                 {product.images.length > 1 && (
@@ -717,10 +743,22 @@ function SimilarProducts({ product }: { product: Product }) {
   if (items.length === 0) return null
 
   return (
-    <div className="pt-12 pb-4">
+    // v25.7 (Issue #7): increased bottom padding from pb-4 → pb-20 so the
+    // last similar-product card has breathing room above the sticky CTA bar.
+    // Also added `relative` + `overflow-visible` so the cards' hover lift
+    // shadow is not clipped.
+    <div className="pt-12 pb-20 relative overflow-visible">
       <h2 className="text-sm font-extrabold mb-4 px-1 bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 bg-clip-text text-transparent">Похожие товары</h2>
+      {/* v25.7 (Issue #7): changed `touchAction: 'pan-x'` → `touchAction: 'pan-x pan-y'`
+          so vertical swipes that START on the horizontal carousel still
+          propagate to the parent vertical scroll container. Previously,
+          `pan-x` alone captured ALL touch movement on the carousel area,
+          blocking vertical scroll — the user had to swipe outside the
+          carousel to scroll the page. With `pan-x pan-y`, the browser
+          decides based on the initial gesture direction: horizontal →
+          carousel, vertical → page scroll. */}
       <div className="flex gap-3.5 overflow-x-auto no-scrollbar -mx-1 px-1 pb-3 pt-1"
-        style={{ touchAction: 'pan-x' }}
+        style={{ touchAction: 'pan-x pan-y' }}
       >
         {items.map((p) => (
           <a

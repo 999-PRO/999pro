@@ -108,6 +108,16 @@ const MAGIC_BYTES: Array<{ mime: string; bytes: number[]; offset: number }> = [
   { mime: 'image/png', bytes: [0x89, 0x50, 0x4e, 0x47], offset: 0 },
   { mime: 'image/gif', bytes: [0x47, 0x49, 0x46, 0x38], offset: 0 },
   { mime: 'image/webp', bytes: [0x52, 0x49, 0x46, 0x46], offset: 0 }, // RIFF
+  // v25.7 (Issue #1): HEIC / HEIF / AVIF — all ISO BMFF containers starting
+  // with `ftyp` box at offset 4. Without these entries, iPhone photos
+  // (image/heic) were rejected with "File content does not match declared
+  // type: image/heic" because matchesMagicBytes fell through to fail-closed.
+  // We accept any `ftyp` brand — the MIME allowlist above already restricts
+  // to image/heic + image/heif + image/avif, so a non-image ftyp (e.g. mp4)
+  // won't slip through (its MIME would have to be image/* to pass allowlist).
+  { mime: 'image/heic', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }, // ftyp
+  { mime: 'image/heif', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }, // ftyp
+  { mime: 'image/avif', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }, // ftyp
   // Video / audio containers
   { mime: 'video/mp4', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }, // ftyp at offset 4
   { mime: 'video/webm', bytes: [0x1a, 0x45, 0xdf, 0xa3], offset: 0 }, // EBML

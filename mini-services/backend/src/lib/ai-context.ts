@@ -127,14 +127,20 @@ Stories (активных): ${inventoryStats.totalStories}
   }
 
   // 9. Company contacts — from Studio only. NO hardcoded fallbacks.
+  // v25.7 (Issue #6): contacts array now includes `address` and `workingHours`
+  // so the AI knows the company's physical location + business hours.
+  // The AI is explicitly instructed to use ONLY these values and to say
+  // "не знаю" if a field is not configured (prevents hallucinations like
+  // inventing a city name — e.g. "Ташкент" — when the user asks where the
+  // store is located).
   const contacts = await getCompanyContacts()
   if (contacts) {
-    parts.push('\n=== КОНТАКТЫ КОМПАНИИ ===')
+    parts.push('\n=== КОНТАКТЫ И ГЕОГРАФИЯ КОМПАНИИ ===')
     parts.push(contacts)
-    parts.push('\nВАЖНО: Используй ТОЛЬКО эти контакты. Никогда не придумывай телефоны, email или другие контактные данные. Если контакты не указаны выше — скажи что у тебя нет контактной информации.')
+    parts.push('\nВАЖНО: Используй ТОЛЬКО эти контакты и адрес. Никогда не придумывай телефоны, email, адреса, города или время работы. Если пользователь спрашивает про город, адрес, время работы или доставку, а соответствующего поля нет выше — честно скажи: «К сожалению, эта информация ещё не настроена, уточните у администратора». НЕ упоминай никакой конкретный город (Ташкент, Москва и т.д.), если он не указан в адресе выше.')
   } else {
-    parts.push('\n=== КОНТАКТЫ КОМПАНИИ ===')
-    parts.push('Контактные данные не настроены. Если пользователь спрашивает контакты — скажи, что они пока не доступны.')
+    parts.push('\n=== КОНТАКТЫ И ГЕОГРАФИЯ КОМПАНИИ ===')
+    parts.push('Контактные данные не настроены. Если пользователь спрашивает контакты, адрес, город или время работы — скажи, что они пока не настроены, и посоветуйте обратиться к администратору. НЕ придумывай город или адрес.')
   }
 
   // 10. Calculation result.
@@ -772,10 +778,18 @@ function extractKeywords(message: string): string[] {
 // ---------------------------------------------------------------------------
 let contactsCache: { value: string | null; ts: number } | null = null
 
-/** v21: Read the 4 Studio contact keys. NO hardcoded fallbacks. */
+/** v25.7 (Issue #6): Read the 6 Studio contact keys (was 4). Added `address`
+ *  and `workingHours` so the AI knows the company's physical location and
+ *  business hours — previously the AI had ZERO geography context, which
+ *  caused it to either hallucinate a city (Tashkent, Moscow, etc.) or give
+ *  generic non-answers when asked about location/delivery/working hours.
+ *
+ *  NO hardcoded fallbacks — if a field is empty, it's simply omitted from
+ *  the prompt, and the AI is instructed to say "не знаю" instead of making
+ *  something up. */
 export async function getContactsArray(): Promise<Array<{ label: string; type: string; value: string }>> {
   try {
-    const keys = ['phone', 'whatsapp', 'telegram', 'email']
+    const keys = ['phone', 'whatsapp', 'telegram', 'email', 'address', 'workingHours']
     const settings = await prisma.appSetting.findMany({ where: { id: { in: keys } } })
     const map = new Map<string, string>()
     for (const s of settings) {
@@ -786,10 +800,14 @@ export async function getContactsArray(): Promise<Array<{ label: string; type: s
     const whatsapp = map.get('whatsapp')?.trim()
     const telegram = map.get('telegram')?.trim()
     const email = map.get('email')?.trim()
+    const address = map.get('address')?.trim()
+    const workingHours = map.get('workingHours')?.trim()
     if (phone) result.push({ label: 'Телефон', type: 'phone', value: phone })
     if (whatsapp) result.push({ label: 'WhatsApp', type: 'whatsapp', value: whatsapp })
     if (telegram) result.push({ label: 'Telegram', type: 'telegram', value: telegram })
     if (email) result.push({ label: 'Email', type: 'email', value: email })
+    if (address) result.push({ label: 'Адрес', type: 'address', value: address })
+    if (workingHours) result.push({ label: 'Время работы', type: 'workingHours', value: workingHours })
     return result
   } catch { return [] }
 }

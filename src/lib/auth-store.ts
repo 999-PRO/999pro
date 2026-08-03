@@ -23,7 +23,7 @@ interface AuthState {
   setupToken: string | null
   isAuthenticated: boolean
   isInitialized: boolean
-  login: (login: string, password: string) => Promise<User>
+  login: (login: string, password: string, totpCode?: string) => Promise<User>
   /**
    * v20: Register no longer auto-logs-in when email verification is required.
    * Returns a result object describing what to do next:
@@ -82,14 +82,14 @@ export const useAuthStore = create<AuthState>()(
       // the user confirms their email without requiring a second login.
       pendingVerificationToken: null,
 
-      async login(loginField, password) {
+      async login(loginField, password, totpCode) {
         // The backend may return several shapes from /api/auth/login:
         //   1. { token, user }                  → success, store regular JWT.
         //   2. { totpRequired, user }           → password OK, TOTP already
         //                                          enrolled; backend needs a
-        //                                          6-digit code. Main app does
-        //                                          NOT have a TOTP input UI —
-        //                                          surface a clear error.
+        //                                          6-digit code. The caller
+        //                                          should re-call login() with
+        //                                          the totpCode arg.
         //   3. { totpSetupRequired, user, token: <setup-jwt>, message }
         //                                       → admin must enroll TOTP.
         //                                          Backend issues a short-lived
@@ -101,6 +101,12 @@ export const useAuthStore = create<AuthState>()(
         //                                          `auth: 'totp-setup'`
         //                                          requests work, and surface
         //                                          the result to the caller.
+        //
+        // v25.7 (Issue #4): when `totpRequired` is returned (case 2), we now
+        // throw a tagged error so the AuthDialog can catch it and show the
+        // OTP input UI. The user then enters the 6-digit code, and we re-call
+        // login() with the `totpCode` parameter — the backend verifies the
+        // code and returns a regular JWT.
         const data = await api.post<{
           token?: string
           user: User
@@ -108,7 +114,7 @@ export const useAuthStore = create<AuthState>()(
           totpSetupRequired?: boolean
           message?: string
         }>('/api/auth/login', {
-          json: { login: loginField, password },
+          json: { login: loginField, password, ...(totpCode ? { totpCode } : {}) },
         })
 
         // v25.3 (TZ task #1): admin must enroll TOTP. Stash the setup token
@@ -138,9 +144,16 @@ export const useAuthStore = create<AuthState>()(
         }
 
         if (data.totpRequired) {
-          throw new Error(
-            'Требуется код 2FA. Войдите через Studio (админ-панель) или обратитесь к администратору.',
-          )
+          // v25.7 (Issue #4): throw a tagged error so AuthDialog can catch
+          // it and show the OTP input UI. The user's password is correct,
+          // we just need the 6-digit TOTP code.
+          //
+          // We use a custom error class so the dialog can distinguish
+          // "needs OTP" from a generic auth failure (wrong password etc.).
+          const err = new Error('TOTP_REQUIRED') as Error & { code?: string; user?: User }
+          err.code = 'TOTP_REQUIRED'
+          err.user = data.user
+          throw err
         }
 
         if (!data.token) {
