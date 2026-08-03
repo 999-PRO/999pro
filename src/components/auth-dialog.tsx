@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -16,7 +16,7 @@ import { haptic } from '@/lib/haptic'
 import { sounds } from '@/lib/sounds'
 import { loginSchema } from '@/lib/schemas'
 import { toast } from '@/lib/notifications'
-import { Loader2, Venus, Mars, Circle, ShieldCheck } from 'lucide-react'
+import { Loader2, Venus, Mars, Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 // v20: email verification modal shown after registration
 import { EmailVerificationModal } from './email-verification-modal'
@@ -52,14 +52,6 @@ export function AuthDialog({
   const [displayName, setDisplayName] = useState('')
   const [gender, setGender] = useState<Gender | ''>('')
 
-  // v25.7 (Issue #4): 2FA OTP challenge state. When the backend returns
-  // `totpRequired: true` (the user has TOTP enrolled and entered a correct
-  // password), we show an OTP input step. The user enters their 6-digit
-  // code and we re-call login() with the totpCode parameter.
-  const [totpChallenge, setTotpChallenge] = useState(false)
-  const [totpCode, setTotpCode] = useState('')
-  const otpInputRef = useRef<HTMLInputElement>(null)
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -93,30 +85,10 @@ export function AuthDialog({
             return
           }
         }
-
-        // v25.7 (Issue #4): if we're already in the TOTP challenge step,
-        // submit the OTP code. Otherwise do the normal password login.
-        if (totpChallenge) {
-          if (!/^\d{6}$/.test(totpCode)) {
-            toast.error('Введите 6-значный код из приложения-аутентификатора')
-            return
-          }
-          // Re-call login with the totpCode — the backend verifies and
-          // returns a regular JWT (or 401 if the code is wrong).
-          await login(loginField, password, totpCode)
-          // Success — reset challenge state and close.
-          setTotpChallenge(false)
-          setTotpCode('')
-          toast.success('Добро пожаловать!')
-          haptic.success()
-          sounds.success()
-        } else {
-          // Normal login attempt — may throw TOTP_REQUIRED (caught below).
-          await login(loginField, password)
-          toast.success('Добро пожаловать!')
-          haptic.success() // v10-native: haptic on successful login
-          sounds.success() // v10-native: sound on successful login
-        }
+        await login(loginField, password)
+        toast.success('Добро пожаловать!')
+        haptic.success() // v10-native: haptic on successful login
+        sounds.success() // v10-native: sound on successful login
       } else {
         // v19.0: validate password confirmation client-side before submission.
         if (!password) {
@@ -190,22 +162,6 @@ export function AuthDialog({
         }
       }
     } catch (e: unknown) {
-      // v25.7 (Issue #4): detect the TOTP_REQUIRED tagged error from
-      // auth-store.login() and switch to the OTP input step instead of
-      // showing a generic error toast. The user's password was already
-      // validated by the backend — we just need the 6-digit TOTP code.
-      const err = e as Error & { code?: string }
-      if (err?.code === 'TOTP_REQUIRED') {
-        setTotpChallenge(true)
-        setTotpCode('')
-        toast.info('Введите код 2FA', {
-          description: 'Откройте приложение-аутентификатор и введите 6-значный код.',
-          duration: 5000,
-        })
-        // Focus the OTP input on the next tick.
-        setTimeout(() => otpInputRef.current?.focus(), 100)
-        return
-      }
       const msg = e instanceof Error ? e.message : 'Что-то пошло не так'
       toast.error(msg)
       haptic.error() // v10-native: haptic on auth error
@@ -311,58 +267,7 @@ export function AuthDialog({
             </>
           )}
 
-          {/* v25.7 (Issue #4): 2FA OTP challenge step.
-              When the backend returns `totpRequired: true` (correct password
-              but TOTP enrolled), we hide the login/password fields and show
-              only the OTP input. The user's loginField + password are kept
-              in state — we re-submit them together with the totpCode. */}
-          {mode === 'login' && totpChallenge && (
-            <div className="space-y-3 p-4 rounded-2xl bg-primary/5 border border-primary/15">
-              <div className="flex items-center gap-2">
-                <div className="h-9 w-9 rounded-full gradient-brand grid place-items-center text-white shrink-0">
-                  <ShieldCheck className="h-4 w-4" />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold">Двухфакторная аутентификация</div>
-                  <div className="text-xs text-muted-foreground">
-                    Введите 6-значный код из приложения-аутентификатора.
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="totpCode">Код 2FA</Label>
-                <Input
-                  ref={otpInputRef}
-                  id="totpCode"
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="123456"
-                  className="rounded-2xl text-center text-2xl tracking-[0.5em] font-mono"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                  autoFocus
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  // Back to the password step (e.g. if the user wants to
-                  // switch accounts). Clears the OTP code but keeps the
-                  // loginField + password.
-                  setTotpChallenge(false)
-                  setTotpCode('')
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                ← Назад к вводу пароля
-              </button>
-            </div>
-          )}
-
-          {/* Normal login fields — hidden when in TOTP challenge step. */}
-          {mode === 'login' && !totpChallenge && (
+          {mode === 'login' && (
             <div className="space-y-1.5">
               <Label htmlFor="login">Email, никнейм или телефон</Label>
               <Input
@@ -377,26 +282,24 @@ export function AuthDialog({
             </div>
           )}
 
-          {!(mode === 'login' && totpChallenge) && (
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Пароль</Label>
-              <Input
-                id="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="rounded-2xl"
-                minLength={8}
-                maxLength={128}
-              />
-              {/* v19.0: password strength indicator */}
-              {mode === 'register' && password && (
-                <PasswordStrengthMeter password={password} />
-              )}
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="password">Пароль</Label>
+            <Input
+              id="password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="rounded-2xl"
+              minLength={8}
+              maxLength={128}
+            />
+            {/* v19.0: password strength indicator */}
+            {mode === 'register' && password && (
+              <PasswordStrengthMeter password={password} />
+            )}
+          </div>
 
           {mode === 'register' && (
             <div className="space-y-1.5">
@@ -427,27 +330,19 @@ export function AuthDialog({
             className="w-full rounded-full gradient-brand text-white font-semibold shadow-glow h-11"
           >
             {loading && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}
-            {/* v25.7 (Issue #4): button label changes when in TOTP challenge step. */}
-            {mode === 'login' && totpChallenge
-              ? 'Подтвердить код'
-              : mode === 'login'
-                ? 'Войти'
-                : 'Создать аккаунт'}
+            {mode === 'login' ? 'Войти' : 'Создать аккаунт'}
           </Button>
 
-          {/* Hide the login/register toggle when in TOTP challenge step. */}
-          {!(mode === 'login' && totpChallenge) && (
-            <div className="text-center text-sm text-muted-foreground">
-              {mode === 'login' ? 'Нет аккаунта? ' : 'Уже зарегистрированы? '}
-              <button
-                type="button"
-                onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-                className="text-primary font-semibold hover:underline"
-              >
-                {mode === 'login' ? 'Создать' : 'Войти'}
-              </button>
-            </div>
-          )}
+          <div className="text-center text-sm text-muted-foreground">
+            {mode === 'login' ? 'Нет аккаунта? ' : 'Уже зарегистрированы? '}
+            <button
+              type="button"
+              onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+              className="text-primary font-semibold hover:underline"
+            >
+              {mode === 'login' ? 'Создать' : 'Войти'}
+            </button>
+          </div>
 
           {mode === 'login' && process.env.NODE_ENV === 'development' && (
             <div className="text-xs text-center text-muted-foreground border-t border-border/40 pt-3 mt-2">

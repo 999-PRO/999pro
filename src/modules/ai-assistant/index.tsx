@@ -274,12 +274,7 @@ function FloatingAIButton({ onClick, hidden }: { onClick: () => void; hidden: bo
       initial={{ opacity: 0, scale: 0.5, y: 20 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ type: 'spring', stiffness: 320, damping: 18 }}
-      // v25.7 (Issue #10): added `md:hidden` so the floating AI button is
-      // hidden on desktop (md+), where the sidebar already has its own AI
-      // Assistant button. Previously both buttons were visible on desktop
-      // simultaneously — a duplication. Mobile/tablet (<md) keeps the FAB
-      // because there's no sidebar there.
-      className="fixed right-4 z-50 select-none cursor-pointer md:hidden"
+      className="fixed right-4 z-50 select-none cursor-pointer"
       style={{
         bottom: 'calc(env(safe-area-inset-bottom) + 84px)',
       }}
@@ -1170,11 +1165,6 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
   // когда AI открывает раздел (каталог, чат и т.д.). Пользователь видит
   // открытый раздел, а AI доступен одним тапом по плавающей кнопке.
   const [minimized, setMinimized] = useState(false)
-  // v25.7 (Issue #5): hide the FloatingAIButton while the Stories viewer
-  // is open. Stories dispatches `999pro:stories-open` / `999pro:stories-closed`
-  // window events; we track the state here and OR it into the FAB's `hidden`
-  // prop so the FAB doesn't float on top of the story.
-  const [storiesOpen, setStoriesOpen] = useState(false)
   const [inputMode, setInputMode] = useState<'voice' | 'keyboard'>('voice')
   const [hasUserSentMessage, setHasUserSentMessage] = useState(false)
   const [status, setStatus] = useState<AIStatus | null>(null)
@@ -1817,22 +1807,6 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
     return () => window.removeEventListener('open-ai-assistant', onOpen)
   }, [voiceIn])
 
-  // v25.7 (Issue #5): listen for Stories open/close events so the
-  // FloatingAIButton hides itself while a story is playing. Without this,
-  // the FAB (z-50) floats on top of the StoriesViewer (also z-50) because
-  // the FAB is painted later in the DOM (AppShell mounts AIAssistant after
-  // main content).
-  useEffect(() => {
-    const onStoriesOpen = () => setStoriesOpen(true)
-    const onStoriesClosed = () => setStoriesOpen(false)
-    window.addEventListener('999pro:stories-open', onStoriesOpen as EventListener)
-    window.addEventListener('999pro:stories-closed', onStoriesClosed as EventListener)
-    return () => {
-      window.removeEventListener('999pro:stories-open', onStoriesOpen as EventListener)
-      window.removeEventListener('999pro:stories-closed', onStoriesClosed as EventListener)
-    }
-  }, [])
-
   const closeAssistant = useCallback(() => {
     voiceIn.stop()
     voiceOut.stop()
@@ -2153,9 +2127,8 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       {/* v6: Главная плавающая кнопка AI (когда overlay закрыт).
           v24.4: скрыта в чате — там она перекрывает кнопку записи
           голосового сообщения. В чате используется только голосовой
-          рекордер, AI Agent доступен из других разделов.
-          v25.7 (Issue #5): также скрыта, когда открыт Stories viewer. */}
-      <FloatingAIButton onClick={openAssistant} hidden={open || context === 'chat' || storiesOpen} />
+          рекордер, AI Agent доступен из других разделов. */}
+      <FloatingAIButton onClick={openAssistant} hidden={open || context === 'chat'} />
 
       {/* v6: Минимизированная плавающая кнопка AI — показывается когда AI
           свёрнут после открытия раздела приложения. Пользователь может

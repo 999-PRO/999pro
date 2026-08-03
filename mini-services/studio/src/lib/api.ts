@@ -154,28 +154,10 @@ function buildUrl(path: string): string {
  * use the relative path so next/image works on all devices (mobile Safari,
  * Android, desktop). Previously returned `?XTransformPort=4000` which broke
  * the next/image optimiser on relative URLs.
- *
- * v25.7 (Issue #1): Studio runs with `basePath: '/studio'`, and Next.js
- * auto-prefixes `rewrites()` sources with the basePath. So a browser at
- * `/studio/hero-block` requesting `/uploads/foo.jpg` resolves to the
- * absolute path `/uploads/foo.jpg` — which does NOT match the rewrite
- * rule `/studio/uploads/:path*` → backend. Result: 404, broken preview.
- *
- * Fix: prepend `/studio` to relative `/uploads/` and `/api/` paths when
- * running in the browser so they match the basePath-prefixed rewrite.
- * Absolute URLs (http(s)://) and data: URIs are returned unchanged.
  */
 export function assetUrl(path: string | null | undefined): string {
   if (!path) return ''
   if (/^https?:\/\//.test(path) || path.startsWith('data:')) return path
-  // v25.7: prepend /studio basePath so the request hits the rewrite rule.
-  // Only affects browser-side rendering (server-side rendering doesn't go
-  // through Next.js rewrites anyway).
-  if (typeof window !== 'undefined') {
-    // Avoid double-prefixing if path already starts with /studio.
-    if (path.startsWith('/studio')) return path
-    return `/studio${path}`
-  }
   return path
 }
 

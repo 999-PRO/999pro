@@ -16,12 +16,6 @@ import { cn } from '@/lib/utils'
 import { formatCompactNumber } from '@/lib/format'
 import { ProductCard } from './product-card'
 import { usePullToRefreshSubscription } from './pull-to-refresh'
-// v25.7 (Issue #8): import useHomeLayout + useModuleAccess so DesktopHome
-// respects the Studio-managed block visibility/order settings + module
-// access toggles. Previously DesktopHome was hardcoded — disabling a block
-// in Studio had no effect on the desktop home page (only mobile listened).
-import { useHomeLayout } from '@/lib/home-layout'
-import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
 
 // ============================================================================
 //  DesktopHome — Premium bento layout for desktop.
@@ -43,16 +37,6 @@ interface DesktopHomeProps {
 }
 
 export function DesktopHome({ onNavigate, onOpenProduct, onOpenSearch }: DesktopHomeProps) {
-  // v25.7 (Issue #8): consult the Studio-managed homeLayout config so the
-  // desktop home page respects block visibility/order settings. Also consult
-  // useModuleAccess so module-level toggles (e.g. disabling Stories or Club)
-  // hide the corresponding sections on desktop, matching mobile behavior.
-  const { isVisible } = useHomeLayout()
-  const modules = useModuleAccess()
-  // Quiet lint: `modules` is used by isModuleEnabled internally; we read it
-  // here so the hook re-renders DesktopHome when modules change.
-  void modules
-
   return (
     <div className="hidden md:block page-top-padding-md">
       {/* Soft ambient gradient background — premium feel */}
@@ -60,108 +44,47 @@ export function DesktopHome({ onNavigate, onOpenProduct, onOpenSearch }: Desktop
 
       <div className="max-w-[1440px] mx-auto px-8 lg:px-12 xl:px-16 py-6 lg:py-8 space-y-8 lg:space-y-10">
         {/* ── 1. BENTO HERO ───────────────────────────────────────────── */}
-        {/* v25.7 (Issue #8): gate by isVisible('hero'). */}
-        {isVisible('hero') && (
-          <BentoHero onNavigate={onNavigate} onOpenSearch={onOpenSearch} />
-        )}
+        <BentoHero onNavigate={onNavigate} onOpenSearch={onOpenSearch} />
 
         {/* v12.3.1: Stories strip RESTORED (standalone module — not Feed). */}
-        {/* v25.7 (Issue #8 + #9): gate by isVisible('stories') AND
-            isModuleEnabled('stories') — so disabling the Stories module
-            in Studio hides it on desktop too. */}
-        {isVisible('stories') && isModuleEnabled(modules, 'stories') && (
-          <Stories />
-        )}
+        {/* Stories — uses the same round Stories component as mobile (md:h-20 md:w-20 on desktop) */}
+        <Stories />
 
         {/* ── 3. BANNER BENTO ─────────────────────────────────────────── */}
-        {/* v25.7 (Issue #8): gate by isVisible('banner'). */}
-        {isVisible('banner') && (
-          <BannerBento />
-        )}
+        <BannerBento />
 
         {/* ── 4. SMART BLOCKS — Trending ──────────────────────────────── */}
-        {/* v25.7 (Issue #8): gate by isVisible(<blockId>). */}
-        {isVisible('trending') && (
-          <SmartSection
-            blockId="trending"
-            title="Сейчас в тренде"
-            subtitle="На основе просмотров и активности"
-            icon={<Flame className="h-5 w-5" />}
-            accent="orange"
-            onOpenProduct={onOpenProduct}
-          />
-        )}
+        <SmartSection
+          blockId="trending"
+          title="Сейчас в тренде"
+          subtitle="На основе просмотров и активности"
+          icon={<Flame className="h-5 w-5" />}
+          accent="orange"
+          onOpenProduct={onOpenProduct}
+        />
 
         {/* ── 5. EDITORIAL SPLIT — Catalog CTA + Feed preview ────────── */}
         <EditorialSplit onNavigate={onNavigate} />
 
         {/* ── 6. SMART BLOCKS — Recommended ──────────────────────────── */}
-        {isVisible('recommended') && (
-          <SmartSection
-            blockId="recommended"
-            title="Рекомендуем вам"
-            subtitle="Подобрано под ваши интересы"
-            icon={<Heart className="h-5 w-5" />}
-            accent="pink"
-            onOpenProduct={onOpenProduct}
-          />
-        )}
+        <SmartSection
+          blockId="recommended"
+          title="Рекомендуем вам"
+          subtitle="Подобрано под ваши интересы"
+          icon={<Heart className="h-5 w-5" />}
+          accent="pink"
+          onOpenProduct={onOpenProduct}
+        />
 
         {/* ── 7. FEATURED — Best rating ──────────────────────────────── */}
-        {/* v25.7 (Issue #8): also render the other smart blocks that were
-            previously desktop-hidden (popular, new, buying-now,
-            fast-selling). Mobile SmartBlocks renders all 10; desktop should
-            match. */}
-        {isVisible('popular') && (
-          <SmartSection
-            blockId="popular"
-            title="Популярное"
-            subtitle="Самые востребованные товары"
-            icon={<TrendingUp className="h-5 w-5" />}
-            accent="blue"
-            onOpenProduct={onOpenProduct}
-          />
-        )}
-        {isVisible('new') && (
-          <SmartSection
-            blockId="new"
-            title="Новинки"
-            subtitle="Свежие поступления"
-            icon={<Sparkles className="h-5 w-5" />}
-            accent="violet"
-            onOpenProduct={onOpenProduct}
-          />
-        )}
-        {isVisible('best-rating') && (
-          <SmartSection
-            blockId="best-rating"
-            title="Лучший рейтинг"
-            subtitle="Отзывы покупателей"
-            icon={<Crown className="h-5 w-5" />}
-            accent="amber"
-            onOpenProduct={onOpenProduct}
-          />
-        )}
-        {isVisible('buying-now') && (
-          <SmartSection
-            blockId="buying-now"
-            title="Покупают сейчас"
-            subtitle="Реальные заказы в реальном времени"
-            icon={<Zap className="h-5 w-5" />}
-            accent="emerald"
-            onOpenProduct={onOpenProduct}
-          />
-        )}
-        {isVisible('fast-selling') && (
-          <SmartSection
-            blockId="fast-selling"
-            title="Быстро продаются"
-            subtitle="Хиты продаж за неделю"
-            icon={<Flame className="h-5 w-5" />}
-            accent="rose"
-            onOpenProduct={onOpenProduct}
-          />
-        )}
+        <SmartSection
+          blockId="best-rating"
+          title="Лучший рейтинг"
+          subtitle="Отзывы покупателей"
+          icon={<Crown className="h-5 w-5" />}
+          accent="amber"
+          onOpenProduct={onOpenProduct}
+        />
 
         {/* ── 8. CLOSING CTA ─────────────────────────────────────────── */}
         <ClosingCTA onNavigate={onNavigate} />
@@ -179,10 +102,6 @@ export function DesktopHome({ onNavigate, onOpenProduct, onOpenSearch }: Desktop
 function BentoHero({ onNavigate, onOpenSearch }: { onNavigate: (v: string) => void; onOpenSearch: () => void }) {
   const [hero, setHero] = useState<HeroBlockSetting | null>(null)
   const [stats, setStats] = useState({ products: 0, posts: 0 })
-  // v25.7 (Issue #9): hide the "999 CLUB" secondary CTA when the club module
-  // is disabled in Studio → Доступ к модулям.
-  const modules = useModuleAccess()
-  const clubEnabled = isModuleEnabled(modules, 'club')
 
   const fetchHero = useCallback(async () => {
     try {
@@ -275,17 +194,12 @@ function BentoHero({ onNavigate, onOpenSearch }: { onNavigate: (v: string) => vo
                   Открыть каталог
                   <ArrowRight className="h-4 w-4 group-hover/btn:translate-x-0.5 transition-transform" />
                 </button>
-                {/* v25.7 (Issue #9): hide the CLUB CTA when the club module is
-                    disabled in Studio. Previously the button always rendered,
-                    letting desktop users navigate to a disabled Club view. */}
-                {clubEnabled && (
-                  <button
-                    onClick={() => onNavigate('club')}
-                    className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white/10 backdrop-blur-md text-white text-sm font-semibold border border-white/20 hover:bg-white/15 transition-all duration-300"
-                  >
-                    999 CLUB
-                  </button>
-                )}
+                <button
+                  onClick={() => onNavigate('club')}
+                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white/10 backdrop-blur-md text-white text-sm font-semibold border border-white/20 hover:bg-white/15 transition-all duration-300"
+                >
+                  999 CLUB
+                </button>
               </div>
             </div>
           </div>
@@ -542,16 +456,10 @@ function SmartSection({
 // ═══════════════════════════════════════════════════════════════════════════
 
 function EditorialSplit({ onNavigate }: { onNavigate: (v: string) => void }) {
-  // v25.7 (Issue #9): hide the CLUB preview card when the club module is
-  // disabled in Studio. When the card is hidden, the catalog CTA expands to
-  // full width via `lg:col-span-12` (instead of `lg:col-span-7`).
-  const modules = useModuleAccess()
-  const clubEnabled = isModuleEnabled(modules, 'club')
-
   return (
     <section className="grid grid-cols-12 gap-5 lg:gap-6">
       {/* Catalog CTA — wide gradient card */}
-      <div className={`relative overflow-hidden rounded-[28px] premium-gradient-card p-10 lg:p-12 flex flex-col justify-between min-h-[260px] ${clubEnabled ? 'col-span-12 lg:col-span-7' : 'col-span-12'}`}>
+      <div className="col-span-12 lg:col-span-7 relative overflow-hidden rounded-[28px] premium-gradient-card p-10 lg:p-12 flex flex-col justify-between min-h-[260px]">
         <div className="relative z-10">
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur-md text-xs font-medium text-white border border-white/20 mb-4">
             <Zap className="h-3 w-3" />
@@ -574,32 +482,29 @@ function EditorialSplit({ onNavigate }: { onNavigate: (v: string) => void }) {
         <div className="absolute -bottom-16 -right-16 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
       </div>
 
-      {/* v12.3: Feed preview card replaced by 999 CLUB preview card.
-          v25.7 (Issue #9): hidden when the club module is disabled. */}
-      {clubEnabled && (
-        <button
-          onClick={() => onNavigate('club')}
-          className="col-span-12 lg:col-span-5 relative overflow-hidden rounded-[28px] premium-glass-card p-10 group text-left hover:scale-[1.02] transition-transform duration-300"
-        >
-          <div className="flex items-start justify-between mb-8">
-            <div
-              className="h-12 w-12 rounded-2xl grid place-items-center shadow-lg"
-              style={{ backgroundImage: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%)' }}
-            >
-              <Crown className="h-5 w-5 text-white" strokeWidth={2.4} />
-            </div>
-            <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-foreground group-hover:translate-x-0.5 transition-all" />
+      {/* v12.3: Feed preview card replaced by 999 CLUB preview card. */}
+      <button
+        onClick={() => onNavigate('club')}
+        className="col-span-12 lg:col-span-5 relative overflow-hidden rounded-[28px] premium-glass-card p-10 group text-left hover:scale-[1.02] transition-transform duration-300"
+      >
+        <div className="flex items-start justify-between mb-8">
+          <div
+            className="h-12 w-12 rounded-2xl grid place-items-center shadow-lg"
+            style={{ backgroundImage: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%)' }}
+          >
+            <Crown className="h-5 w-5 text-white" strokeWidth={2.4} />
           </div>
-          <h3 className="text-2xl font-bold tracking-tight mb-2">999 CLUB</h3>
-          <p className="text-sm text-muted-foreground leading-relaxed mb-6">
-            VIP-зона привилегий: подарки, акции, розыгрыши, бонусы и эксклюзивные офферы
-          </p>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-            <span>привилегии для участников</span>
-          </div>
-        </button>
-      )}
+          <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-foreground group-hover:translate-x-0.5 transition-all" />
+        </div>
+        <h3 className="text-2xl font-bold tracking-tight mb-2">999 CLUB</h3>
+        <p className="text-sm text-muted-foreground leading-relaxed mb-6">
+          VIP-зона привилегий: подарки, акции, розыгрыши, бонусы и эксклюзивные офферы
+        </p>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+          <span>привилегии для участников</span>
+        </div>
+      </button>
     </section>
   )
 }
