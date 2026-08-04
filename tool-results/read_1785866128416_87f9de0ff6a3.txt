@@ -1,0 +1,663 @@
+     1→import 'dotenv/config'
+     2→import http from 'node:http'
+     3→import path from 'node:path'
+     4→import fs from 'node:fs'
+     5→// v16.10: Force IPv4-first DNS resolution. The sandbox has no IPv6 routing
+     6→// (ENETUNREACH for all IPv6 destinations), and Node's "Happy Eyeballs"
+     7→// implementation gives up too quickly when the IPv6 attempt fails — causing
+     8→// ETIMEDOUT for hosts that resolve to both IPv4 + IPv6 (e.g. RadioBrowser's
+     9→// Iranian mirror de1.api.radio-browser.info). Setting ipv4first globally
+    10→// fixes this for all outbound fetch() calls (iTunes, Audius, RadioBrowser,
+    11→// alquran.cloud, Cobalt).
+    12→import dns from 'node:dns'
+    13→dns.setDefaultResultOrder('ipv4first')
+    14→import express from 'express'
+    15→import cors from 'cors'
+    16→import helmet from 'helmet'
+    17→import rateLimit from 'express-rate-limit'
+    18→
+    19→import { Server as IoServer } from 'socket.io'
+    20→
+    21→import { prisma } from './lib/prisma.js'
+    22→import { requireAuth, requireAdmin } from './lib/auth.js'
+    23→// Wave 3 (B-DEAD-001 + B-PROD-002): wire the structured logger — replaces
+    24→// ad-hoc console.log/error calls with JSON-formatted structured logs that
+    25→// can be shipped to log aggregators. Also auto-inits Sentry if SENTRY_DSN is set.
+    26→import { logger, requestLogger, log } from './lib/logger.js'
+    27→import { registerChatHandlers } from './socket/handlers.js'
+    28→// v16.8-final: voice message self-destruct scheduler.
+    29→import { startSelfDestructScheduler, stopSelfDestructScheduler } from './lib/self-destruct-scheduler.js'
+    30→import authRoutes from './routes/auth.js'
+    31→import usersRoutes from './routes/users.js'
+    32→import productsRoutes from './routes/products.js'
+    33→// v12.3.1: storiesRoutes RESTORED (Stories is a standalone module — not Feed).
+    34→// v12.3: postsRoutes / commentsRoutes / likesRoutes remain removed with Feed.
+    35→import storiesRoutes from './routes/stories.js'
+    36→import chatRoutes from './routes/chat.js'
+    37→import uploadRoutes from './routes/upload.js'
+    38→import bannersRoutes from './routes/banners.js'
+    39→import departmentsRoutes from './routes/departments.js'
+    40→import infoPagesRoutes from './routes/info-pages.js'
+    41→import moderationRoutes from './routes/moderation.js'
+    42→import settingsRoutes from './routes/settings.js'
+    43→import analyticsRoutes from './routes/analytics.js'
+    44→import pushRoutes from './routes/push.js'
+    45→import leadsRoutes from './routes/leads.js'
+    46→import ordersRoutes from './routes/orders.js'
+    47→import deliveryRoutes from './routes/delivery.js'
+    48→import reviewsRoutes from './routes/reviews.js'
+    49→import searchRoutes from './routes/search.js'
+    50→import universalSearchRoutes from './routes/universal-search.js'
+    51→import callsRoutes from './routes/calls.js'
+    52→import auditRoutes from './routes/audit.js'
+    53→import shareRoutes from './routes/share.js'
+    54→// v12.4: 999 CLUB Phase 2 — full backend with CRUD + points + referrals.
+    55→import clubRoutes from './routes/club.js'
+    56→// v16.9.2: Audio Hub — search proxy (iTunes API) + stream proxy for offline cache.
+    57→import audioHubRoutes from './routes/audio-hub.js'
+    58→import filmsRoutes from './routes/films.js'
+    59→import liveInfoRoutes from './routes/live-info.js'
+    60→// v18.5: AI Assistant — DeepSeek-powered chat + Knowledge Base CRUD.
+    61→import aiRoutes from './routes/ai.js'
+    62→// v18.5: AI TTS (placeholder for future cloud TTS — currently client-side Web Speech API).
+    63→import aiTtsRoutes from './routes/ai-tts.js'
+    64→// v19.0: Multi-provider AI configuration + promo codes + security + 2FA backup codes
+    65→import aiProvidersRoutes from './routes/ai-providers.js'
+    66→// v8: Studio AI Assistant — встроенный AI в редакторах товаров и Stories
+    67→import aiStudioRoutes from './routes/ai-studio.js'
+    68→import promoCodesRoutes from './routes/promo-codes.js'
+    69→import securityRoutes from './routes/security.js'
+    70→
+    71→// ============================================================================
+    72→// Environment
+    73→// ============================================================================
+    74→const PORT = Number(process.env.PORT ?? 4000)
+    75→const NODE_ENV = process.env.NODE_ENV || 'development'
+    76→const isProd = NODE_ENV === 'production'
+    77→
+    78→// Allow both the main app (3000) and Studio (3001) to call the API.
+    79→// In dev, also allow any LAN IP origin so phones/tablets can reach the API.
+    80→const CLIENT_ORIGIN_RAW = process.env.CLIENT_ORIGIN || 'http://localhost:3000,http://localhost:3001'
+    81→const CLIENT_ORIGIN = CLIENT_ORIGIN_RAW.split(',').map((s) => s.trim()).filter(Boolean)
+    82→
+    83→/**
+    84→ * CORS origin checker.
+    85→ *
+    86→ * v25.2-CORS-FIX: When origin is NOT allowed, we now pass an Error to the
+    87→ * callback (callback(err)) instead of callback(null, false). This makes
+    88→ * cors() respond with 500 + error message instead of passing the request
+    89→ * through to Express (which would respond 200 + Allow header without any
+    90→ * Access-Control-Allow-Origin, confusing the browser).
+    91→ *
+    92→ * In practice this shouldn't matter anymore because the frontend now uses
+    93→ * relative /api/* paths (no cross-origin), but this is defense-in-depth:
+    94→ * if someone manually calls the backend from a different origin, they get
+    95→ * a clear error instead of a silent 200-without-CORS-header.
+    96→ *
+    97→ * In development: allow any origin on localhost or LAN IPs (so the app works
+    98→ * when opened from a phone at http://192.168.x.x:3000), plus any *.space-z.ai
+    99→ * subdomain (the sandbox/preview gateway) and the wildcard `*` if configured.
+   100→ *
+   101→ * In production: only allow the configured CLIENT_ORIGIN allowlist
+   102→ * (or everything if CLIENT_ORIGIN contains `*`).
+   103→ */
+   104→function corsOrigin(origin: string | undefined, callback: (err: Error | null, ok?: boolean) => void) {
+   105→  // Allow same-origin requests (no Origin header, e.g. curl, server-to-server)
+   106→  if (!origin) return callback(null, true)
+   107→
+   108→  // Wildcard shortcut: if CLIENT_ORIGIN contains `*`, allow every origin.
+   109→  // In production this is REJECTED — wildcards are dev-only.
+   110→  if (CLIENT_ORIGIN.includes('*')) {
+   111→    if (isProd) {
+   112→      logger.warn('CORS CLIENT_ORIGIN=* forbidden in production', { module: 'cors', origin })
+   113→      return callback(new Error(`CORS: wildcard origin forbidden in production (got ${origin})`))
+   114→    }
+   115→    return callback(null, true)
+   116→  }
+   117→
+   118→  // Production: strict allowlist
+   119→  if (isProd) {
+   120→    if (CLIENT_ORIGIN.includes(origin)) return callback(null, true)
+   121→    // Also allow any *.space-z.ai preview subdomain in prod (sandbox gateway)
+   122→    try {
+   123→      const url = new URL(origin)
+   124→      if (url.hostname === 'space-z.ai' || url.hostname.endsWith('.space-z.ai')) {
+   125→        return callback(null, true)
+   126→      }
+   127→    } catch {}
+   128→    logger.warn('CORS origin rejected (production allowlist)', {
+   129→      module: 'cors',
+   130→      origin,
+   131→      allowlist: CLIENT_ORIGIN,
+   132→    })
+   133→    return callback(new Error(`CORS: origin ${origin} not in CLIENT_ORIGIN allowlist`))
+   134→  }
+   135→
+   136→  // Development: allow localhost + LAN IPs on any port
+   137→  try {
+   138→    const url = new URL(origin)
+   139→    const host = url.hostname
+   140→    if (
+   141→      host === 'localhost' ||
+   142→      host === '127.0.0.1' ||
+   143→      /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)/.test(host) ||
+   144→      host.endsWith('.local')
+   145→    ) {
+   146→      return callback(null, true)
+   147→    }
+   148→    // Sandbox preview gateway: any *.space-z.ai subdomain (e.g. preview-<bot-id>.space-z.ai)
+   149→    if (host === 'space-z.ai' || host.endsWith('.space-z.ai')) {
+   150→      return callback(null, true)
+   151→    }
+   152→  } catch {}
+   153→  // Fallback: allow configured origins
+   154→  if (CLIENT_ORIGIN.includes(origin)) return callback(null, true)
+   155→  logger.warn('CORS origin rejected (development)', {
+   156→    module: 'cors',
+   157→    origin,
+   158→    allowlist: CLIENT_ORIGIN,
+   159→  })
+   160→  return callback(new Error(`CORS: origin ${origin} not allowed`))
+   161→}
+   162→
+   163→// ============================================================================
+   164→// Express app
+   165→// ============================================================================
+   166→const app = express()
+   167→const httpServer = http.createServer(app)
+   168→
+   169→// Trust proxy — B-CRIT-003 fix: only trust proxy when explicitly configured.
+   170→// Previously: app.set('trust proxy', 1) unconditionally → attackers could spoof
+   171→// X-Forwarded-For to bypass ALL rate limiters (auth, upload, admin-reset).
+   172→// Now: in dev, do NOT trust any proxy (req.ip = socket.remoteAddress).
+   173→//      in prod, trust only explicit CIDR allowlist (loopback + private nets).
+   174→if (process.env.TRUST_PROXY === 'true') {
+   175→  // Explicit opt-in: trust loopback + linklocal + uniquelocal (RFC1918) as proxies.
+   176→  // For multi-hop prod (Cloudflare → Caddy → backend), set TRUST_PROXY=true and
+   177→  // ensure Caddy sets X-Forwarded-For correctly (Cloudflare's IP is public, so
+   178→  // it won't be trusted — that's OK because Caddy forwards the real IP).
+   179→  app.set('trust proxy', 'loopback, linklocal, uniquelocal')
+   180→}
+   181→// else: no trust proxy — req.ip = socket.remoteAddress (no spoofing possible)
+   182→
+   183→// ============================================================================
+   184→// Request logging — minimal, dev-only.
+   185→// Wave 3 (B-PROD-002): use the structured requestLogger from lib/logger.ts
+   186→// instead of dev-only console.log. The structured logger:
+   187→//   - logs in prod (samples 10% to control volume)
+   188→//   - emits JSON with method/url/status/durationMs/ip/ua
+   189→//   - can be shipped to log aggregators (Loki/CloudWatch/Datadog)
+   190→//   - integrates with Sentry for error-level events
+   191→app.use(requestLogger)
+   192→
+   193→// --- Socket.IO ---
+   194→const io = new IoServer(httpServer, {
+   195→  path: '/socket.io/',
+   196→  cors: { origin: corsOrigin, methods: ['GET', 'POST'], credentials: true },
+   197→  pingTimeout: 60000,
+   198→  pingInterval: 25000,
+   199→  // Cap event payload at 100 KB — a single chat message or signaling event
+   200→  // is well under 1 KB. The default 1 MB is DoS surface for no benefit.
+   201→  maxHttpBufferSize: 100 * 1024,
+   202→})
+   203→registerChatHandlers(io)
+   204→// v16.8-final: start the voice-message self-destruct scheduler.
+   205→startSelfDestructScheduler(io)
+   206→
+   207→// --- Security middleware ---
+   208→// --- Security middleware ---
+   209→// B-HIGH-006 fix: Helmet CSP enabled in ALL environments (was dev:false).
+   210→// Fail-strict: if NODE_ENV unset, default to stricter prod policy.
+   211→// Frame-ancestors 'none' prevents clickjacking (S-LOW-028).
+   212→app.use(
+   213→  helmet({
+   214→    contentSecurityPolicy: {
+   215→      directives: {
+   216→        defaultSrc: ["'self'"],
+   217→        connectSrc: ["'self'", 'ws:', 'wss:'],
+   218→        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+   219→        mediaSrc: ["'self'", 'blob:', 'https:'],
+   220→        scriptSrc: ["'self'"],
+   221→        styleSrc: ["'self'", "'unsafe-inline'"],
+   222→        fontSrc: ["'self'", 'data:'],
+   223→        frameAncestors: ["'none'"],
+   224→        baseUri: ["'self'"],
+   225→        formAction: ["'self'"],
+   226→      },
+   227→      reportOnly: false,
+   228→    },
+   229→    crossOriginResourcePolicy: { policy: 'cross-origin' }, // allow uploads from frontend
+   230→    crossOriginEmbedderPolicy: false,
+   231→    hsts: isProd
+   232→      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+   233→      : false, // HSTS only in prod (HTTP in dev)
+   234→    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+   235→  }),
+   236→)
+   237→
+   238→app.use(
+   239→  cors({
+   240→    origin: corsOrigin,
+   241→    // S-HIGH-005 fix: credentials:true unnecessary for Bearer auth. Creates
+   242→    // CSRF surface if cookies are added later. Removed.
+   243→    credentials: false,
+   244→  }),
+   245→)
+   246→
+   247→// --- Body parsers ---
+   248→// B-HIGH-005 fix: kept strict:false because PUT /api/settings/:key accepts
+   249→// raw JSON strings (e.g. whatsapp phone number). Instead of strict:true,
+   250→// we add explicit type guards in routes that destructure req.body
+   251→// (orders.ts, users.ts, reviews.ts) to handle the type-confusion case
+   252→// where body could be null/true/42/"hello".
+   253→app.use(express.json({ limit: '1mb', strict: false }))
+   254→app.use(express.urlencoded({ extended: true, limit: '1mb' }))
+   255→
+   256→// --- Rate limiting ---
+   257→// Generic API limiter
+   258→const apiLimiter = rateLimit({
+   259→  windowMs: 60 * 1000, // 1 minute
+   260→  limit: 120, // 120 req/min per IP
+   261→  standardHeaders: 'draft-7',
+   262→  legacyHeaders: false,
+   263→  message: { error: 'Too many requests, please slow down' },
+   264→})
+   265→app.use('/api', apiLimiter)
+   266→
+   267→// Strict limiter for auth endpoints (brute-force mitigation)
+   268→const authLimiter = rateLimit({
+   269→  windowMs: 15 * 60 * 1000, // 15 minutes
+   270→  limit: 20, // 20 attempts per 15 min per IP
+   271→  standardHeaders: 'draft-7',
+   272→  legacyHeaders: false,
+   273→  message: { error: 'Too many auth attempts, try again later' },
+   274→})
+   275→
+   276→// Upload limiter — prevents disk-fill attacks
+   277→const uploadLimiter = rateLimit({
+   278→  windowMs: 60 * 1000,
+   279→  limit: 20, // 20 uploads/min per IP
+   280→  standardHeaders: 'draft-7',
+   281→  legacyHeaders: false,
+   282→  message: { error: 'Too many uploads, please slow down' },
+   283→})
+   284→
+   285→// Stricter limiter for the first-run admin probe — prevents recon spam.
+   286→// Mounted only on /api/auth/admin-exists (5 req/min/IP is plenty for the
+   287→// wizard to do its single check on Studio load).
+   288→const adminProbeLimiter = rateLimit({
+   289→  windowMs: 60 * 1000,
+   290→  limit: 5,
+   291→  standardHeaders: 'draft-7',
+   292→  legacyHeaders: false,
+   293→  message: { error: 'Too many admin-probe requests, slow down' },
+   294→})
+   295→
+   296→// Very strict limiter for /reset-admin — blocks brute-force on the reset token.
+   297→// 3 attempts per hour per IP is enough for legitimate use (operator forgot
+   298→// password) and makes token-guessing impractical (2^192 keyspace / 3/h).
+   299→const adminResetLimiter = rateLimit({
+   300→  windowMs: 60 * 60 * 1000,
+   301→  limit: 3,
+   302→  standardHeaders: 'draft-7',
+   303→  legacyHeaders: false,
+   304→  message: { error: 'Too many reset attempts, try again later' },
+   305→})
+   306→
+   307→// v24.7 (final-release audit): dedicated limiter for /forgot-password and
+   308→// /reset-password. Previously both fell under the generic authLimiter
+   309→// (20 / 15 min / IP), which is fine for login brute-force but too lenient
+   310→// for password-reset flows where the goal is also email-enumeration
+   311→// prevention and reset-token brute-force. 5/h/IP is plenty for a user who
+   312→// genuinely forgot their password, while making automated abuse impractical.
+   313→const passwordResetLimiter = rateLimit({
+   314→  windowMs: 60 * 60 * 1000, // 1 hour
+   315→  limit: 5,
+   316→  standardHeaders: 'draft-7',
+   317→  legacyHeaders: false,
+   318→  message: { error: 'Too many password-reset requests, try again later' },
+   319→})
+   320→
+   321→// REMOVED (Phase 1.3): leadsLimiter — dead code. Was defined here but never
+   322→// mounted. The actual leads rate limiting is done by publicLeadLimiter inside
+   323→// routes/leads.ts:17-23 (5/min/IP on POST /api/leads). This duplicate
+   324→// definition was misleading during code review.
+   325→
+   326→// --- Static: uploaded files ---
+   327→const uploadsDir = path.resolve(process.cwd(), 'uploads')
+   328→if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
+   329→app.use(
+   330→  '/uploads',
+   331→  express.static(uploadsDir, {
+   332→    maxAge: '7d',
+   333→    // Explicit MIME map for audio types produced by MediaRecorder.
+   334→    // Without this, express.static falls back to application/octet-stream
+   335→    // for `.weba` (non-standard ext) and the <audio> element may refuse
+   336→    // to play voice messages — especially in Safari.
+   337→    setHeaders: (res, filePath) => {
+   338→      res.setHeader('X-Content-Type-Options', 'nosniff')
+   339→      // P-HIGH-010 fix: set Access-Control-Allow-Origin on /uploads/* so
+   340→      // canvas.drawImage() from /uploads doesn't taint the canvas. Without
+   341→      // this, SmartStoryGenerator's toBlob() throws SecurityError when
+   342→      // compositing product-uploaded images (only Unsplash images worked
+   343→      // because Unsplash sends CORS headers).
+   344→      // We use '*' because uploads are public assets served with
+   345→      // Content-Disposition: attachment (non-audio) — no sensitive data leaks.
+   346→      res.setHeader('Access-Control-Allow-Origin', '*')
+   347→      const ext = path.extname(filePath).toLowerCase()
+   348→      const AUDIO_EXT_TO_MIME: Record<string, string> = {
+   349→        '.webm': 'audio/webm',
+   350→        '.weba': 'audio/webm',
+   351→        '.m4a': 'audio/mp4',
+   352→        '.mp4': 'audio/mp4',
+   353→        '.mp3': 'audio/mpeg',
+   354→        '.ogg': 'audio/ogg',
+   355→        '.wav': 'audio/wav',
+   356→      }
+   357→      // Force the correct Content-Type for audio files — voice messages
+   358→      // MUST be served with an audio/* MIME so the <audio> element can play
+   359→      // them inline. We do NOT set Content-Disposition: attachment for audio
+   360→      // (the global attachment rule below is for non-audio uploads only).
+   361→      if (AUDIO_EXT_TO_MIME[ext]) {
+   362→        res.setHeader('Content-Type', AUDIO_EXT_TO_MIME[ext])
+   363→        // Inline disposition so the browser plays it in the <audio> element
+   364→        // instead of forcing a download dialog.
+   365→        res.setHeader('Content-Disposition', 'inline')
+   366→        return
+   367→      }
+   368→      // For all other uploads — prevent MIME-sniffing and force a download
+   369→      // (avoids rendering uploaded HTML/SVG payloads inline).
+   370→      res.setHeader('Content-Disposition', 'attachment')
+   371→    },
+   372→  }),
+   373→)
+   374→
+   375→// ============================================================================
+   376→// Cache-Control middleware for API responses
+   377→// ----------------------------------------------------------------------------
+   378→// Without explicit Cache-Control, browsers apply HTTP/1.1 heuristic caching
+   379→// (10% of time since Last-Modified) — which can cache sensitive data like
+   380→// user profiles or chat conversations for hours.
+   381→//
+   382→// Rules:
+   383→//   - /api/auth/*            → no-store (tokens, user data — never cache)
+   384→//   - /api/chat/*            → no-store (real-time data, must be fresh)
+   385→//   - /api/products*         → public, max-age=60 (catalog changes rarely)
+   386→//   - /api/products/smart/*  → public, max-age=30 (smart blocks)
+   387→//   - /api/stories           → public, max-age=60
+   388→//   - /api/banners           → public, max-age=300 (admin-managed, slow)
+   389→//   - /api/settings/*        → public, max-age=300
+   390→//   - /api/push/*            → no-store (subscription endpoints are sensitive)
+   391→//   - /api/calls/*           → no-store (TURN credentials per-user)
+   392→//   - everything else        → no-store (default: secure)
+   393→// ============================================================================
+   394→app.use('/api', (req, res, next) => {
+   395→  const url = req.originalUrl || req.url
+   396→  // Order matters: more specific paths first
+   397→  if (url.startsWith('/api/auth/') ||
+   398→      url.startsWith('/api/chat/') ||
+   399→      url.startsWith('/api/push/') ||
+   400→      url.startsWith('/api/calls/') ||
+   401→      url.startsWith('/api/leads') ||
+   402→      url.startsWith('/api/orders') ||
+   403→      url.startsWith('/api/upload') ||
+   404→      url.startsWith('/api/favorites') ||
+   405→      url.startsWith('/api/cart')) {
+   406→    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+   407→    res.set('Pragma', 'no-cache')
+   408→    res.set('Expires', '0')
+   409→  } else if (url.startsWith('/api/products/smart/')) {
+   410→    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
+   411→  } else if (url.startsWith('/api/products')) {
+   412→    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
+   413→  // v12.3.1: /api/stories cache rule RESTORED (Stories module is back).
+   414→  } else if (url.startsWith('/api/stories')) {
+   415→    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
+   416→  } else if (url.startsWith('/api/banners')) {
+   417→    // v24.3: no-cache so banner changes in Studio appear immediately.
+   418→    // Previously this was max-age=300 (5 min browser cache) which meant
+   419→    // banner updates took up to 5 minutes to show in the app. Studio-driven
+   420→    // content should never be aggressively cached.
+   421→    res.set('Cache-Control', 'no-cache, must-revalidate')
+   422→  } else if (url.startsWith('/api/info-pages')) {
+   423→    // Public info pages — cache for 5 min, but allow stale-while-revalidate
+   424→    // so updates in Studio appear quickly without forcing a full refetch.
+   425→    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
+   426→  } else if (url.startsWith('/api/settings/')) {
+   427→    // v8-audit-fix: no-cache so changes in Studio appear immediately in the app
+   428→    res.set('Cache-Control', 'no-cache, must-revalidate')
+   429→  } else if (url.startsWith('/api/health') || url.startsWith('/api/ready')) {
+   430→    res.set('Cache-Control', 'no-store')
+   431→  } else {
+   432→    // Default: secure (no-store). Override per-route if needed.
+   433→    res.set('Cache-Control', 'no-store, private')
+   434→  }
+   435→  next()
+   436→})
+   437→
+   438→// --- API routes ---
+   439→// Auth routes: authLimiter (20/15min/IP) covers register/login/change-password.
+   440→// /admin-exists and /reset-admin get stricter dedicated limiters mounted
+   441→// BEFORE authRoutes so they take precedence for those specific paths.
+   442→// /forgot-password and /reset-password get passwordResetLimiter (5/h/IP)
+   443→// to defend against email enumeration and reset-token brute-force.
+   444→app.use('/api/auth/admin-exists', adminProbeLimiter)
+   445→app.use('/api/auth/reset-admin', adminResetLimiter)
+   446→app.use('/api/auth/forgot-password', passwordResetLimiter)
+   447→app.use('/api/auth/reset-password', passwordResetLimiter)
+   448→app.use('/api/auth', authLimiter, authRoutes)
+   449→app.use('/api/users', usersRoutes)
+   450→app.use('/api/products', productsRoutes)
+   451→// v12.3.1: /api/stories mount RESTORED (Stories is a standalone module).
+   452→// v12.3: /api/posts, /api/comments mounts remain removed with Feed.
+   453→app.use('/api/stories', storiesRoutes)
+   454→app.use('/api/chat', chatRoutes)
+   455→app.use('/api/banners', bannersRoutes)
+   456→app.use('/api/departments', departmentsRoutes)
+   457→app.use('/api/info-pages', infoPagesRoutes)
+   458→app.use('/api/moderation', moderationRoutes)
+   459→app.use('/api/settings', settingsRoutes)
+   460→app.use('/api/analytics', analyticsRoutes)
+   461→app.use('/api/push', pushRoutes)
+   462→app.use('/api/leads', leadsRoutes)
+   463→app.use('/api/orders', ordersRoutes)
+   464→app.use('/api/delivery', deliveryRoutes)
+   465→app.use('/api/reviews', reviewsRoutes)
+   466→app.use('/api/search', searchRoutes) // /api/search/track — records user searches for personalization
+   467→app.use('/api/search', universalSearchRoutes) // /api/search/universal — parallel entity search
+   468→app.use('/api/calls', callsRoutes) // /api/calls/ice-servers — WebRTC ICE config
+   469→app.use('/api/audit', auditRoutes) // /api/audit — admin audit log (admin-only)
+   470→app.use('/api/share', shareRoutes) // Smart Share — public share links + tracking + analytics
+   471→app.use('/api/club', clubRoutes) // v12.4: 999 CLUB Phase 2 — gifts, promos, giveaways, bonuses, tasks, coupons, events, points, referrals
+   472→app.use('/api/audio-hub', audioHubRoutes) // v16.9.2: Audio Hub — search proxy + stream proxy
+   473→app.use('/api/films', filmsRoutes) // v16.20: Films Hub — Turkish series search + episode player
+   474→app.use('/api/live-info', liveInfoRoutes) // v18.4: Floating Live Info — finance/weather/shop/personal
+   475→app.use('/api/ai', aiRoutes) // v18.5: AI Assistant — DeepSeek chat + Knowledge Base CRUD
+   476→app.use('/api/ai/tts', aiTtsRoutes) // v18.5: AI TTS metadata (client-side Web Speech API)
+   477→app.use('/api/ai/providers', aiProvidersRoutes) // v19.0: AI provider CRUD (multi-provider config)
+   478→app.use('/api/ai/studio', aiStudioRoutes) // v8: Studio AI Assistant (товары + Stories)
+   479→app.use('/api/promo-codes', promoCodesRoutes) // v19.0: Promo codes + bonus points settings
+   480→app.use('/api', securityRoutes) // v19.0: Security settings + 2FA backup codes + session mgmt
+   481→// Upload limiter — apply ONLY to /api/upload/* (file uploads), NOT to all /api/*
+   482→// Favorites and cart are lightweight JSON ops; they don't need the 20/min limiter.
+   483→// Previous bug: app.use('/api', uploadLimiter, uploadRoutes) mounted the limiter
+   484→// on EVERY /api/* request, effectively rate-limiting the entire API to 20/min.
+   485→app.use('/api/upload', uploadLimiter)
+   486→app.use('/api', uploadRoutes) // /api/upload, /api/favorites, /api/cart
+   487→
+   488→// --- Health checks ---
+   489→// Liveness — process is up
+   490→app.get('/api/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }))
+   491→
+   492→// Readiness — process can serve requests (DB reachable)
+   493→app.get('/api/ready', async (_req, res) => {
+   494→  try {
+   495→    await prisma.$queryRaw`SELECT 1`
+   496→    res.json({ ok: true, ts: new Date().toISOString() })
+   497→  } catch (e) {
+   498→      logger.error('Ready check DB failed', { module: 'health', error: e instanceof Error ? e : new Error(String(e)) })
+   499→    res.status(503).json({ ok: false, error: 'Database unavailable' })
+   500→  }
+   501→})
+   502→
+   503→// Detailed health — used by monitoring systems (uptime, memory, DB, versions)
+   504→// SECURITY (Phase 0.4): protected with requireAuth + requireAdmin to prevent
+   505→// information disclosure (memory usage, Node version, env name, socket count,
+   506→// DB latency — all useful for an attacker planning DoS or exploit selection).
+   507→app.get('/api/health/detailed', requireAuth, requireAdmin, async (_req, res) => {
+   508→  const started = new Date(Date.now() - process.uptime() * 1000)
+   509→  const mem = process.memoryUsage()
+   510→  let dbOk = false
+   511→  let dbLatencyMs = 0
+   512→  try {
+   513→    const t0 = Date.now()
+   514→    await prisma.$queryRaw`SELECT 1`
+   515→    dbLatencyMs = Date.now() - t0
+   516→    dbOk = true
+   517→  } catch {
+   518→    dbOk = false
+   519→  }
+   520→  res.json({
+   521→    ok: dbOk,
+   522→    ts: new Date().toISOString(),
+   523→    uptime: {
+   524→      seconds: Math.floor(process.uptime()),
+   525→      startedAt: started.toISOString(),
+   526→      humanReadable: formatUptime(process.uptime()),
+   527→    },
+   528→    memory: {
+   529→      rssMb: Math.round(mem.rss / 1024 / 1024),
+   530→      heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+   531→      heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+   532→      externalMb: Math.round(mem.external / 1024 / 1024),
+   533→    },
+   534→    database: {
+   535→      ok: dbOk,
+   536→      latencyMs: dbLatencyMs,
+   537→    },
+   538→    versions: {
+   539→      node: process.version,
+   540→      bun: process.versions.bun || null,
+   541→      env: process.env.NODE_ENV || 'development',
+   542→    },
+   543→    socket: {
+   544→      connected: (io as any)?.sockets?.sockets?.size || 0,
+   545→    },
+   546→  })
+   547→})
+   548→
+   549→function formatUptime(seconds: number): string {
+   550→  const d = Math.floor(seconds / 86400)
+   551→  const h = Math.floor((seconds % 86400) / 3600)
+   552→  const m = Math.floor((seconds % 3600) / 60)
+   553→  const s = Math.floor(seconds % 60)
+   554→  const parts: string[] = []
+   555→  if (d > 0) parts.push(`${d}d`)
+   556→  if (h > 0) parts.push(`${h}h`)
+   557→  if (m > 0) parts.push(`${m}m`)
+   558→  parts.push(`${s}s`)
+   559→  return parts.join(' ')
+   560→}
+   561→
+   562→// 404
+   563→app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }))
+   564→
+   565→// Centralized error handler — never leak internal details on 5xx
+   566→app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+   567→  const status = err?.status || (err?.name === 'ZodError' ? 400 : 500)
+   568→  if (status >= 500) logger.error('Unhandled 5xx error', { module: 'error', status, message: err.message, path: req.path, method: req.method })
+   569→  const body: any = {
+   570→    error:
+   571→      status >= 500
+   572→        ? 'Internal server error'
+   573→        : err?.message || 'Request failed',
+   574→  }
+   575→  if (status < 500 && err?.issues) body.details = err.issues
+   576→  res.status(status).json(body)
+   577→})
+   578→
+   579→// --- Start ---
+   580→httpServer.listen(PORT, async () => {
+   581→  // Reset stale online flags — any user marked isOnline:true from a previous
+   582→  // run (which crashed or was killed) is now offline. Without this, the
+   583→  // /api/users/online/list endpoint returns ghost users after a server restart.
+   584→  try {
+   585→    const result = await prisma.user.updateMany({
+   586→      where: { isOnline: true },
+   587→      data: { isOnline: false, lastSeen: new Date() },
+   588→    })
+   589→    if (result.count > 0) {
+   590→        logger.info('Startup: reset isOnline flag for stale users', { module: 'startup', count: result.count })
+   591→    }
+   592→  } catch (e) {
+   593→    logger.error('Startup: failed to reset stale isOnline flags', { module: 'startup', error: e instanceof Error ? e : new Error(String(e)) })
+   594→  }
+   595→
+   596→  // Wave 3 (B-PROD-002): startup banner via structured logger
+   597→  log('info', '«Три девятки» backend started', {
+   598→    module: 'index',
+   599→    env: NODE_ENV,
+   600→    port: PORT,
+   601→    http: `http://localhost:${PORT}`,
+   602→    restApi: `http://localhost:${PORT}/api`,
+   603→    socketIo: `ws://localhost:${PORT}`,
+   604→    uploads: `http://localhost:${PORT}/uploads`,
+   605→    cors: CLIENT_ORIGIN.join(', ') || '*',
+   606→    health: `http://localhost:${PORT}/api/health | /api/ready`,
+   607→  })
+   608→
+   609→  // H1 fix: boot-warning if BYPASS_ADMIN_TOTP is set. In production the flag
+   610→  // is silently ignored by routes/auth.ts (it checks NODE_ENV!=='production'
+   611→  // before honouring the flag), but a dev operator should still see a loud
+   612→  // warning if they accidentally enable it. This makes the surface explicit.
+   613→  if (process.env.BYPASS_ADMIN_TOTP === 'true') {
+   614→    if (isProd) {
+   615→      logger.warn('BYPASS_ADMIN_TOTP=true ignored in production — admin 2FA is mandatory', { module: 'startup' })
+   616→    } else {
+   617→      logger.warn('⚠ BYPASS_ADMIN_TOTP=true is set — admin 2FA is DISABLED. Remove this for any deployment that is not a local laptop.', { module: 'startup' })
+   618→    }
+   619→  }
+   620→})
+   621→
+   622→// --- Graceful shutdown — close all resources in order ---
+   623→const shutdown = async (signal: string) => {
+   624→  logger.info(`Shutdown: ${signal} received`, { module: 'shutdown' })
+   625→
+   626→  // v16.8-final: stop the self-destruct scheduler (cancel its interval).
+   627→  stopSelfDestructScheduler()
+   628→
+   629→  // Stop accepting new connections
+   630→  httpServer.close((err) => {
+   631→    if (err) logger.error('Shutdown: HTTP close error', { module: 'shutdown', error: err })
+   632→  })
+   633→
+   634→  // Close Socket.IO
+   635→  io.close(() => {
+   636→    logger.info('Shutdown: Socket.IO closed', { module: 'shutdown' })
+   637→  })
+   638→
+   639→  // Disconnect Prisma
+   640→  try {
+   641→    await prisma.$disconnect()
+   642→    logger.info('Shutdown: Prisma disconnected', { module: 'shutdown' })
+   643→  } catch (e) {
+   644→    logger.error('Shutdown: Prisma disconnect error', { module: 'shutdown', error: e instanceof Error ? e : new Error(String(e)) })
+   645→  }
+   646→
+   647→  setTimeout(() => process.exit(0), 1000).unref()
+   648→  // Hard exit if something hangs
+   649→  setTimeout(() => process.exit(1), 8000).unref()
+   650→}
+   651→process.on('SIGTERM', () => void shutdown('SIGTERM'))
+   652→process.on('SIGINT', () => void shutdown('SIGINT'))
+   653→
+   654→// Catch unhandled rejections — log but keep running
+   655→process.on('unhandledRejection', (reason, promise) => {
+   656→  logger.error('Unhandled rejection', { module: 'process', error: reason instanceof Error ? reason : new Error(String(reason)) })
+   657→})
+   658→process.on('uncaughtException', (err) => {
+   659→  logger.error('Uncaught exception', { module: 'process', error: err instanceof Error ? err : new Error(String(err)) })
+   660→  // In production, exit and let the supervisor restart
+   661→  if (isProd) process.exit(1)
+   662→})
+   663→

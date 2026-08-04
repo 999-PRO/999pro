@@ -1,0 +1,1136 @@
+     1→import { Router } from 'express'
+     2→import { Prisma } from '@prisma/client'
+     3→import { prisma } from '../lib/prisma.js'
+     4→import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
+     5→import { asyncHandler } from '../lib/asyncHandler.js'
+     6→import { moderateContent } from '../lib/moderation.js'
+     7→import {
+     8→  startConversationSchema,
+     9→  sendMessageSchema,
+    10→  forwardMessageSchema,
+    11→} from '../lib/schemas.js'
+    12→import { serialiseMessage, USER_PUBLIC_SELECT } from '../lib/serialisers.js'
+    13→import { getIo, notifyOfflineParticipants } from '../socket/handlers.js'
+    14→import { auditLogRaw } from '../lib/audit.js'
+    15→
+    16→const router = Router()
+    17→
+    18→// v13.3 (audit dedup): use shared USER_PUBLIC_SELECT from lib/serialisers.
+    19→const userSelect = USER_PUBLIC_SELECT
+    20→
+    21→// POST /api/chat/conversations  { participantId }
+    22→router.post(
+    23→  '/conversations',
+    24→  requireAuth,
+    25→  asyncHandler(async (req: AuthedRequest, res) => {
+    26→    const { participantId } = startConversationSchema.parse(req.body)
+    27→    const meId = req.user!.id
+    28→    if (participantId === meId) {
+    29→      return res.status(400).json({ error: 'Cannot start conversation with yourself' })
+    30→    }
+    31→
+    32→    // Phase 8.1: cannot start conversation with a soft-deleted user.
+    33→    const participant = await prisma.user.findUnique({ where: { id: participantId } })
+    34→    if (!participant || participant.deletedAt) {
+    35→      return res.status(404).json({ error: 'User not found' })
+    36→    }
+    37→
+    38→    const existingConversations = await prisma.conversation.findMany({
+    39→      where: { participants: { some: { userId: meId } } },
+    40→      include: { participants: { select: { userId: true } } },
+    41→      take: 200,
+    42→    })
+    43→
+    44→    const existing = existingConversations.find(
+    45→      (c) =>
+    46→        c.participants.length === 2 &&
+    47→        c.participants.some((p) => p.userId === meId) &&
+    48→        c.participants.some((p) => p.userId === participantId),
+    49→    )
+    50→
+    51→    if (existing) {
+    52→      const fullConv = await prisma.conversation.findUnique({
+    53→        where: { id: existing.id },
+    54→        include: {
+    55→          participants: { include: { user: { select: userSelect } } },
+    56→          messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+    57→        },
+    58→      })
+    59→      return res.json({ conversation: formatConversation(fullConv, meId) })
+    60→    }
+    61→
+    62→    const conv = await prisma.conversation.create({
+    63→      data: {
+    64→        participants: { create: [{ userId: meId }, { userId: participantId }] },
+    65→      },
+    66→      include: {
+    67→        participants: { include: { user: { select: userSelect } } },
+    68→        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+    69→      },
+    70→    })
+    71→    res.status(201).json({ conversation: formatConversation(conv, meId) })
+    72→  }),
+    73→)
+    74→
+    75→// ============================================================================
+    76→//  GET /api/chat/users — list of users available for chatting.
+    77→//
+    78→//  PRIVACY POLICY (revised for marketplace use case):
+    79→//    A marketplace chat requires users to be able to find any other
+    80→//    registered user by username and start a conversation with them
+    81→//    (buyer ↔ seller, support ↔ customer, user ↔ user). The previous
+    82→//    policy (regular users see ONLY admins + existing conversation
+    83→//    partners) broke this core flow — users could never find a
+    84→//    newly-registered contact by nickname.
+    85→//
+    86→//    New policy:
+    87→//      - ALL authenticated callers can see ALL registered users
+    88→//        (excluding themselves) by PUBLIC fields only:
+    89→//          username, displayName, avatar, isOnline, lastSeen, role
+    90→//      - Email and phone are NEVER returned to non-admin callers
+    91→//        (sensitive PII — only admins see them, and only when searching).
+    92→//      - When a search query is provided, search is performed across
+    93→//        username + displayName (public fields). Admins additionally
+    94→//        can search by email and phone.
+    95→//      - The admin is ALWAYS pinned to the top of the list with
+    96→//        `isSupport: true` so the UI can render them with a distinct
+    97→//        card / colour.
+    98→//
+    99→//  The list is ordered by:
+   100→//    1. Admins (pinned, isSupport: true)
+   101→//    2. Users with an existing 1-on-1 conversation with the caller
+   102→//       (most recent message first)
+   103→//    3. Online users
+   104→//    4. Most recently active users (lastSeen desc)
+   105→router.get(
+   106→  '/users',
+   107→  requireAuth,
+   108→  asyncHandler(async (req: AuthedRequest, res) => {
+   109→    const meId = req.user!.id
+   110→    const isAdmin = req.user!.role === 'admin'
+   111→    const limit = Math.min(Math.max(Number(req.query.limit ?? 100) || 100, 1), 500)
+   112→    const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0)
+   113→    const search = (req.query.q as string | undefined)?.trim()
+   114→
+   115→    // ----------------------------------------------------------------
+   116→    // Build WHERE clause.
+   117→    // NEW BEHAVIOUR: users see ONLY:
+   118→    //   - Admins (always visible — they're the support channel)
+   119→    //   - Users they already have a conversation with
+   120→    // When searching, also include ALL users matching the search query
+   121→    // (so the user can discover and start a new conversation).
+   122→    // ----------------------------------------------------------------
+   123→    // Phase 8.1: exclude soft-deleted users from chat candidates.
+   124→    const where: any = { id: { not: meId }, deletedAt: null }
+   125→
+   126→    // Fetch the caller's existing conversation partners FIRST.
+   127→    const myConvPartners = await prisma.conversationParticipant.findMany({
+   128→      where: { userId: meId },
+   129→      select: {
+   130→        conversationId: true,
+   131→        conversation: {
+   132→          select: {
+   133→            type: true,
+   134→            participants: { select: { userId: true } },
+   135→            messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
+   136→          },
+   137→        },
+   138→      },
+   139→    })
+   140→    // Build a map: partnerUserId -> { lastMessageAt, type }
+   141→    const partnerInfo = new Map<string, { lastMessageAt: Date; type: string }>()
+   142→    const partnerIds = new Set<string>()
+   143→    for (const cp of myConvPartners) {
+   144→      const conv = cp.conversation
+   145→      const otherUserId = conv.participants.find((p) => p.userId !== meId)?.userId
+   146→      if (!otherUserId) continue
+   147→      const lastAt = conv.messages[0]?.createdAt || new Date(0)
+   148→      partnerInfo.set(otherUserId, { lastMessageAt: lastAt as Date, type: conv.type })
+   149→      partnerIds.add(otherUserId)
+   150→    }
+   151→
+   152→    if (search && search.length >= 1) {
+   153→      // SEARCH MODE: search across ALL users (username + displayName).
+   154→      // This allows discovering new users to start a conversation.
+   155→      const searchOR: any[] = [
+   156→        { username: { contains: search } },
+   157→        { displayName: { contains: search } },
+   158→      ]
+   159→      if (isAdmin) {
+   160→        searchOR.push({ email: { contains: search } })
+   161→        if (search.startsWith('+') || /^\d/.test(search)) {
+   162→          searchOR.push({ phone: { contains: search } })
+   163→        }
+   164→      }
+   165→      where.OR = searchOR
+   166→    } else {
+   167→      // v11-fix: NO SEARCH — show ONLY existing conversation partners.
+   168→      // Previously this also included `{ role: 'admin' }` which caused new
+   169→      // users to see ALL admins in the system (even ones they never talked
+   170→      // to). Now we show only users the current user has an actual
+   171→      // conversation with. The admin support chat (auto-created at
+   172→      // registration) will be in partnerIds, so the user still sees their
+   173→      // admin — but only THAT admin, not every admin in the system.
+   174→      //
+   175→      // Edge case: if the user has no conversations at all (brand new
+   176→      // account, registration just completed), partnerIds is empty and the
+   177→      // result is empty. The frontend ChatView handles this by showing the
+   178→      // "start new chat" search, which uses the search branch above.
+   179→      if (partnerIds.size === 0) {
+   180→        return res.json({ users: [], total: 0, limit, offset })
+   181→      }
+   182→      where.id = { in: [...partnerIds] }
+   183→    }
+   184→
+   185→    // Fetch candidate users
+   186→    const candidates = await prisma.user.findMany({
+   187→      where,
+   188→      select: {
+   189→        id: true, username: true, displayName: true, avatar: true,
+   190→        isOnline: true, lastSeen: true, role: true,
+   191→        ...(isAdmin && search ? { email: true, phone: true } : {}),
+   192→      },
+   193→      take: search ? 200 : limit + offset,
+   194→      orderBy: [{ isOnline: 'desc' }, { lastSeen: 'desc' }],
+   195→    })
+   196→
+   197→    // If searching with Cyrillic or mixed case, do a case-insensitive filter
+   198→    let filtered = candidates
+   199→    if (search) {
+   200→      const needle = search.toLowerCase()
+   201→      filtered = candidates.filter((u) => {
+   202→        const username = (u.username || '').toLowerCase()
+   203→        const displayName = (u.displayName || '').toLowerCase()
+   204→        if (username.includes(needle) || displayName.includes(needle)) return true
+   205→        if (isAdmin) {
+   206→          const email = (u.email || '').toLowerCase()
+   207→          const phone = (u.phone || '').toLowerCase()
+   208→          if (email.includes(needle) || phone.includes(needle)) return true
+   209→        }
+   210→        return false
+   211→      })
+   212→    }
+   213→
+   214→    // partnerInfo already fetched above — reuse it.
+   215→
+   216→    // Build the final list — publicUser shape + hasConversation flag.
+   217→    // v9-audit-fix: privacy — for users the caller has NO conversation with
+   218→    // (strangers discovered via search), strip isOnline/lastSeen to prevent
+   219→    // activity surveillance. Admins and existing partners keep full fields.
+   220→    const shaped = filtered.map((u) => {
+   221→      const info = partnerInfo.get(u.id)
+   222→      const isPartner = !!info
+   223→      const isAdminUser = u.role === 'admin'
+   224→      const isStranger = !isPartner && !isAdminUser
+   225→      return {
+   226→        id: u.id,
+   227→        username: u.username,
+   228→        displayName: u.displayName,
+   229→        avatar: u.avatar,
+   230→        // v9-audit-fix: hide online status + last seen from strangers
+   231→        isOnline: isStranger ? null : u.isOnline,
+   232→        lastSeen: isStranger ? null : u.lastSeen,
+   233→        role: u.role,
+   234→        isSupport: isAdminUser, // UI hint: render with admin styling
+   235→        hasConversation: isPartner,
+   236→        conversationType: info?.type || null,
+   237→        lastMessageAt: info?.lastMessageAt || null,
+   238→      }
+   239→    })
+   240→
+   241→    // Sort: admins first (pinned support), then users with existing
+   242→    // conversations (by lastMessageAt desc), then online, then by lastSeen.
+   243→    shaped.sort((a, b) => {
+   244→      // Admins always first
+   245→      if (a.isSupport && !b.isSupport) return -1
+   246→      if (!a.isSupport && b.isSupport) return 1
+   247→      // Both have conversations → most recent message first
+   248→      if (a.hasConversation && b.hasConversation) {
+   249→        const aTime = a.lastMessageAt?.getTime() || 0
+   250→        const bTime = b.lastMessageAt?.getTime() || 0
+   251→        return bTime - aTime
+   252→      }
+   253→      // One has a conversation → that one comes first
+   254→      if (a.hasConversation && !b.hasConversation) return -1
+   255→      if (!a.hasConversation && b.hasConversation) return 1
+   256→      // Neither has a conversation → online first, then by lastSeen
+   257→      if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1
+   258→      const aSeen = a.lastSeen?.getTime() || 0
+   259→      const bSeen = b.lastSeen?.getTime() || 0
+   260→      return bSeen - aSeen
+   261→    })
+   262→
+   263→    const paged = shaped.slice(offset, offset + limit)
+   264→    res.json({ users: paged, total: shaped.length, limit, offset })
+   265→  }),
+   266→)
+   267→
+   268→// GET /api/chat/conversations
+   269→router.get(
+   270→  '/conversations',
+   271→  requireAuth,
+   272→  asyncHandler(async (req: AuthedRequest, res) => {
+   273→    const meId = req.user!.id
+   274→    const isAdmin = req.user!.role === 'admin'
+   275→    const limit = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 200)
+   276→    const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0)
+   277→
+   278→    // v11-fix: for admins, hide "empty" support conversations — ones where
+   279→    // the only message is the welcome message sent by the admin themselves
+   280→    // (i.e. the user never replied). This keeps the admin's chat list clean:
+   281→    // they only see users who have actually engaged in conversation.
+   282→    // Regular users always see all their conversations (including the
+   283→    // welcome-only support chat with the admin).
+   284→    //
+   285→    // v13.0 (audit P0-2 fix): the previous version built a raw SQL string
+   286→    // via string interpolation with single-quote escaping. While cuid()
+   287→    // values are safe today, the pattern was a textbook SQL-injection
+   288→    // waiting to happen. Now uses Prisma's parameterised SQL fragment.
+   289→    const adminFilter = isAdmin
+   290→      ? Prisma.sql`AND NOT (
+   291→           SELECT COUNT(*) FROM Message m
+   292→           WHERE m.conversationId = c.id
+   293→             AND m.senderId <> ${meId}
+   294→         ) = 0
+   295→           OR c.type <> 'support'`
+   296→      : Prisma.empty
+   297→
+   298→    // Build the query with the admin filter applied
+   299→    const conversations = isAdmin
+   300→      ? await prisma.$queryRaw`
+   301→          SELECT c.* FROM Conversation c
+   302→          WHERE c.id IN (
+   303→            SELECT conversationId FROM ConversationParticipant WHERE userId = ${meId}
+   304→          )
+   305→          ${adminFilter}
+   306→          ORDER BY c.type DESC, c.updatedAt DESC
+   307→          LIMIT ${limit} OFFSET ${offset}
+   308→        `
+   309→      : await prisma.conversation.findMany({
+   310→          where: { participants: { some: { userId: meId } } },
+   311→          include: {
+   312→            participants: { include: { user: { select: userSelect } } },
+   313→            messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+   314→          },
+   315→          orderBy: [
+   316→            { type: 'desc' },
+   317→            { updatedAt: 'desc' },
+   318→          ],
+   319→          take: limit,
+   320→          skip: offset,
+   321→        })
+   322→
+   323→    // For the admin raw query, we need to load participants + last message separately
+   324→    let formattedConversations: any[]
+   325→    let total: number
+   326→    if (isAdmin) {
+   327→      const rawConvIds = (conversations as Array<{ id: string }>).map((c) => c.id)
+   328→      if (rawConvIds.length === 0) {
+   329→        formattedConversations = []
+   330→        total = 0
+   331→      } else {
+   332→        const fullConvs = await prisma.conversation.findMany({
+   333→          where: { id: { in: rawConvIds } },
+   334→          include: {
+   335→            participants: { include: { user: { select: userSelect } } },
+   336→            messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+   337→          },
+   338→          orderBy: [
+   339→            { type: 'desc' },
+   340→            { updatedAt: 'desc' },
+   341→          ],
+   342→        })
+   343→        // Preserve the order from the raw query (which already sorted by type DESC, updatedAt DESC)
+   344→        const orderMap = new Map(rawConvIds.map((id, i) => [id, i]))
+   345→        fullConvs.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0))
+   346→        formattedConversations = fullConvs.map((c) => formatConversation(c, meId))
+   347→        // Count total (with the same admin filter applied)
+   348→        const totalResult = await prisma.$queryRaw`
+   349→          SELECT COUNT(*) as cnt FROM Conversation c
+   350→          WHERE c.id IN (
+   351→            SELECT conversationId FROM ConversationParticipant WHERE userId = ${meId}
+   352→          )
+   353→          ${adminFilter}
+   354→        `
+   355→        total = Number((totalResult as Array<{ cnt: bigint }>)[0]?.cnt ?? 0)
+   356→      }
+   357→    } else {
+   358→      formattedConversations = (conversations as any[]).map((c) => formatConversation(c, meId))
+   359→      total = await prisma.conversation.count({
+   360→        where: { participants: { some: { userId: meId } } },
+   361→      })
+   362→    }
+   363→
+   364→    res.json({
+   365→      items: formattedConversations,
+   366→      total,
+   367→      limit,
+   368→      offset,
+   369→    })
+   370→  }),
+   371→)
+   372→
+   373→// GET /api/chat/unread-counts
+   374→// C-HIGH-005: aggregate unread message counts per-conversation (and total)
+   375→// for the current user. Used by clients to sync unread badges across
+   376→// multiple devices — when the user reads a conversation on desktop, mobile
+   377→// can poll this endpoint (or receive a socket event) and clear its badge.
+   378→//
+   379→// "Unread" here is intentionally simplified: a message is counted as unread
+   380→// if `isRead=false` AND `senderId != meId`. The `deletedFor` JSON array
+   381→// (per-user soft-delete) is NOT filtered here because SQLite can't index
+   382→// JSON arrays efficiently — if we filtered client-side we'd return an
+   383→// inflated count, so for now we accept a minor over-count for messages the
+   384→// user has deleted-for-me. A follow-up should migrate `deletedFor` to a
+   385→// join table for O(1) filtering.
+   386→//
+   387→// NOTE: route declared BEFORE `/conversations/:id/*` so Express matches
+   388→// `/unread-counts` literally and never tries to parse it as a conversation id.
+   389→router.get(
+   390→  '/unread-counts',
+   391→  requireAuth,
+   392→  asyncHandler(async (req: AuthedRequest, res) => {
+   393→    const meId = req.user!.id
+   394→    // v10-fix: filter by conversation membership — previously this query
+   395→    // returned unread counts for ALL conversations in the DB (privacy leak).
+   396→    // Now we only count messages in conversations the user is a participant of.
+   397→    const myConvIds = await prisma.conversationParticipant.findMany({
+   398→      where: { userId: meId },
+   399→      select: { conversationId: true },
+   400→    })
+   401→    const convIdList = myConvIds.map((cp) => cp.conversationId)
+   402→    if (convIdList.length === 0) {
+   403→      return res.json({ byConversation: {}, total: 0 })
+   404→    }
+   405→    const rows = await prisma.message.groupBy({
+   406→      by: ['conversationId'],
+   407→      where: {
+   408→        isRead: false,
+   409→        senderId: { not: meId },
+   410→        conversationId: { in: convIdList },
+   411→      },
+   412→      _count: { _all: true },
+   413→    })
+   414→    const byConversation: Record<string, number> = {}
+   415→    let total = 0
+   416→    for (const r of rows) {
+   417→      byConversation[r.conversationId] = r._count._all
+   418→      total += r._count._all
+   419→    }
+   420→    res.json({ byConversation, total })
+   421→  }),
+   422→)
+   423→
+   424→// GET /api/chat/conversations/:id/messages
+   425→router.get(
+   426→  '/conversations/:id/messages',
+   427→  requireAuth,
+   428→  asyncHandler(async (req: AuthedRequest, res) => {
+   429→    const meId = req.user!.id
+   430→    const conv = await prisma.conversation.findUnique({
+   431→      where: { id: req.params.id },
+   432→      include: { participants: { select: { userId: true } } },
+   433→    })
+   434→    if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+   435→    const isMember = conv.participants.some((p) => p.userId === meId)
+   436→    if (!isMember) return res.status(403).json({ error: 'Forbidden' })
+   437→
+   438→    const limit = Math.min(Math.max(Number(req.query.limit ?? 100) || 100, 1), 500)
+   439→    const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0)
+   440→
+   441→    // C-HIGH-003 fix: cursor-based pagination (backward compatible with offset).
+   442→    // ?before=<messageId> — returns messages older than the given message.
+   443→    // ?limit=100 — page size (default 100, max 500).
+   444→    // When `before` is supplied, we use cursor pagination (keyset) which is
+   445→    // O(log N) and stable under concurrent inserts, unlike offset which is
+   446→    // O(offset+limit) and shifts when new messages arrive mid-pagination.
+   447→    // When `before` is absent, the original offset path is preserved so
+   448→    // existing clients keep working unchanged.
+   449→    const before = req.query.before as string | undefined
+   450→    if (before) {
+   451→      const cursorMsg = await prisma.message.findUnique({
+   452→        where: { id: before },
+   453→        select: { createdAt: true },
+   454→      })
+   455→      const cursorCreatedAt = cursorMsg?.createdAt
+   456→      const rawMessages = await prisma.message.findMany({
+   457→        where: {
+   458→          conversationId: conv.id,
+   459→          ...(cursorCreatedAt ? { createdAt: { lt: cursorCreatedAt } } : {}),
+   460→        },
+   461→        orderBy: { createdAt: 'desc' }, // newest first
+   462→        take: limit,
+   463→        include: {
+   464→          sender: { select: userSelect },
+   465→          replyTo: { include: { sender: { select: userSelect } } },
+   466→          forwardedFrom: { include: { sender: { select: userSelect } } },
+   467→        },
+   468→      })
+   469→      // Reverse to ascending order for client display
+   470→      rawMessages.reverse()
+   471→      // Filter out messages deleted for the viewer
+   472→      const visible = rawMessages.filter((m) => {
+   473→        const deletedFor: string[] = (() => {
+   474→          try { return JSON.parse(m.deletedFor || '[]') } catch { return [] }
+   475→        })()
+   476→        return !deletedFor.includes(meId)
+   477→      })
+   478→      res.json({
+   479→        items: visible.map((m) => serialiseMessage(m, meId)),
+   480→        total: visible.length,
+   481→        limit,
+   482→        offset: 0,
+   483→        hasMore: visible.length === limit,
+   484→      })
+   485→      return
+   486→    }
+   487→
+   488→    // Fetch oldest-first (skip messages deleted for me)
+   489→    const messages = await prisma.message.findMany({
+   490→      where: { conversationId: conv.id },
+   491→      orderBy: { createdAt: 'asc' },
+   492→      take: limit,
+   493→      skip: offset,
+   494→      include: {
+   495→        sender: { select: userSelect },
+   496→        replyTo: { include: { sender: { select: userSelect } } },
+   497→        forwardedFrom: { include: { sender: { select: userSelect } } },
+   498→      },
+   499→    })
+   500→    // Filter out messages deleted for the viewer (they shouldn't see them at all)
+   501→    const visible = messages.filter((m) => {
+   502→      const deletedFor: string[] = (() => {
+   503→        try { return JSON.parse(m.deletedFor || '[]') } catch { return [] }
+   504→      })()
+   505→      return !deletedFor.includes(meId)
+   506→    })
+   507→    res.json({
+   508→      items: visible.map((m) => serialiseMessage(m, meId)),
+   509→      total: visible.length,
+   510→      limit,
+   511→      offset,
+   512→    })
+   513→  }),
+   514→)
+   515→
+   516→// DELETE /api/chat/conversations/:id — удалить диалог полностью для текущего
+   517→// пользователя. Удаляет все сообщения в диалоге (для всех участников, если
+   518→// диалог 1-on-1), затем удаляет participant запись. Если участников не осталось
+   519→// — удаляет сам диалог.
+   520→//
+   521→// SUPPORT conversations cannot be deleted — they are the pinned admin ↔ user
+   522→// channel and must always remain accessible to the user.
+   523→router.delete(
+   524→  '/conversations/:id',
+   525→  requireAuth,
+   526→  asyncHandler(async (req: AuthedRequest, res) => {
+   527→    const meId = req.user!.id
+   528→    const conv = await prisma.conversation.findUnique({
+   529→      where: { id: req.params.id },
+   530→      include: { participants: { select: { id: true, userId: true } } },
+   531→    })
+   532→    if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+   533→
+   534→    const isMember = conv.participants.some((p) => p.userId === meId)
+   535→    if (!isMember) return res.status(403).json({ error: 'Forbidden' })
+   536→
+   537→    // Block deletion of support conversations — they are the pinned admin
+   538→    // channel and must always be available to the user.
+   539→    if (conv.type === 'support') {
+   540→      return res.status(400).json({ error: 'Нельзя удалить чат с поддержкой — это основной канал связи с командой «Три девятки».' })
+   541→    }
+   542→
+   543→    // SECURITY / DATA-LOSS FIX (was):
+   544→    // The previous implementation called `prisma.message.deleteMany({ where: { conversationId: conv.id } })`
+   545→    // — this DELETED EVERY MESSAGE IN THE CONVERSATION FOR ALL PARTICIPANTS,
+   546→    // including the other party's received messages. User A could unilaterally
+   547→    // destroy user B's chat history without consent or audit trail.
+   548→    //
+   549→    // New behaviour: "delete" = soft-delete for the caller only.
+   550→    //   1. Mark every message in the conversation as `deletedFor: [meId]`
+   551→    //      (the existing soft-delete mechanism used by `message:delete` socket event).
+   552→    //      The caller no longer sees these messages, but the other participant
+   553→    //      still has their full history.
+   554→    //   2. Remove the caller from `ConversationParticipant` so the conversation
+   555→    //      disappears from their chat list.
+   556→    //   3. If no participants remain (both users deleted), then we hard-delete
+   557→    //      the conversation AND its messages (no orphan data).
+   558→    //
+   559→    // This mirrors how WhatsApp / Telegram handle "delete conversation":
+   560→    // the action only affects the caller's view, not the other party's.
+   561→    //
+   562→    // v9-audit-fix: replaced N+1 per-message UPDATE loop with a single bulk
+   563→    // SQL UPDATE using SQLite json_insert. Wrapped the whole operation in a
+   564→    // $transaction so a crash between steps can't leave the conversation
+   565→    // visible but with all messages hidden.
+   566→    await prisma.$transaction(async (tx) => {
+   567→      // Bulk-update: add meId to every message's deletedFor JSON array (if not
+   568→      // already present) in a single SQL statement.
+   569→      await tx.$executeRaw`
+   570→        UPDATE "Message"
+   571→        SET "deletedFor" = CASE
+   572→          WHEN "deletedFor" IS NULL OR "deletedFor" = '' OR "deletedFor" = '[]' THEN json_array(${meId})
+   573→          WHEN EXISTS (SELECT 1 FROM json_each("deletedFor") WHERE value = ${meId}) THEN "deletedFor"
+   574→          ELSE json_insert("deletedFor", '$[#]', ${meId})
+   575→        END
+   576→        WHERE "conversationId" = ${conv.id}
+   577→      `
+   578→
+   579→      // Remove the caller from the conversation's participant list.
+   580→      await tx.conversationParticipant.deleteMany({
+   581→        where: { conversationId: conv.id, userId: meId },
+   582→      })
+   583→
+   584→      // If no participants remain, hard-delete the conversation + messages
+   585→      // (orphan cleanup — no one will ever see this data again).
+   586→      const remaining = await tx.conversationParticipant.count({
+   587→        where: { conversationId: conv.id },
+   588→      })
+   589→      if (remaining === 0) {
+   590→        await tx.message.deleteMany({ where: { conversationId: conv.id } })
+   591→        await tx.conversation.delete({ where: { id: conv.id } })
+   592→      }
+   593→    })
+   594→
+   595→    res.json({ ok: true })
+   596→  }),
+   597→)
+   598→
+   599→// ============================================================================
+   600→// DELETE /api/chat/admin/conversations/:id — admin-only HARD delete of any
+   601→// conversation (including support chats).
+   602→// ----------------------------------------------------------------------------
+   603→// Unlike the user-facing DELETE /api/chat/conversations/:id (which only
+   604→// soft-deletes for the caller), this endpoint:
+   605→//   - Hard-deletes the conversation AND all its messages
+   606→//   - Removes ALL participant records (both sides)
+   607→//   - Works on ANY conversation type (direct, support)
+   608→//   - Requires admin role
+   609→//   - Records an audit log entry
+   610→//
+   611→// Use case: admin needs to clean up abusive/spam conversations, or remove
+   612→// a support chat after resolving a user's issue.
+   613→// ============================================================================
+   614→router.delete(
+   615→  '/admin/conversations/:id',
+   616→  requireAuth,
+   617→  requireAdmin,
+   618→  asyncHandler(async (req: AuthedRequest, res) => {
+   619→    const convId = req.params.id
+   620→    const adminId = req.user!.id
+   621→
+   622→    const conv = await prisma.conversation.findUnique({
+   623→      where: { id: convId },
+   624→      include: {
+   625→        participants: {
+   626→          select: { id: true, userId: true },
+   627→        },
+   628→        _count: { select: { messages: true } },
+   629→      },
+   630→    })
+   631→    if (!conv) {
+   632→      return res.status(404).json({ error: 'Чат не найден' })
+   633→    }
+   634→
+   635→    // Snapshot for audit log
+   636→    const beforeSnapshot = {
+   637→      id: conv.id,
+   638→      type: conv.type,
+   639→      participantIds: conv.participants.map((p) => p.userId),
+   640→      messageCount: conv._count.messages,
+   641→      createdAt: conv.createdAt,
+   642→    }
+   643→
+   644→    // Hard-delete: messages → participants → conversation
+   645→    // Order matters: delete children first to avoid FK constraint errors.
+   646→    await prisma.message.deleteMany({ where: { conversationId: convId } })
+   647→    await prisma.conversationParticipant.deleteMany({
+   648→      where: { conversationId: convId },
+   649→    })
+   650→    await prisma.conversation.delete({ where: { id: convId } })
+   651→
+   652→    // Notify all participants via Socket.IO that the conversation was deleted
+   653→    // (so their chat list updates in real-time)
+   654→    const io = getIo()
+   655→    if (io) {
+   656→      for (const p of conv.participants) {
+   657→        io.to(`user:${p.userId}`).emit('conversation:deleted', { conversationId: convId })
+   658→      }
+   659→    }
+   660→
+   661→    // Audit log
+   662→    await auditLogRaw(adminId, req, 'chat', convId, 'admin_delete_conversation', {
+   663→      before: beforeSnapshot,
+   664→      after: null,
+   665→    })
+   666→
+   667→    res.json({ ok: true, message: 'Чат полностью удалён' })
+   668→  }),
+   669→)
+   670→
+   671→// POST /api/chat/conversations/:id/messages  — REST fallback (also via Socket.IO)
+   672→router.post(
+   673→  '/conversations/:id/messages',
+   674→  requireAuth,
+   675→  asyncHandler(async (req: AuthedRequest, res) => {
+   676→    const meId = req.user!.id
+   677→    const data = sendMessageSchema.parse(req.body)
+   678→    const conv = await prisma.conversation.findUnique({
+   679→      where: { id: req.params.id },
+   680→      include: { participants: { select: { userId: true } } },
+   681→    })
+   682→    if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+   683→    const isMember = conv.participants.some((p) => p.userId === meId)
+   684→    if (!isMember) return res.status(403).json({ error: 'Forbidden' })
+   685→
+   686→    // If replyToId is set, verify the referenced message is in the same conversation
+   687→    if (data.replyToId) {
+   688→      const replied = await prisma.message.findUnique({
+   689→        where: { id: data.replyToId },
+   690→        select: { conversationId: true },
+   691→      })
+   692→      if (!replied || replied.conversationId !== conv.id) {
+   693→        return res.status(400).json({ error: 'Reply target message not found in this conversation' })
+   694→      }
+   695→    }
+   696→
+   697→    // C-CRIT-002 fix: idempotency via clientMessageId. The REST endpoint is
+   698→    // a fallback for when the socket is unavailable. If the client already
+   699→    // sent this message via socket (and the server created it), the REST
+   700→    // retry would create a duplicate. Accept optional `clientMessageId` in
+   701→    // the body and check for existing message before creating.
+   702→    const clientMessageId = (req.body as any)?.clientMessageId || (req.body as any)?.tempId || null
+   703→    if (clientMessageId) {
+   704→      const existing = await prisma.message.findFirst({
+   705→        where: { senderId: meId, clientMessageId },
+   706→        include: {
+   707→          sender: { select: userSelect },
+   708→          replyTo: { include: { sender: { select: userSelect } } },
+   709→          forwardedFrom: { include: { sender: { select: userSelect } } },
+   710→        },
+   711→      })
+   712→      if (existing) {
+   713→        // Idempotent response — return the existing message.
+   714→        return res.status(200).json(serialiseMessage(existing, meId))
+   715→      }
+   716→    }
+   717→
+   718→    // v16.9 MODERATION — REST fallback path. Same check as the socket handler.
+   719→    if (data.content && data.content.trim()) {
+   720→      const modDecision = await moderateContent(data.content, {
+   721→        userId: meId,
+   722→        targetType: 'message',
+   723→        conversationId: conv.id,
+   724→      })
+   725→      if (!modDecision.allowed) {
+   726→        return res.status(422).json({
+   727→          error: modDecision.reason,
+   728→          moderationBlocked: true,
+   729→          severity: modDecision.severity,
+   730→          categories: modDecision.categories,
+   731→        })
+   732→      }
+   733→    }
+   734→
+   735→    const message = await prisma.message.create({
+   736→      data: {
+   737→        conversationId: conv.id,
+   738→        senderId: meId,
+   739→        content: data.content,
+   740→        mediaUrl: data.mediaUrl,
+   741→        mediaType: data.mediaType,
+   742→        // v12: store attachments as JSON string if present
+   743→        attachments: data.attachments ? JSON.stringify(data.attachments) : null,
+   744→        duration: data.duration,
+   745→        replyToId: data.replyToId,
+   746→        forwardedFromId: data.forwardedFromId,
+   747→        clientMessageId, // C-CRIT-002: persist for future dedup
+   748→        // v16.8-final: self-destruct timer (voice messages).
+   749→        selfDestructAt:
+   750→          data.selfDestructMinutes && data.selfDestructMinutes > 0
+   751→            ? new Date(Date.now() + data.selfDestructMinutes * 60 * 1000)
+   752→            : null,
+   753→      },
+   754→      include: {
+   755→        sender: { select: userSelect },
+   756→        replyTo: { include: { sender: { select: userSelect } } },
+   757→        forwardedFrom: { include: { sender: { select: userSelect } } },
+   758→      },
+   759→    })
+   760→
+   761→    await prisma.conversation.update({
+   762→      where: { id: conv.id },
+   763→      data: { updatedAt: new Date() },
+   764→    })
+   765→
+   766→    // Broadcast via Socket.IO so all participants (including those on other
+   767→    // devices/tabs) receive the message in real-time. This mirrors what the
+   768→    // socket message:send handler does — without it, REST-sent messages
+   769→    // would never trigger the notification policy in other clients.
+   770→    const io = getIo()
+   771→    if (io) {
+   772→      const formatted = serialiseMessage(message, '')
+   773→      io.to(`conversation:${conv.id}`).emit('message:received', formatted)
+   774→    }
+   775→
+   776→    // Send Web Push notifications to OFFLINE participants (those with no
+   777→    // active socket connections). This is what makes push work when the
+   778→    // recipient's app is fully closed — the push service wakes up their
+   779→    // service worker which displays a system notification.
+   780→    // v12: pass parsed attachments (the raw message has them as JSON string)
+   781→    const parsedAttachments = message.attachments
+   782→      ? (() => { try { return JSON.parse(message.attachments) as any[] } catch { return null } })()
+   783→      : null
+   784→    void notifyOfflineParticipants(conv.id, meId, {
+   785→      ...message,
+   786→      attachments: parsedAttachments,
+   787→    })
+   788→
+   789→    res.status(201).json(serialiseMessage(message, meId))
+   790→  }),
+   791→)
+   792→
+   793→// POST /api/chat/messages/:id/forward — forward a message to one or more conversations
+   794→router.post(
+   795→  '/messages/:id/forward',
+   796→  requireAuth,
+   797→  asyncHandler(async (req: AuthedRequest, res) => {
+   798→    const meId = req.user!.id
+   799→    const { targetConversationIds, sourceMessageId } = forwardMessageSchema.parse({
+   800→      ...req.body,
+   801→      sourceMessageId: req.params.id,
+   802→    })
+   803→
+   804→    // Fetch the source message WITH its conversation's participants so we can
+   805→    // verify the caller is a participant of the source conversation too.
+   806→    // SECURITY FIX (was): the source was fetched without its participants,
+   807→    // and no ownership check was performed on source.conversationId. Any
+   808→    // authenticated user who knew (or brute-forced) a message cuid could
+   809→    // clone private content + media URLs from other people's conversations
+   810→    // into their own. Now we require the caller to be a participant of BOTH
+   811→    // the source conversation and every target conversation.
+   812→    const source = await prisma.message.findUnique({
+   813→      where: { id: sourceMessageId },
+   814→      include: {
+   815→        sender: { select: userSelect },
+   816→        conversation: { include: { participants: { select: { userId: true } } } },
+   817→      },
+   818→    })
+   819→    if (!source) return res.status(404).json({ error: 'Source message not found' })
+   820→    if (source.deletedForAll) {
+   821→      return res.status(400).json({ error: 'Cannot forward a deleted message' })
+   822→    }
+   823→
+   824→    // Ownership check on source conversation — caller must be a participant.
+   825→    const isSourceMember = source.conversation.participants.some((p) => p.userId === meId)
+   826→    if (!isSourceMember) {
+   827→      // 403 (not 404) — we already know the message exists; we just refuse
+   828→      // to forward it to a non-participant. Use a generic message to avoid
+   829→      // confirming the message's existence to a non-member.
+   830→      return res.status(403).json({ error: 'Forbidden' })
+   831→    }
+   832→
+   833→    const forwarded: any[] = []
+   834→    for (const targetId of targetConversationIds) {
+   835→      // Verify membership
+   836→      const conv = await prisma.conversation.findUnique({
+   837→        where: { id: targetId },
+   838→        include: { participants: { select: { userId: true } } },
+   839→      })
+   840→      if (!conv) continue
+   841→      const isMember = conv.participants.some((p) => p.userId === meId)
+   842→      if (!isMember) continue
+   843→
+   844→      const msg = await prisma.message.create({
+   845→        data: {
+   846→          conversationId: targetId,
+   847→          senderId: meId,
+   848→          content: source.content,
+   849→          mediaUrl: source.mediaUrl,
+   850→          mediaType: source.mediaType,
+   851→          duration: source.duration,
+   852→          forwardedFromId: source.id,
+   853→        },
+   854→        include: {
+   855→          sender: { select: userSelect },
+   856→          forwardedFrom: { include: { sender: { select: userSelect } } },
+   857→        },
+   858→      })
+   859→      forwarded.push({ conversationId: targetId, message: serialiseMessage(msg, meId) })
+   860→
+   861→      await prisma.conversation.update({
+   862→        where: { id: targetId },
+   863→        data: { updatedAt: new Date() },
+   864→      })
+   865→    }
+   866→
+   867→    res.status(201).json({ forwarded })
+   868→  }),
+   869→)
+   870→
+   871→// DELETE /api/chat/messages/:id?forEveryone=true|false
+   872→router.delete(
+   873→  '/messages/:id',
+   874→  requireAuth,
+   875→  asyncHandler(async (req: AuthedRequest, res) => {
+   876→    const meId = req.user!.id
+   877→    const forEveryone = req.query.forEveryone === 'true' || req.query.forEveryone === '1'
+   878→
+   879→    const msg = await prisma.message.findUnique({
+   880→      where: { id: req.params.id },
+   881→      include: { conversation: { include: { participants: { select: { userId: true } } } } },
+   882→    })
+   883→    if (!msg) return res.status(404).json({ error: 'Message not found' })
+   884→
+   885→    // Verify caller is a participant of the conversation
+   886→    const isMember = msg.conversation.participants.some((p) => p.userId === meId)
+   887→    if (!isMember) return res.status(403).json({ error: 'Forbidden' })
+   888→
+   889→    const isOwner = msg.senderId === meId
+   890→
+   891→    if (forEveryone) {
+   892→      // Only the owner can delete for everyone
+   893→      if (!isOwner) {
+   894→        return res.status(403).json({ error: 'Only the sender can delete a message for everyone' })
+   895→      }
+   896→      await prisma.message.update({
+   897→        where: { id: msg.id },
+   898→        data: {
+   899→          deletedForAll: true,
+   900→          content: null,
+   901→          mediaUrl: null,
+   902→          mediaType: null,
+   903→          duration: null,
+   904→        },
+   905→      })
+   906→      res.json({ ok: true, deletedForAll: true, messageId: msg.id, conversationId: msg.conversationId })
+   907→    } else {
+   908→      // Delete for me only — add meId to the deletedFor JSON array
+   909→      const deletedFor: string[] = (() => {
+   910→        try { return JSON.parse(msg.deletedFor || '[]') } catch { return [] }
+   911→      })()
+   912→      if (!deletedFor.includes(meId)) {
+   913→        deletedFor.push(meId)
+   914→        await prisma.message.update({
+   915→          where: { id: msg.id },
+   916→          data: { deletedFor: JSON.stringify(deletedFor) },
+   917→        })
+   918→      }
+   919→      res.json({ ok: true, deletedForMe: true, messageId: msg.id })
+   920→    }
+   921→  }),
+   922→)
+   923→
+   924→// PATCH /api/chat/messages/:id/read
+   925→router.patch(
+   926→  '/messages/:id/read',
+   927→  requireAuth,
+   928→  asyncHandler(async (req: AuthedRequest, res) => {
+   929→    const meId = req.user!.id
+   930→    const msg = await prisma.message.findUnique({
+   931→      where: { id: req.params.id },
+   932→      include: { conversation: { include: { participants: { select: { userId: true } } } } },
+   933→    })
+   934→    if (!msg) return res.status(404).json({ error: 'Message not found' })
+   935→    const isMember = msg.conversation.participants.some((p) => p.userId === meId)
+   936→    if (!isMember) return res.status(403).json({ error: 'Forbidden' })
+   937→    await prisma.message.update({ where: { id: msg.id }, data: { isRead: true } })
+   938→    res.json({ ok: true })
+   939→  }),
+   940→)
+   941→
+   942→// GET /api/chat/conversations/:id/context/:messageId — fetch a single message
+   943→// (used by the UI to scroll to a reply target that may be outside the loaded window)
+   944→router.get(
+   945→  '/conversations/:id/context/:messageId',
+   946→  requireAuth,
+   947→  asyncHandler(async (req: AuthedRequest, res) => {
+   948→    const meId = req.user!.id
+   949→    const conv = await prisma.conversation.findUnique({
+   950→      where: { id: req.params.id },
+   951→      include: { participants: { select: { userId: true } } },
+   952→    })
+   953→    if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+   954→    const isMember = conv.participants.some((p) => p.userId === meId)
+   955→    if (!isMember) return res.status(403).json({ error: 'Forbidden' })
+   956→
+   957→    const msg = await prisma.message.findUnique({
+   958→      where: { id: req.params.messageId },
+   959→      include: {
+   960→        sender: { select: userSelect },
+   961→        replyTo: { include: { sender: { select: userSelect } } },
+   962→        forwardedFrom: { include: { sender: { select: userSelect } } },
+   963→      },
+   964→    })
+   965→    if (!msg || msg.conversationId !== conv.id) {
+   966→      return res.status(404).json({ error: 'Message not found in this conversation' })
+   967→    }
+   968→    res.json({ message: serialiseMessage(msg, meId) })
+   969→  }),
+   970→)
+   971→
+   972→function formatConversation(c: any, meId: string) {
+   973→  const others = c.participants
+   974→    .filter((p: any) => p.userId !== meId)
+   975→    .map((p: any) => p.user)
+   976→  const other = others[0]
+   977→  const lastMessage = c.messages?.[0]
+   978→  return {
+   979→    id: c.id,
+   980→    // 'direct' | 'support' — support conversations are pinned to the top
+   981→    // of the chat list and cannot be deleted by the user.
+   982→    type: c.type || 'direct',
+   983→    participant: other
+   984→      ? {
+   985→          id: other.id,
+   986→          username: other.username,
+   987→          displayName: other.displayName,
+   988→          avatar: other.avatar,
+   989→          isOnline: other.isOnline,
+   990→          lastSeen: other.lastSeen,
+   991→        }
+   992→      : null,
+   993→    participants: others.map((u: any) => ({
+   994→      id: u.id,
+   995→      username: u.username,
+   996→      displayName: u.displayName,
+   997→      avatar: u.avatar,
+   998→      isOnline: u.isOnline,
+   999→      lastSeen: u.lastSeen,
+  1000→    })),
+  1001→    lastMessage: lastMessage
+  1002→      ? {
+  1003→          id: lastMessage.id,
+  1004→          content: lastMessage.deletedForAll ? null : lastMessage.content,
+  1005→          mediaUrl: lastMessage.deletedForAll ? null : lastMessage.mediaUrl,
+  1006→          mediaType: lastMessage.deletedForAll ? null : lastMessage.mediaType,
+  1007→          createdAt: lastMessage.createdAt,
+  1008→          senderId: lastMessage.senderId,
+  1009→          deletedForAll: lastMessage.deletedForAll,
+  1010→        }
+  1011→      : null,
+  1012→    updatedAt: c.updatedAt,
+  1013→    createdAt: c.createdAt,
+  1014→  }
+  1015→}
+  1016→
+  1017→// ============================================================================
+  1018→// POST /api/chat/support — get-or-create a support conversation with the
+  1019→// «Три девятки» team. This is a special endpoint that automatically picks an
+  1020→// available admin (or a dedicated support account) and starts a 1-on-1
+  1021→// conversation with them. The user does not need to know the admin's ID.
+  1022→//
+  1023→// Flow:
+  1024→// 1. Find any admin (role='admin'). If multiple, pick the one with the
+  1025→//    fewest active support conversations (load balancing).
+  1026→// 2. Check if a conversation already exists between this user and that
+  1027→//    admin — if so, return it.
+  1028→// 3. Otherwise create a new conversation.
+  1029→// 4. The conversation is marked as "support" via a special metadata flag
+  1030→//    stored in the conversation's `updatedAt`? No — we'd need a new column.
+  1031→//    Instead, we identify support conversations by the fact that one
+  1032→//    participant is an admin. The frontend's SupportView filters by this.
+  1033→// ============================================================================
+  1034→router.post(
+  1035→  '/support',
+  1036→  requireAuth,
+  1037→  asyncHandler(async (req: AuthedRequest, res) => {
+  1038→    const meId = req.user!.id
+  1039→
+  1040→    // If the user IS an admin, they don't get a support chat — they ARE
+  1041→    // support. Return a 400 with a helpful message.
+  1042→    if (req.user!.role === 'admin') {
+  1043→      return res.status(400).json({ error: 'Администраторы не могут создавать тикеты поддержки. Используйте чат для общения с пользователями.' })
+  1044→    }
+  1045→
+  1046→    // Find an admin to assign as the support agent. Pick the one with the
+  1047→    // fewest existing conversations (load balancing).
+  1048→    // Phase 8.1: only assign active (non-deleted) admins.
+  1049→    const admins = await prisma.user.findMany({
+  1050→      where: { role: 'admin', deletedAt: null },
+  1051→      select: {
+  1052→        id: true,
+  1053→        username: true,
+  1054→        displayName: true,
+  1055→        avatar: true,
+  1056→        isOnline: true,
+  1057→        _count: { select: { conversations: true } },
+  1058→      },
+  1059→    })
+  1060→
+  1061→    if (admins.length === 0) {
+  1062→      // No admin exists yet — return a friendly error. The first-run
+  1063→      // admin wizard in Studio will create one.
+  1064→      return res.status(503).json({
+  1065→        error: 'Команда поддержки сейчас недоступна. Попробуйте позже или напишите на support@999.pro',
+  1066→      })
+  1067→    }
+  1068→
+  1069→    // Pick the admin with the fewest conversations (load balancing).
+  1070→    // Sort by _count.conversations ascending, then by isOnline (online first).
+  1071→    admins.sort((a, b) => {
+  1072→      const aCount = a._count.conversations
+  1073→      const bCount = b._count.conversations
+  1074→      if (aCount !== bCount) return aCount - bCount
+  1075→      // Prefer online admins
+  1076→      return (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0)
+  1077→    })
+  1078→    const supportAdmin = admins[0]
+  1079→
+  1080→    // Check if a conversation already exists between this user and the admin.
+  1081→    const existingConversations = await prisma.conversation.findMany({
+  1082→      where: { participants: { some: { userId: meId } } },
+  1083→      include: { participants: { select: { userId: true } } },
+  1084→      take: 200,
+  1085→    })
+  1086→
+  1087→    const existing = existingConversations.find(
+  1088→      (c) =>
+  1089→        c.participants.length === 2 &&
+  1090→        c.participants.some((p) => p.userId === meId) &&
+  1091→        c.participants.some((p) => p.userId === supportAdmin.id),
+  1092→    )
+  1093→
+  1094→    if (existing) {
+  1095→      const fullConv = await prisma.conversation.findUnique({
+  1096→        where: { id: existing.id },
+  1097→        include: {
+  1098→          participants: { include: { user: { select: userSelect } } },
+  1099→          messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+  1100→        },
+  1101→      })
+  1102→      return res.json({ conversation: formatConversation(fullConv, meId) })
+  1103→    }
+  1104→
+  1105→    // Create a new support conversation. The `type: 'support'` flag makes
+  1106→    // this conversation pinned to the top of the user's chat list and
+  1107→    // prevents the user from deleting it.
+  1108→    const conv = await prisma.conversation.create({
+  1109→      data: {
+  1110→        type: 'support',
+  1111→        participants: { create: [{ userId: meId }, { userId: supportAdmin.id }] },
+  1112→      },
+  1113→      include: {
+  1114→        participants: { include: { user: { select: userSelect } } },
+  1115→        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+  1116→      },
+  1117→    })
+  1118→
+  1119→    // v25.3 (TZ task #3): automatic welcome message removed.
+  1120→    //
+  1121→    // Previously the backend created a "Здравствуйте! Я из команды поддержки…"
+  1122→    // message on every new support conversation, which counted as a test /
+  1123→    // demo message polluting the chat list. Per the technical spec, the chat
+  1124→    // must open empty after launch — no demo / sample / placeholder messages
+  1125→    // of any kind.
+  1126→    //
+  1127→    // The empty support conversation is returned as-is; the support view's
+  1128→    // placeholder input ("Напишите сообщение…") makes the next step obvious
+  1129→    // to the user.
+  1130→
+  1131→    res.status(201).json({ conversation: formatConversation(conv, meId) })
+  1132→  }),
+  1133→)
+  1134→
+  1135→export default router
+  1136→

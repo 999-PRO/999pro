@@ -16,6 +16,17 @@ if (!process.env.VAPID_SUBJECT) {
   logger.warn('VAPID_SUBJECT not set — using fallback. Set VAPID_SUBJECT env var in production.', { module: 'push' })
 }
 
+// v25.4 (push audit): validate VAPID_SUBJECT format. iOS Safari 16.4+ PWA
+// push silently fails if the subject is not a valid mailto: or https: URL.
+// The fallback 'mailto:noreply@localhost' works for development but should
+// be replaced with a real address in production.
+if (VAPID_SUBJECT && !VAPID_SUBJECT.startsWith('mailto:') && !VAPID_SUBJECT.startsWith('https://')) {
+  logger.error(
+    `VAPID_SUBJECT "${VAPID_SUBJECT}" is invalid — must start with "mailto:" or "https://". iOS PWA push will silently fail.`,
+    { module: 'push' },
+  )
+}
+
 // P-HIGH-002: One-shot breadcrumb when VAPID keys are missing. Avoids
 // spamming logs on every sendPushToUser() call but ensures the operator
 // sees at least one error-level breadcrumb.

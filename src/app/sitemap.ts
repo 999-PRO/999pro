@@ -98,6 +98,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ]
 
   // Add share pages — /p/<shortId>
+  // v25.4 (OG audit): include the OG image URL in the `images` field so
+  // Google Images indexes the branded product card alongside the page.
   const shareLinks = await fetchAllShareLinks()
   for (const link of shareLinks) {
     entries.push({
@@ -105,6 +107,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: new Date(link.updatedAt),
       changeFrequency: 'weekly',
       priority: 0.7,
+      images: [`${publicUrl}/og/${link.shortId}`],
     })
   }
 

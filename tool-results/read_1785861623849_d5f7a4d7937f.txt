@@ -1,0 +1,1568 @@
+     1→import { Router } from 'express'
+     2→import { z } from 'zod'
+     3→import bcrypt from 'bcryptjs'
+     4→import crypto from 'node:crypto'
+     5→import { prisma } from '../lib/prisma.js'
+     6→import {
+     7→  hashPassword,
+     8→  comparePassword,
+     9→  safeComparePassword,
+    10→  signToken,
+    11→  signTotpSetupToken,
+    12→  requireAuth,
+    13→  invalidateAuthCache,
+    14→  type AuthedRequest,
+    15→} from '../lib/auth.js'
+    16→import { kickUserSockets } from '../socket/handlers.js'
+    17→import { auditLogRaw } from '../lib/audit.js'
+    18→import { registerSchema, loginSchema, validatePasswordAgainstSettings } from '../lib/schemas.js'
+    19→import { asyncHandler } from '../lib/asyncHandler.js'
+    20→import { generateReferralCode } from '../lib/referral-code.js'
+    21→import { moderateContent } from '../lib/moderation.js'
+    22→// v13.3 (audit dedup): use shared publicUser from lib/serialisers instead
+    23→// of the local copy. The shared version supports { includeContact: true }
+    24→// for the user's own profile (email/phone visible) vs. public view (hidden).
+    25→import { publicUser } from '../lib/serialisers.js'
+    26→import { logger } from '../lib/logger.js'
+    27→
+    28→const router = Router()
+    29→
+    30→// v13.3: publicUser moved to lib/serialisers.ts. Call sites use
+    31→// publicUser(user, { includeContact: true }) since auth routes return
+    32→// the user's OWN profile (email/phone visible to themselves).
+    33→
+    34→// Helper: normalise email/username for case-insensitive uniqueness
+    35→function normaliseLogin(login: string): string {
+    36→  return login.trim().toLowerCase()
+    37→}
+    38→
+    39→/** Generate a unique referral code (username prefix + random suffix).
+    40→ * v13.1: imported from lib/referral-code.ts — was duplicated in routes/club.ts
+    41→ * and used Math.random (not CSPRNG). */
+    42→// Imported at top of file: import { generateReferralCode } from '../lib/referral-code.js'
+    43→
+    44→// POST /api/auth/register
+    45→router.post(
+    46→  '/register',
+    47→  asyncHandler(async (req, res) => {
+    48→    const data = registerSchema.parse(req.body)
+    49→
+    50→    // v19.0: validate password against DB-configured SecuritySettings
+    51→    const pwdCheck = await validatePasswordAgainstSettings(data.password)
+    52→    if (!pwdCheck.ok) {
+    53→      return res.status(400).json({ error: pwdCheck.errors.join('. '), errors: pwdCheck.errors })
+    54→    }
+    55→
+    56→    // Normalise
+    57→    const email = data.email.trim().toLowerCase()
+    58→    const username = data.username.trim().toLowerCase()
+    59→
+    60→    const exists = await prisma.user.findFirst({
+    61→      where: { OR: [{ email }, { username }] },
+    62→      select: { id: true, email: true, username: true, role: true },
+    63→    })
+    64→    if (exists) {
+    65→      // Differentiate the error message so the operator/user knows whether
+    66→      // the clash is with an admin or a regular user — this matters for
+    67→      // the Studio first-run flow where they might be trying to register
+    68→      // the admin account through the regular form instead of the wizard.
+    69→      if (exists.role === 'admin') {
+    70→        return res
+    71→          .status(409)
+    72→          .json({ error: 'Этот email или логин уже заняты администратором. Войдите под этим аккаунтом.' })
+    73→      }
+    74→      return res
+    75→        .status(409)
+    76→        .json({ error: 'Пользователь с таким email или username уже существует. Используйте другой.' })
+    77→    }
+    78→
+    79→    // First-run auto-promotion: if NO admin exists in the database yet,
+    80→    // the first user to register becomes the admin. This makes the regular
+    81→    // /register endpoint work as a fallback for the Studio first-run wizard
+    82→    // — so the operator can register through the Studio "Зарегистрироваться"
+    83→    // tab and still get admin rights without needing the wizard.
+    84→    //
+    85→    // SECURITY: this only fires when adminCount === 0. Once any admin
+    86→    // exists, all subsequent registrations get role='user' as usual.
+    87→    // Phase 8.1: only count active (non-deleted) admins for auto-promotion.
+    88→    //
+    89→    // B-HIGH-009: race condition. Two concurrent first-time registrations
+    90→    // both observed adminCount===0 and both created role:'admin' rows —
+    91→    // producing a database with two admins (the cleanup-admin-conflict.ts
+    92→    // script in /scripts exists specifically to recover from this). Now the
+    93→    // count + create are inside a single $transaction; with Prisma's
+    94→    // SQLite backend this holds the write lock for the duration so the
+    95→    // second registration sees adminCount===1 and gets role:'user'.
+    96→    const password = await hashPassword(data.password)
+    97→
+    98→    // v12.6: Resolve referral code BEFORE creating the user (inside the
+    99→    // same transaction so the link is atomic). If the code is invalid or
+   100→    // belongs to a deleted user, we silently ignore it — registration
+   101→    // should never fail because of a bad referral code.
+   102→    let referrerId: string | null = null
+   103→    if (data.referralCode) {
+   104→      const referrer = await prisma.user.findFirst({
+   105→        where: { referralCode: data.referralCode, deletedAt: null },
+   106→        select: { id: true },
+   107→      })
+   108→      if (referrer) referrerId = referrer.id
+   109→    }
+   110→
+   111→    // v16.9 MODERATION — check username + displayName before registration.
+   112→    // For username we use a temporary ID (user doesn't exist yet).
+   113→    const usernameCheck = await moderateContent(username, {
+   114→      userId: 'pending-registration',
+   115→      targetType: 'username',
+   116→    })
+   117→    if (!usernameCheck.allowed) {
+   118→      return res.status(422).json({
+   119→        error: 'Имя пользователя не соответствует правилам сообщества',
+   120→        moderationBlocked: true,
+   121→      })
+   122→    }
+   123→    if (data.displayName) {
+   124→      const dnCheck = await moderateContent(data.displayName, {
+   125→        userId: 'pending-registration',
+   126→        targetType: 'display_name',
+   127→      })
+   128→      if (!dnCheck.allowed) {
+   129→        return res.status(422).json({
+   130→          error: 'Отображаемое имя не соответствует правилам сообщества',
+   131→          moderationBlocked: true,
+   132→        })
+   133→      }
+   134→    }
+   135→
+   136→    const { user, assignedRole } = await prisma.$transaction(async (tx) => {
+   137→      const adminCount = await tx.user.count({ where: { role: 'admin', deletedAt: null } })
+   138→      const role: 'admin' | 'user' = adminCount === 0 ? 'admin' : 'user'
+   139→      // Generate a referral code for the new user (username prefix + random suffix)
+   140→      const newRefCode = generateReferralCode(username)
+   141→      const created = await tx.user.create({
+   142→        data: {
+   143→          email,
+   144→          username,
+   145→          phone: data.phone,
+   146→          password,
+   147→          displayName: data.displayName,
+   148→          gender: data.gender,
+   149→          avatar: null,
+   150→          role,
+   151→          referralCode: newRefCode,
+   152→          referredById: referrerId,
+   153→        },
+   154→      })
+   155→      return { user: created, assignedRole: role }
+   156→    })
+   157→
+   158→    // v12.6: Award referral bonus to the referrer (outside the user-create
+   159→    // transaction so a failure here doesn't roll back registration).
+   160→    // The new user also gets a welcome bonus.
+   161→    if (referrerId) {
+   162→      try {
+   163→        const REFERRER_REWARD = 50
+   164→        const NEW_USER_REWARD = 50
+   165→        await prisma.$transaction([
+   166→          // Referrer: +50 points
+   167→          prisma.user.update({
+   168→            where: { id: referrerId },
+   169→            data: {
+   170→              points: { increment: REFERRER_REWARD },
+   171→              pointsEarnedTotal: { increment: REFERRER_REWARD },
+   172→            },
+   173→          }),
+   174→          prisma.pointsTransaction.create({
+   175→            data: {
+   176→              userId: referrerId,
+   177→              delta: REFERRER_REWARD,
+   178→              reason: 'referral',
+   179→              entityId: user.id,
+   180→              entityType: 'user',
+   181→            },
+   182→          }),
+   183→          // New user: +50 points (referral signup bonus)
+   184→          prisma.user.update({
+   185→            where: { id: user.id },
+   186→            data: {
+   187→              points: { increment: NEW_USER_REWARD },
+   188→              pointsEarnedTotal: { increment: NEW_USER_REWARD },
+   189→            },
+   190→          }),
+   191→          prisma.pointsTransaction.create({
+   192→            data: {
+   193→              userId: user.id,
+   194→              delta: NEW_USER_REWARD,
+   195→              reason: 'referral_signup',
+   196→              entityId: referrerId,
+   197→              entityType: 'user',
+   198→            },
+   199→          }),
+   200→        ])
+   201→        // Notify the referrer
+   202→        const { sendPushToUser } = await import('./push.js')
+   203→        sendPushToUser(referrerId, {
+   204→          title: '👥 Новый реферал!',
+   205→          body: `По вашей ссылке зарегистрировался ${user.displayName || user.username}. +${REFERRER_REWARD} баллов!`,
+   206→          tag: `club-referral-${user.id}`,
+   207→          url: '/?view=club',
+   208→        }).catch(() => {})
+   209→      } catch (e) {
+   210→        logger.error('Referral bonus failed:', { module: 'auth', error: e })
+   211→      }
+   212→    }
+   213→
+   214→    // ========================================================================
+   215→    // AUTO-CREATE a pinned support conversation with an admin.
+   216→    //
+   217→    // Every new user immediately gets a dedicated "«Три девятки» / Администратор"
+   218→    // chat channel. This conversation:
+   219→    //   - is always pinned to the top of their chat list (type='support')
+   220→    //   - cannot be deleted by the user
+   221→    //   - serves as the primary support channel (no need for the user to
+   222→    //     find an admin or open a separate "Поддержка" view)
+   223→    //
+   224→    // If no admin exists yet (rare — admin is created via first-run wizard),
+   225→    // we skip the conversation. It will be created lazily on first visit
+   226→    // to the support view OR on next login (via the /api/chat/support
+   227→    // endpoint which get-or-creates it).
+   228→    // ========================================================================
+   229→    try {
+   230→      // v11-fix: orderBy createdAt asc — pick the FIRST (oldest) admin
+   231→      // deterministically. Without this, findFirst returns an arbitrary
+   232→      // admin when there are multiple, which is confusing for audits.
+   233→      const admin = await prisma.user.findFirst({
+   234→        where: { role: 'admin', deletedAt: null },
+   235→        orderBy: { createdAt: 'asc' },
+   236→        select: { id: true },
+   237→      })
+   238→      // Skip support conversation creation if:
+   239→      //   - no admin exists yet (lazy-created on first /api/chat/support call)
+   240→      //   - the just-registered user IS the admin (first-run auto-promotion
+   241→      //     makes user.id === admin.id — creating a conversation between
+   242→      //     a user and themselves violates the (conversationId, userId)
+   243→      //     unique constraint AND makes no semantic sense anyway).
+   244→      if (admin && admin.id !== user.id) {
+   245→        // Check if a support conversation already exists (idempotency).
+   246→        // This shouldn't normally happen, but protects against any race
+   247→        // condition or duplicate-registration scenario.
+   248→        const existing = await prisma.conversation.findFirst({
+   249→          where: {
+   250→            type: 'support',
+   251→            participants: {
+   252→              every: {
+   253→                OR: [{ userId: user.id }, { userId: admin.id }],
+   254→              },
+   255→            },
+   256→          },
+   257→          include: { participants: { select: { userId: true } } },
+   258→        })
+   259→        const alreadyExists =
+   260→          existing &&
+   261→          existing.participants.some((p) => p.userId === user.id) &&
+   262→          existing.participants.some((p) => p.userId === admin.id)
+   263→
+   264→        if (!alreadyExists) {
+   265→          const conv = await prisma.conversation.create({
+   266→            data: {
+   267→              type: 'support',
+   268→              participants: {
+   269→                create: [{ userId: user.id }, { userId: admin.id }],
+   270→              },
+   271→            },
+   272→          })
+   273→          // v25.3 (TZ task #3): auto-welcome message removed.
+   274→          //
+   275→          // Previously a hardcoded greeting was sent to every new user as
+   276→          // the admin — this counted as a "test message" that polluted the
+   277→          // chat list on every fresh install. Per the technical spec, the
+   278→          // chat must open empty after launch with no demo / sample
+   279→          // messages of any kind.
+   280→          //
+   281→          // The empty support conversation still exists; the user can send
+   282→          // the first message themselves whenever they need help. The
+   283→          // support view's placeholder input ("Напишите сообщение…") makes
+   284→          // the next step obvious.
+   285→          //
+   286→          // (Conversation created but no message — conv variable retained
+   287→          //  in case future code wants to attach metadata.)
+   288→          void conv
+   289→        }
+   290→      }
+   291→    } catch (e) {
+   292→      // Support conversation creation is non-critical — don't fail the
+   293→      // registration if it errors. The user can still trigger creation
+   294→      // later via POST /api/chat/support.
+   295→      logger.error('Failed to auto-create support conversation:', { module: 'auth', error: e })
+   296→    }
+   297→
+   298→    const token = signToken({
+   299→      sub: user.id,
+   300→      username: user.username,
+   301→      role: user.role as 'user' | 'admin',
+   302→      v: user.tokenVersion,
+   303→    })
+   304→    // Phase 32: audit log registration.
+   305→    // v25.2-fix: wrap in try/catch — if the DB write fails (e.g. SQLite
+   306→    // read-only), we must NOT let it crash the registration response.
+   307→    // The user is already created at this point; the audit log is best-effort.
+   308→    try {
+   309→      await auditLogRaw(user.id, req, 'auth', user.id, 'register', {
+   310→        after: { username: user.username, email: user.email, role: user.role },
+   311→      })
+   312→    } catch (auditErr) {
+   313→      logger.error('Registration audit log failed (non-fatal)', {
+   314→        module: 'auth',
+   315→        error: auditErr instanceof Error ? auditErr : new Error(String(auditErr)),
+   316→        userId: user.id,
+   317→      })
+   318→    }
+   319→
+   320→    // ========================================================================
+   321→    // v16.8 final: AUTO-SEND email verification after successful registration.
+   322→    // Previously the verification email was only sent if the user manually
+   323→    // hit POST /api/auth/send-verification. Now we fire it automatically so
+   324→    // the user receives the confirmation link immediately after sign-up.
+   325→    //
+   326→    // We deliberately do this AFTER the response is queued — the email send
+   327→    // is non-blocking for the registration flow. If SMTP fails, the user can
+   328→    // still log in (when EMAIL_VERIFICATION_REQUIRED=false, the default) and
+   329→    // request a new verification email from the profile screen.
+   330→    //
+   331→    // We also skip this for the auto-promoted admin (when role==='admin'
+   332→    // via the first-run wizard) because the admin's email is already
+   333→    // trusted — sending a verification email to the operator is noise.
+   334→    // ========================================================================
+   335→    if (assignedRole === 'user') {
+   336→      try {
+   337→        const verifyToken = crypto.randomBytes(16).toString('hex')
+   338→        const verifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
+   339→        await prisma.appSetting.upsert({
+   340→          where: { id: `email:verify:${verifyToken}` },
+   341→          update: { value: JSON.stringify({ userId: user.id, expires: verifyExpires.toISOString() }) },
+   342→          create: {
+   343→            id: `email:verify:${verifyToken}`,
+   344→            value: JSON.stringify({ userId: user.id, expires: verifyExpires.toISOString() }),
+   345→          },
+   346→        })
+   347→        const baseUrl = process.env.APP_PUBLIC_URL || 'http://localhost:3000'
+   348→        // v16.8 final: the verification link points to the frontend
+   349→        // /verify-email page, which validates the token via
+   350→        // GET /api/auth/verify-email and shows a success screen. The old
+   351→        // implementation called the API endpoint directly — which returned
+   352→        // raw JSON and was a poor UX. The new frontend page wraps the same
+   353→        // API call with a branded success/error UI.
+   354→        const verifyUrl = `${baseUrl}/verify-email?token=${verifyToken}`
+   355→        const { sendVerificationEmail } = await import('../lib/email.js')
+   356→        // Fire-and-forget — email failures must not break registration.
+   357→        sendVerificationEmail(user.email, verifyUrl).catch((e) => {
+   358→          logger.error('[register] Auto-send verification email failed:', {
+   359→            module: 'auth',
+   360→            error: e,
+   361→            userId: user.id,
+   362→          })
+   363→        })
+   364→      } catch (e) {
+   365→        // Non-fatal: the user can still request a new verification email.
+   366→        logger.error('[register] Failed to queue verification email:', {
+   367→          module: 'auth',
+   368→          error: e,
+   369→          userId: user.id,
+   370→        })
+   371→      }
+   372→    }
+   373→
+   374→    res.status(201).json({ token, user: publicUser(user, { includeContact: true }) })
+   375→  }),
+   376→)
+   377→
+   378→// POST /api/auth/login — login field accepts email | username | phone
+   379→router.post(
+   380→  '/login',
+   381→  asyncHandler(async (req, res) => {
+   382→    const { login: rawLogin, password } = loginSchema.parse(req.body)
+   383→    const login = normaliseLogin(rawLogin)
+   384→
+   385→    // Try by email or username (both lowercased), then phone
+   386→    // Phase 8.1: filter out soft-deleted users — they cannot log in.
+   387→    const user = await prisma.user.findFirst({
+   388→      where: {
+   389→        deletedAt: null,
+   390→        OR: [
+   391→          { email: login },
+   392→          { username: login },
+   393→          ...(login.startsWith('+') || /^\d/.test(login) ? [{ phone: rawLogin.trim() }] : []),
+   394→        ],
+   395→      },
+   396→    })
+   397→
+   398→    // S-CRIT-009 fix: account lockout after 5 failed attempts (15 min).
+   399→    if (user?.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+   400→      const remainingMs = new Date(user.lockedUntil).getTime() - Date.now()
+   401→      const remainingMin = Math.ceil(remainingMs / 60000)
+   402→      await auditLogRaw(user.id, req, 'auth', user.id, 'login_failed', {
+   403→        after: { login, reason: 'account_locked', remainingMin },
+   404→      })
+   405→      return res.status(429).json({
+   406→        error: `Аккаунт заблокирован. Попробуйте через ${remainingMin} мин.`,
+   407→        lockedUntil: user.lockedUntil,
+   408→      })
+   409→    }
+   410→
+   411→    // Use safe compare to mitigate timing oracle for user enumeration
+   412→    const ok = await safeComparePassword(password, user)
+   413→
+   414→    if (!user || !ok) {
+   415→      // S-CRIT-009: increment failedLoginCount. Lock for 15 min on 5th failure.
+   416→      if (user) {
+   417→        const newCount = (user.failedLoginCount || 0) + 1
+   418→        const shouldLock = newCount >= 5
+   419→        await prisma.user.update({
+   420→          where: { id: user.id },
+   421→          data: {
+   422→            failedLoginCount: newCount,
+   423→            ...(shouldLock ? { lockedUntil: new Date(Date.now() + 15 * 60 * 1000) } : {}),
+   424→          },
+   425→        })
+   426→      }
+   427→      // Phase 32: audit log failed login attempt (for brute-force detection)
+   428→      await auditLogRaw(user?.id || null, req, 'auth', user?.id || null, 'login_failed', {
+   429→        after: { login: login, reason: !user ? 'user_not_found' : 'wrong_password', attempt: (user?.failedLoginCount || 0) + 1 },
+   430→      })
+   431→      const msg = user && (user.failedLoginCount || 0) + 1 >= 5
+   432→        ? 'Слишком много неудачных попыток. Аккаунт заблокирован на 15 минут.'
+   433→        : 'Invalid credentials'
+   434→      return res.status(401).json({ error: msg })
+   435→    }
+   436→
+   437→    // S-CRIT-009: reset failedLoginCount on successful login
+   438→    if (user.failedLoginCount > 0 || user.lockedUntil) {
+   439→      await prisma.user.update({
+   440→        where: { id: user.id },
+   441→        data: { failedLoginCount: 0, lockedUntil: null },
+   442→      })
+   443→    }
+   444→
+   445→    // v9-audit-fix: S-CRIT-008 — 2FA/TOTP verification for enabled accounts.
+   446→    // If the user has TOTP enabled, require a valid 6-digit code before
+   447→    // issuing a JWT. If no code is provided, return a "totpRequired" flag
+   448→    // so the frontend can show the TOTP input form.
+   449→    // v19.0: Also supports:
+   450→    //   - backup codes (8-char alphanumeric) — consumed on use
+   451→    //   - email 2FA code (6-digit) — if user.emailTwoFactorCode is set
+   452→    if (user.totpEnabled && user.totpSecret) {
+   453→      const totpCode = (req.body as { totpCode?: string })?.totpCode
+   454→      if (!totpCode) {
+   455→        // Don't reveal whether the password was correct — but we already
+   456→        // reset the failedLoginCount above. That's OK because the password
+   457→        // WAS correct; we're just asking for the second factor.
+   458→        return res.json({ totpRequired: true, user: publicUser(user, { includeContact: true }) })
+   459→      }
+   460→      const { verifyTotp } = await import('../lib/totp.js')
+   461→      const totpOk = verifyTotp(totpCode, user.totpSecret)
+   462→      // v19.0: try backup code if TOTP didn't match
+   463→      const backupOk = totpOk ? false : await tryBackupCode(user.id, totpCode.toUpperCase())
+   464→      if (!totpOk && !backupOk) {
+   465→        await auditLogRaw(user.id, req, 'auth', user.id, 'login_failed', {
+   466→          after: { reason: 'invalid_totp' },
+   467→        })
+   468→        return res.status(401).json({ error: 'Неверный код подтверждения.' })
+   469→      }
+   470→      await auditLogRaw(user.id, req, 'auth', user.id, 'totp_used', {
+   471→        after: { method: backupOk ? 'backup_code' : 'totp' },
+   472→      })
+   473→    }
+   474→
+   475→    // Wave 3 (S-PROD-001): mandatory TOTP setup for admin role.
+   476→    // Admins who haven't enabled TOTP yet are forced to set it up before
+   477→    // they can access the admin panel. Returns `totpSetupRequired: true`
+   478→    // so the frontend (Studio) shows the setup wizard. The password is
+   479→    // correct (verified above) — we just gate the regular JWT behind 2FA
+   480→    // enrollment.
+   481→    //
+   482→    // ARCHITECTURAL FIX (was: "Authorization header missing" bug):
+   483→    // Previously this branch returned NO token, but `/totp/setup` and
+   484→    // `/totp/verify` use `requireAuth` — so the client had no way to
+   485→    // authenticate the setup calls. Now we issue a SHORT-LIVED
+   486→    // `totpPending: true` setup token (15 min) that:
+   487→    //   • is accepted by `requireAuth` (so /totp/setup, /totp/verify work)
+   488→    //   • is REJECTED by `requireAdmin` (so no admin endpoint can be
+   489→    //     accessed until TOTP enrollment completes)
+   490→    // After `/totp/verify` succeeds, it issues a fresh regular JWT that
+   491→    // the client swaps in for the setup token — full access restored.
+   492→    //
+   493→    // S-HIGH-001 fix: TOTP enforcement for admins is now UNCONDITIONAL.
+   494→    // Previously gated by `process.env.NODE_ENV === 'production'`, which let
+   495→    // staging/preview/sandbox admins skip 2FA entirely — risky if a staging
+   496→    // DB is ever promoted to prod, or if prod briefly runs with NODE_ENV
+   497→    // unset during debugging. Now admins must enroll TOTP in every env.
+   498→    // For local dev where 2FA is inconvenient, set BYPASS_ADMIN_TOTP=true
+   499→    // (only respected when NODE_ENV !== 'production').
+   500→    const bypassAdminTotp = process.env.NODE_ENV !== 'production' && process.env.BYPASS_ADMIN_TOTP === 'true'
+   501→    if (!bypassAdminTotp && user.role === 'admin' && (!user.totpEnabled || !user.totpSecret)) {
+   502→      const setupToken = signTotpSetupToken({
+   503→        sub: user.id,
+   504→        username: user.username,
+   505→        role: user.role as 'user' | 'admin',
+   506→        v: user.tokenVersion,
+   507→      })
+   508→      await auditLogRaw(user.id, req, 'auth', user.id, 'login_totp_setup_required', {
+   509→        after: { username: user.username, note: 'Password OK, TOTP enrollment required' },
+   510→      })
+   511→      return res.json({
+   512→        totpSetupRequired: true,
+   513→        user: publicUser(user, { includeContact: true }),
+   514→        token: setupToken,
+   515→        message: 'Для аккаунта администратора обязательно включение 2FA.',
+   516→      })
+   517→    }
+   518→
+   519→    const token = signToken({
+   520→      sub: user.id,
+   521→      username: user.username,
+   522→      role: user.role as 'user' | 'admin',
+   523→      v: user.tokenVersion,
+   524→    })
+   525→    // Phase 32: audit log successful login
+   526→    await auditLogRaw(user.id, req, 'auth', user.id, 'login_success', {
+   527→      after: { username: user.username, role: user.role },
+   528→    })
+   529→    res.json({ token, user: publicUser(user, { includeContact: true }) })
+   530→  }),
+   531→)
+   532→
+   533→// GET /api/auth/me
+   534→//
+   535→// ARCHITECTURAL FIX: rejects `totpPending` setup tokens with 403 +
+   536→// `totpSetupRequired: true`. The studio's `fetchMe()` interprets this as
+   537→// "session is mid-TOTP-setup, do not mark as authenticated" and surfaces
+   538→// the setup flow. Defense-in-depth: in practice `fetchMe()` should never
+   539→// be called with a setup token (the studio's `getToken()` returns the
+   540→// regular token only), but this guard prevents any future code path from
+   541→// accidentally treating a setup token as a fully authenticated session.
+   542→
+   543→// ============================================================================
+   544→// H2 fix: POST /api/auth/refresh — exchange a refresh token for a new access
+   545→// token. The refresh token is sent in the request body (or as a Bearer token
+   546→// in the Authorization header — clients that already use that header for
+   547→// access tokens can re-use the same plumbing).
+   548→//
+   549→// Flow:
+   550→//   1. Client's access token expires (15min in prod, 7d in dev).
+   551→//   2. Client calls POST /api/auth/refresh with { refreshToken: "..." }.
+   552→//   3. Server verifies the refresh token signature + checks AppSetting for
+   553→//      revocation. If valid, issues a fresh access token.
+   554→//   4. Client swaps the old access token for the new one and retries the
+   555→//      original request.
+   556→//
+   557→// The refresh token itself is NOT rotated on each refresh (simpler UX).
+   558→// It's revoked only on explicit logout or password change.
+   559→// ============================================================================
+   560→router.post(
+   561→  '/refresh',
+   562→  asyncHandler(async (req, res) => {
+   563→    const refreshToken =
+   564→      (req.body as { refreshToken?: string })?.refreshToken ||
+   565→      (req.headers.authorization?.startsWith('Bearer ')
+   566→        ? req.headers.authorization.slice(7)
+   567→        : undefined)
+   568→
+   569→    if (!refreshToken) {
+   570→      return res.status(401).json({ error: 'Refresh token required.' })
+   571→    }
+   572→
+   573→    try {
+   574→      const {
+   575→        signRefreshToken,
+   576→        verifyRefreshToken,
+   577→      } = await import('../lib/auth.js')
+   578→      const payload = await verifyRefreshToken(refreshToken)
+   579→
+   580→      // Look up the user — they may have been deleted or had their
+   581→      // tokenVersion bumped since the refresh token was issued.
+   582→      const user = await prisma.user.findUnique({
+   583→        where: { id: payload.sub, deletedAt: null },
+   584→        select: { id: true, username: true, role: true, tokenVersion: true },
+   585→      })
+   586→      if (!user) {
+   587→        return res.status(401).json({ error: 'User not found.' })
+   588→      }
+   589→      if (user.tokenVersion !== payload.v) {
+   590→        return res.status(401).json({ error: 'Token version mismatch — please log in again.' })
+   591→      }
+   592→
+   593→      // Issue a fresh access token.
+   594→      const access = signToken({
+   595→        sub: user.id,
+   596→        username: user.username,
+   597→        role: user.role as 'user' | 'admin',
+   598→        v: user.tokenVersion,
+   599→      })
+   600→
+   601→      // Also issue a fresh refresh token (rotate the jti so the old one
+   602→      // becomes invalid — defense against replay attacks). Revoke the old
+   603→      // jti and persist the new one.
+   604→      const { token: newRefresh, jti: newJti } = signRefreshToken({
+   605→        sub: user.id,
+   606→        username: user.username,
+   607→        role: user.role as 'user' | 'admin',
+   608→        v: user.tokenVersion,
+   609→      })
+   610→      const { persistRefreshToken, revokeRefreshToken } = await import('../lib/auth.js')
+   611→      await revokeRefreshToken(payload.jti)
+   612→      await persistRefreshToken(newJti, user.id)
+   613→
+   614→      res.json({ token: access, refreshToken: newRefresh })
+   615→    } catch (e) {
+   616→      return res.status(401).json({ error: 'Invalid or expired refresh token.' })
+   617→    }
+   618→  }),
+   619→)
+   620→
+   621→// POST /api/auth/logout — revoke the refresh token (delete from AppSetting).
+   622→// The access token is short-lived (15min in prod) so we don't need to revoke
+   623→// it server-side — it expires on its own. The client should also clear its
+   624→// local copy of both tokens.
+   625→router.post(
+   626→  '/logout',
+   627→  asyncHandler(async (req, res) => {
+   628→    const refreshToken = (req.body as { refreshToken?: string })?.refreshToken
+   629→    if (refreshToken) {
+   630→      try {
+   631→        const { verifyRefreshToken, revokeRefreshToken } = await import('../lib/auth.js')
+   632→        const payload = await verifyRefreshToken(refreshToken)
+   633→        await revokeRefreshToken(payload.jti)
+   634→      } catch {
+   635→        // Token already invalid — non-fatal.
+   636→      }
+   637→    }
+   638→    res.json({ ok: true })
+   639→  }),
+   640→)
+   641→
+   642→router.get(
+   643→  '/me',
+   644→  requireAuth,
+   645→  asyncHandler(async (req: AuthedRequest, res) => {
+   646→    if (req.user?.totpPending) {
+   647→      return res.status(403).json({
+   648→        error: 'Требуется настройка 2FA.',
+   649→        totpSetupRequired: true,
+   650→      })
+   651→    }
+   652→    const user = await prisma.user.findUnique({
+   653→      where: { id: req.user!.id },
+   654→      // Never leak password hash
+   655→      select: {
+   656→        id: true,
+   657→        email: true,
+   658→        phone: true,
+   659→        username: true,
+   660→        displayName: true,
+   661→        avatar: true,
+   662→        bio: true,
+   663→        role: true,
+   664→        isOnline: true,
+   665→        lastSeen: true,
+   666→        createdAt: true,
+   667→        updatedAt: true,
+   668→      },
+   669→    })
+   670→    if (!user) return res.status(404).json({ error: 'User not found' })
+   671→    res.json({ user: publicUser(user, { includeContact: true }) })
+   672→  }),
+   673→)
+   674→
+   675→// PATCH /api/auth/me — update profile
+   676→// `avatar` accepts a string URL OR null (to clear the avatar).
+   677→// All other fields are optional strings.
+   678→const updateProfileSchema = z.object({
+   679→  displayName: z.string().max(64).optional(),
+   680→  bio: z.string().max(500).optional(),
+   681→  phone: z.string().max(20).optional(),
+   682→  avatar: z.union([z.string().max(2048), z.null()]).optional(),
+   683→})
+   684→
+   685→router.patch(
+   686→  '/me',
+   687→  requireAuth,
+   688→  asyncHandler(async (req: AuthedRequest, res) => {
+   689→    const data = updateProfileSchema.parse(req.body)
+   690→
+   691→    // Pre-check phone uniqueness to avoid P2002 500 errors
+   692→    if (data.phone) {
+   693→      const clash = await prisma.user.findFirst({
+   694→        where: { phone: data.phone, NOT: { id: req.user!.id } },
+   695→        select: { id: true },
+   696→      })
+   697→      if (clash) return res.status(409).json({ error: 'Phone number already in use' })
+   698→    }
+   699→
+   700→    // v16.9 MODERATION — check displayName + bio before persisting.
+   701→    if (data.displayName) {
+   702→      const modDecision = await moderateContent(data.displayName, {
+   703→        userId: req.user!.id,
+   704→        targetType: 'display_name',
+   705→      })
+   706→      if (!modDecision.allowed) {
+   707→        return res.status(422).json({
+   708→          error: `Имя отклонено модерацией: ${modDecision.reason}`,
+   709→          moderationBlocked: true,
+   710→        })
+   711→      }
+   712→    }
+   713→    if (data.bio) {
+   714→      const modDecision = await moderateContent(data.bio, {
+   715→        userId: req.user!.id,
+   716→        targetType: 'bio',
+   717→      })
+   718→      if (!modDecision.allowed) {
+   719→        return res.status(422).json({
+   720→          error: `Описание отклонено модерацией: ${modDecision.reason}`,
+   721→          moderationBlocked: true,
+   722→        })
+   723→      }
+   724→    }
+   725→
+   726→    const user = await prisma.user.update({
+   727→      where: { id: req.user!.id },
+   728→      data: {
+   729→        displayName: data.displayName,
+   730→        bio: data.bio,
+   731→        phone: data.phone,
+   732→        // Prisma accepts `null` to set the column to NULL (clear avatar).
+   733→        // Previously `data.avatar` was undefined when not provided, which
+   734→        // left the column unchanged — that's still the case. But now the
+   735→        // client can explicitly send `avatar: null` to delete the avatar.
+   736→        avatar: data.avatar,
+   737→      },
+   738→      select: {
+   739→        id: true,
+   740→        email: true,
+   741→        phone: true,
+   742→        username: true,
+   743→        displayName: true,
+   744→        avatar: true,
+   745→        bio: true,
+   746→        role: true,
+   747→        isOnline: true,
+   748→        lastSeen: true,
+   749→        createdAt: true,
+   750→        updatedAt: true,
+   751→      },
+   752→    })
+   753→    res.json({ user: publicUser(user, { includeContact: true }) })
+   754→  }),
+   755→)
+   756→
+   757→// ============================================================================
+   758→// First-run admin setup
+   759→// ============================================================================
+   760→// GET /api/auth/admin-exists  — public, returns whether any admin exists.
+   761→// Used by Studio to decide whether to show the first-run admin wizard or
+   762→// the regular login dialog.
+   763→router.get(
+   764→  '/admin-exists',
+   765→  asyncHandler(async (_req, res) => {
+   766→    // Phase 8.1: only count active (non-deleted) admins
+   767→    const count = await prisma.user.count({ where: { role: 'admin', deletedAt: null } })
+   768→    res.json({ hasAdmin: count > 0 })
+   769→  }),
+   770→)
+   771→
+   772→// POST /api/auth/setup-admin  — public, but ONLY works if NO admin exists yet.
+   773→// Creates the first admin account and returns a JWT (auto-login).
+   774→//
+   775→// SECURITY MODEL (v25 — web-first setup):
+   776→//   The previous version required a one-time `FIRST_RUN_TOKEN` env var and
+   777→//   an `X-Setup-Admin-Token` HTTP header. This forced the operator to run
+   778→//   `curl` from the server shell to create the first admin — exactly the
+   779→//   kind of CLI step the new "web-only setup" UX is designed to eliminate.
+   780→//
+   781→//   The endpoint is now token-less. Protection against abuse comes from:
+   782→//     1. The `adminCount === 0` precondition — once any admin exists, the
+   783→//        endpoint hard-returns 403 forever. An attacker who reaches it
+   784→//        after setup completes gets nothing.
+   785→//     2. The authLimiter (20 / 15 min / IP) mounted on /api/auth/*.
+   786→//     3. A transactional count + create so two concurrent first-time
+   787→//        requests cannot both create admins (B-HIGH-009 race fix).
+   788→//     4. Username + email uniqueness checks (handled by Prisma P2002 too).
+   789→//
+   790→//   The remaining risk window is: between server boot and the operator
+   791→//   completing the wizard, anyone who can reach `/api/auth/setup-admin`
+   792→//   can become the first admin. This is acceptable for the same reason
+   793→//   it's acceptable on every CMS that ships a /install endpoint (WordPress,
+   794→//   Drupal, Nextcloud, …): the operator is expected to bring the server up
+   795→//   behind a private network or reverse proxy, complete setup, and only
+   796→//   then expose it publicly. The README documents this explicitly.
+   797→router.post(
+   798→  '/setup-admin',
+   799→  asyncHandler(async (req, res) => {
+   800→    // Block if an admin already exists — prevents privilege escalation.
+   801→    // Phase 8.1: only count active (non-deleted) admins.
+   802→    // The count + create run inside a single $transaction so two concurrent
+   803→    // first-time requests cannot both observe adminCount===0 (B-HIGH-009).
+   804→    const existingCount = await prisma.user.count({ where: { role: 'admin', deletedAt: null } })
+   805→    if (existingCount > 0) {
+   806→      return res
+   807→        .status(403)
+   808→        .json({ error: 'Setup already completed. Use the regular login.', code: 'setup_completed' })
+   809→    }
+   810→
+   811→    const { createAdminSchema } = await import('../lib/schemas.js')
+   812→    const data = createAdminSchema.parse(req.body)
+   813→
+   814→    if (data.password !== data.confirmPassword) {
+   815→      return res.status(400).json({ error: 'Passwords do not match' })
+   816→    }
+   817→
+   818→    // v19.0: validate password against DB-configured SecuritySettings.
+   819→    // (On a fresh install SecuritySettings doesn't exist yet → defaults apply:
+   820→    // min 8 chars, no complexity requirements. The wizard also enforces
+   821→    // client-side validation, but server-side is authoritative.)
+   822→    const pwdCheck = await validatePasswordAgainstSettings(data.password)
+   823→    if (!pwdCheck.ok) {
+   824→      return res.status(400).json({ error: pwdCheck.errors.join('. '), errors: pwdCheck.errors })
+   825→    }
+   826→
+   827→    const email = data.email.trim().toLowerCase()
+   828→    const username = data.username.trim().toLowerCase()
+   829→
+   830→    // Uniqueness pre-check — gives a clearer error than the generic
+   831→    // register endpoint. If an existing *non-admin* user already holds the
+   832→    // requested email/username, the operator must pick different
+   833→    // credentials (or use the reset-admin flow).
+   834→    const clash = await prisma.user.findFirst({
+   835→      where: { OR: [{ email }, { username }] },
+   836→      select: { id: true, email: true, username: true, role: true },
+   837→    })
+   838→    if (clash) {
+   839→      if (clash.role === 'admin') {
+   840→        // Should never reach here — we already blocked above when
+   841→        // existingCount > 0. Keep the defensive message just in case.
+   842→        return res
+   843→          .status(409)
+   844→          .json({ error: 'Администратор с таким email или логином уже существует. Используйте форму входа.' })
+   845→      }
+   846→      return res.status(409).json({
+   847→        error:
+   848→          'Этот email или логин уже занят обычным пользователем. ' +
+   849→          'Используйте другой email/логин, либо войдите под этим аккаунтом и затем сбросьте админа ' +
+   850→          '(кнопка «Забыли пароль? Сбросить админа» в Studio) с использованием reset-токена.',
+   851→      })
+   852→    }
+   853→
+   854→    const password = await hashPassword(data.password)
+   855→
+   856→    // Transactional create — re-checks adminCount inside the transaction
+   857→    // so a concurrent setup-admin request that committed between our
+   858→    // outer count and our create cannot also create an admin.
+   859→    const user = await prisma.$transaction(async (tx) => {
+   860→      const adminCount = await tx.user.count({ where: { role: 'admin', deletedAt: null } })
+   861→      if (adminCount > 0) {
+   862→        // Defensive: a concurrent request beat us to it. Surface a 409
+   863→        // without leaking details.
+   864→        throw new SetupAlreadyCompletedError()
+   865→      }
+   866→      return tx.user.create({
+   867→        data: {
+   868→          email,
+   869→          username,
+   870→          password,
+   871→          displayName: data.displayName,
+   872→          role: 'admin',
+   873→        },
+   874→      })
+   875→    }).catch((err) => {
+   876→      if (err instanceof SetupAlreadyCompletedError) {
+   877→        return null
+   878→      }
+   879→      throw err
+   880→    })
+   881→
+   882→    if (!user) {
+   883→      // Concurrent request won the race.
+   884→      return res
+   885→        .status(409)
+   886→        .json({ error: 'Setup already completed.', code: 'setup_completed' })
+   887→    }
+   888→
+   889→    const token = signToken({
+   890→      sub: user.id,
+   891→      username: user.username,
+   892→      role: 'admin',
+   893→      v: user.tokenVersion,
+   894→    })
+   895→    // Phase 32: audit log setup-admin (first admin creation)
+   896→    await auditLogRaw(user.id, req, 'auth', user.id, 'setup_admin', {
+   897→      after: { username: user.username, email: user.email, note: 'First admin created via setup-admin (web wizard)' },
+   898→    })
+   899→    res.status(201).json({ token, user: publicUser(user, { includeContact: true }) })
+   900→  }),
+   901→)
+   902→
+   903→// Sentinel error used to roll back the setup-admin transaction when a
+   904→// concurrent request beat us to creating the first admin. We catch it
+   905→// outside the transaction and convert to a clean 409 response.
+   906→class SetupAlreadyCompletedError extends Error {
+   907→  constructor() {
+   908→    super('setup_already_completed')
+   909→    this.name = 'SetupAlreadyCompletedError'
+   910→  }
+   911→}
+   912→
+   913→// ============================================================================
+   914→// Change password — для авторизованного пользователя (в т.ч. админа)
+   915→// ============================================================================
+   916→// POST /api/auth/change-password
+   917→// Body: { currentPassword, newPassword, confirmPassword }
+   918→router.post(
+   919→  '/change-password',
+   920→  requireAuth,
+   921→  asyncHandler(async (req: AuthedRequest, res) => {
+   922→    const { changePasswordSchema } = await import('../lib/schemas.js')
+   923→    const data = changePasswordSchema.parse(req.body)
+   924→
+   925→    if (data.newPassword !== data.confirmPassword) {
+   926→      return res.status(400).json({ error: 'Новые пароли не совпадают' })
+   927→    }
+   928→
+   929→    const user = await prisma.user.findUnique({ where: { id: req.user!.id } })
+   930→    if (!user) {
+   931→      return res.status(404).json({ error: 'Пользователь не найден' })
+   932→    }
+   933→
+   934→    // v9-audit-fix: reject if account is locked (same check as /login).
+   935→    // A locked-out user who still has a valid JWT shouldn't be able to
+   936→    // confirm their password via this endpoint.
+   937→    if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+   938→      const remainingMin = Math.ceil((new Date(user.lockedUntil).getTime() - Date.now()) / 60000)
+   939→      return res.status(429).json({ error: `Аккаунт заблокирован. Попробуйте через ${remainingMin} мин.` })
+   940→    }
+   941→
+   942→    // Проверяем текущий пароль
+   943→    const ok = await safeComparePassword(data.currentPassword, { password: user.password })
+   944→    if (!ok) {
+   945→      // v9-audit-fix: increment failedLoginCount on wrong current password
+   946→      // (same brute-force protection as /login).
+   947→      const newCount = (user.failedLoginCount || 0) + 1
+   948→      const shouldLock = newCount >= 5
+   949→      await prisma.user.update({
+   950→        where: { id: user.id },
+   951→        data: {
+   952→          failedLoginCount: newCount,
+   953→          ...(shouldLock ? { lockedUntil: new Date(Date.now() + 15 * 60 * 1000) } : {}),
+   954→        },
+   955→      })
+   956→      return res.status(400).json({ error: 'Неверный текущий пароль' })
+   957→    }
+   958→
+   959→    // H3 fix: используем универсальный comparePassword (поддерживает argon2id
+   960→    // и bcrypt legacy), а не bcrypt.compare напрямую. Раньше для argon2-юзеров
+   961→    // проверка всегда возвращала false — и пользователь мог поставить новый
+   962→    // пароль, идентичный текущему.
+   963→    const sameAsOld = await comparePassword(data.newPassword, user.password)
+   964→    if (sameAsOld) {
+   965→      return res.status(400).json({ error: 'Новый пароль должен отличаться от текущего' })
+   966→    }
+   967→
+   968→    const newHash = await hashPassword(data.newPassword)
+   969→    // Bump tokenVersion so any other sessions (on other devices) are
+   970→    // immediately invalidated. The current request's token stays valid
+   971→    // — the client gets a fresh token below.
+   972→    const updated = await prisma.user.update({
+   973→      where: { id: user.id },
+   974→      data: { password: newHash, tokenVersion: { increment: 1 } },
+   975→      select: { id: true, username: true, role: true, tokenVersion: true },
+   976→    })
+   977→    invalidateAuthCache(user.id)
+   978→    // Kick all real-time sockets so they have to reconnect with the new
+   979→    // token. (The current caller will get a fresh token in the response
+   980→    // and their next socket connection will use it.)
+   981→    kickUserSockets(user.id)
+   982→
+   983→    // Issue a fresh token carrying the new tokenVersion so the caller's
+   984→    // current session keeps working.
+   985→    const freshToken = signToken({
+   986→      sub: updated.id,
+   987→      username: updated.username,
+   988→      role: updated.role as 'user' | 'admin',
+   989→      v: updated.tokenVersion,
+   990→    })
+   991→    // Phase 32: audit log password change
+   992→    await auditLogRaw(user.id, req, 'auth', user.id, 'change_password', {
+   993→      after: { username: updated.username },
+   994→    })
+   995→    res.json({ ok: true, token: freshToken })
+   996→  }),
+   997→)
+   998→
+   999→// ============================================================================
+  1000→// Reset admin — DANGEROUS: удаляет всех админов и создаёт нового.
+  1001→// Используется ТОЛЬКО когда пользователь забыл пароль и не может войти.
+  1002→// ============================================================================
+  1003→// POST /api/auth/reset-admin
+  1004→// Body: { displayName, username, email, password, confirmPassword, resetToken? }
+  1005→//
+  1006→// Безопасность:
+  1007→//   — В production (NODE_ENV=production) запрос должен сопровождаться
+  1008→//     заголовком X-Reset-Admin-Token со значением env RESET_ADMIN_TOKEN.
+  1009→//     Без него — 403. Это предотвращает несанкционированный захват админки.
+  1010→//   — В development (NODE_ENV=development) токен не требуется, чтобы
+  1011→//     мастер первоначальной настройки оставался рабочим.
+  1012→//   — Вся операция выполняется в одной транзакции: если создание нового
+  1013→//     админа провалится, удаление старых откатится (atomicity).
+  1014→router.post(
+  1015→  '/reset-admin',
+  1016→  asyncHandler(async (req, res) => {
+  1017→    // SECURITY: Always require a one-time reset token from env, regardless of
+  1018→    // NODE_ENV. Previously this was bypassed in development, which left the
+  1019→    // endpoint wide open in any environment where NODE_ENV !== 'production'
+  1020→    // (e.g. staging, sandbox previews). Now the rule is uniform: no
+  1021→    // RESET_ADMIN_TOKEN env var → endpoint is fully disabled; otherwise the
+  1022→    // caller MUST supply a matching X-Reset-Admin-Token header.
+  1023→    const expected = process.env.RESET_ADMIN_TOKEN
+  1024→    if (!expected || expected.length < 16) {
+  1025→      return res
+  1026→        .status(403)
+  1027→        .json({ error: 'Admin reset is disabled. Set RESET_ADMIN_TOKEN env var (min 16 chars) to use it.' })
+  1028→    }
+  1029→    const provided = req.headers['x-reset-admin-token']
+  1030→    if (typeof provided !== 'string' || provided.length === 0) {
+  1031→      return res.status(403).json({ error: 'X-Reset-Admin-Token header required' })
+  1032→    }
+  1033→    // Constant-time comparison to prevent timing attacks.
+  1034→    const a = Buffer.from(provided)
+  1035→    const b = Buffer.from(expected)
+  1036→    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+  1037→      return res.status(403).json({ error: 'Invalid reset token' })
+  1038→    }
+  1039→
+  1040→    const { resetAdminSchema } = await import('../lib/schemas.js')
+  1041→    const data = resetAdminSchema.parse(req.body)
+  1042→
+  1043→    if (data.password !== data.confirmPassword) {
+  1044→      return res.status(400).json({ error: 'Пароли не совпадают' })
+  1045→    }
+  1046→
+  1047→    const email = data.email.trim().toLowerCase()
+  1048→    const username = data.username.trim().toLowerCase()
+  1049→
+  1050→    // Проверяем, что username/email не заняты НЕ-админом (чтобы не удалить чужой аккаунт)
+  1051→    const clash = await prisma.user.findFirst({
+  1052→      where: {
+  1053→        OR: [{ email }, { username }],
+  1054→        role: { not: 'admin' },
+  1055→      },
+  1056→      select: { id: true },
+  1057→    })
+  1058→    if (clash) {
+  1059→      return res.status(409).json({ error: 'Пользователь с таким email или username уже существует (не админ)' })
+  1060→    }
+  1061→
+  1062→    const password = await hashPassword(data.password)
+  1063→
+  1064→    // Phase 8.1: SOFT-DELETE old admins instead of hard-delete.
+  1065→    // Previously this did `deleteMany({ where: { role: 'admin' } })` which
+  1066→    // CASCADE-deleted their orders, messages, reviews, audit logs — destroying
+  1067→    // financial records and other users' chat history. Now we:
+  1068→    //   1. Anonymize PII (email, phone, username, displayName, avatar, bio)
+  1069→    //   2. Set deletedAt = now()
+  1070→    //   3. Bump tokenVersion (invalidates all their JWTs immediately)
+  1071→    // The user record stays in DB for referential integrity (orders, messages).
+  1072→    // Atomic: soft-delete all admins + create new admin in one transaction.
+  1073→    //
+  1074→    // B-HIGH-004: kickUserSockets() and invalidateAuthCache() MUST run
+  1075→    // OUTSIDE the $transaction. Calling socket.disconnect(true) from inside
+  1076→    // the transaction callback holds the DB write lock for the duration of
+  1077→    // the socket teardown round-trip (~10–50 ms per socket); with N old
+  1078→    // admin sockets this serialises the entire transaction. Worse, if the
+  1079→    // transaction is later retried by Prisma (deadlock, write conflict),
+  1080→    // the sockets have ALREADY been kicked — the second attempt runs with
+  1081→    // phantom state. We collect the affected ids inside the transaction
+  1082→    // and act on them after it commits.
+  1083→    const now = new Date()
+  1084→    let kickedAdminIds: string[] = []
+  1085→    const user = await prisma.$transaction(async (tx) => {
+  1086→      const oldAdmins = await tx.user.findMany({
+  1087→        where: { role: 'admin', deletedAt: null },
+  1088→        select: { id: true },
+  1089→      })
+  1090→      kickedAdminIds = oldAdmins.map((o) => o.id)
+  1091→      for (const old of oldAdmins) {
+  1092→        await tx.user.update({
+  1093→          where: { id: old.id },
+  1094→          data: {
+  1095→            email: `deleted-${old.id}@deleted.local`,
+  1096→            phone: null,
+  1097→            username: `deleted-${old.id}`,
+  1098→            displayName: 'Deleted admin',
+  1099→            avatar: null,
+  1100→            bio: null,
+  1101→            deletedAt: now,
+  1102→            tokenVersion: { increment: 1 },
+  1103→          },
+  1104→        })
+  1105→      }
+  1106→      return tx.user.create({
+  1107→        data: {
+  1108→          email,
+  1109→          username,
+  1110→          password,
+  1111→          displayName: data.displayName,
+  1112→          role: 'admin',
+  1113→        },
+  1114→      })
+  1115→    })
+  1116→
+  1117→    // B-HIGH-004: invalidate cache + kick sockets AFTER the transaction
+  1118→    // commits — never inside it (see comment above).
+  1119→    for (const oldId of kickedAdminIds) {
+  1120→      invalidateAuthCache(oldId)
+  1121→      // v8-audit-fix: kick old admin's sockets (was missing — old admin kept receiving real-time events)
+  1122→      kickUserSockets(oldId)
+  1123→    }
+  1124→
+  1125→    // Invalidate any cached auth entries for the new admin id (paranoia).
+  1126→    invalidateAuthCache(user.id)
+  1127→
+  1128→    const token = signToken({
+  1129→      sub: user.id,
+  1130→      username: user.username,
+  1131→      role: 'admin',
+  1132→      v: user.tokenVersion,
+  1133→    })
+  1134→    // Phase 32: audit log reset-admin (critical security event)
+  1135→    await auditLogRaw(user.id, req, 'auth', user.id, 'reset_admin', {
+  1136→      after: { username: user.username, email: user.email, note: 'All previous admins were soft-deleted' },
+  1137→    })
+  1138→    res.status(201).json({ token, user: publicUser(user, { includeContact: true }) })
+  1139→  }),
+  1140→)
+  1141→
+  1142→// ============================================================================
+  1143→// v9-audit-fix: S-CRIT-008 — 2FA/TOTP endpoints
+  1144→// These endpoints implement the runtime for the totpSecret/totpEnabled schema
+  1145→// fields. Feature is opt-in per user — admins can enable TOTP on their account
+  1146→// for an extra layer of security beyond password + JWT.
+  1147→// ============================================================================
+  1148→
+  1149→// POST /api/auth/totp/setup — generate a new TOTP secret and return QR URL.
+  1150→// The secret is stored but TOTP is NOT enabled until verified via /totp/verify.
+  1151→//
+  1152→// C1 fix: этот endpoint требует повторного подтверждения credentials:
+  1153→//   - Если у юзера TOTP уже включён (re-setup scenario) — валидный TOTP код.
+  1154→//   - Если TOTP ещё не включён (первичный setup) — currentPassword.
+  1155→// Раньше endpoint принимал любой действующий JWT — злоумышленник с украденным
+  1156→// токеном мог полностью отключить 2FA жертвы-админа (вызвать /totp/setup,
+  1157→// затем повторно через /totp/verify с тем же секретом, который он же и сгенерил).
+  1158→//
+  1159→// v25.3 — admin first-time 2FA setup (TZ task #1):
+  1160→//   - Если запрос пришёл с `totpPending: true` setup-токеном (выдаётся
+  1161→//     /api/auth/login админу без TOTP), currentPassword НЕ требуется —
+  1162→//     setup-токен уже доказывает, что пользователь только что успешно
+  1163→//     прошёл проверку пароля. Это позволяет реализовать первоначальную
+  1164→//     настройку 2FA прямо в основном приложении (AdminLoginView),
+  1165→//     без перенаправления в Studio.
+  1166→//   - Токен отклоняется requireAdmin, поэтому никаких админских действий
+  1167→//     через него выполнить нельзя — только /totp/setup и /totp/verify.
+  1168→router.post(
+  1169→  '/totp/setup',
+  1170→  requireAuth,
+  1171→  asyncHandler(async (req: AuthedRequest, res) => {
+  1172→    const user = await prisma.user.findUnique({ where: { id: req.user!.id } })
+  1173→    if (!user) {
+  1174→      return res.status(404).json({ error: 'Пользователь не найден' })
+  1175→    }
+  1176→
+  1177→    const body = (req.body || {}) as { currentPassword?: string; code?: string }
+  1178→    // v25.3: setup-токен (totpPending) уже подтверждает аутентификацию паролем.
+  1179→    const isSetupToken = req.user?.totpPending === true
+  1180→
+  1181→    // Если TOTP уже включён — требуем валидный TOTP код (re-setup).
+  1182→    // Если TOTP не включён и запрос НЕ через setup-токен — требуем currentPassword.
+  1183→    // Если TOTP не включён и запрос через setup-токен — пропускаем проверку
+  1184→    // (пароль уже проверен на /api/auth/login перед выдачей setup-токена).
+  1185→    if (user.totpEnabled && user.totpSecret) {
+  1186→      if (!body.code) {
+  1187→        return res.status(400).json({ error: 'Для перегенерации TOTP введите текущий код 2FA.' })
+  1188→      }
+  1189→      const { verifyTotp } = await import('../lib/totp.js')
+  1190→      if (!verifyTotp(body.code, user.totpSecret)) {
+  1191→        return res.status(401).json({ error: 'Неверный код 2FA.' })
+  1192→      }
+  1193→    } else if (!isSetupToken) {
+  1194→      if (!body.currentPassword) {
+  1195→        return res.status(400).json({ error: 'Введите текущий пароль для настройки 2FA.' })
+  1196→      }
+  1197→      const ok = await comparePassword(body.currentPassword, user.password)
+  1198→      if (!ok) {
+  1199→        return res.status(401).json({ error: 'Неверный текущий пароль.' })
+  1200→      }
+  1201→    }
+  1202→
+  1203→    const { generateTotpSecret, generateTotpUrl } = await import('../lib/totp.js')
+  1204→    const secret = generateTotpSecret()
+  1205→    await prisma.user.update({
+  1206→      where: { id: req.user!.id },
+  1207→      data: { totpSecret: secret, totpEnabled: false },
+  1208→    })
+  1209→    await auditLogRaw(user.id, req, 'auth', user.id, 'totp_setup_initiated', {
+  1210→      after: { wasEnabled: user.totpEnabled },
+  1211→    })
+  1212→    const otpauthUrl = generateTotpUrl(secret, user.email || 'user@999.pro')
+  1213→    res.json({ secret, otpauthUrl })
+  1214→  }),
+  1215→)
+  1216→
+  1217→// POST /api/auth/totp/verify — verify a TOTP code and enable TOTP.
+  1218→//
+  1219→// ARCHITECTURAL FIX: after TOTP is successfully enabled, issue a FRESH
+  1220→// regular JWT (no `totpPending` claim) and return it. The client swaps
+  1221→// the setup token for this regular token, gaining full admin access.
+  1222→//
+  1223→// This endpoint accepts BOTH setup tokens (`totpPending: true`, issued by
+  1224→// /api/auth/login when admin first logs in without TOTP) and regular tokens
+  1225→// (for already-authenticated users re-verifying after re-setup). The
+  1226→// `requireAuth` middleware accepts both; `requireAdmin` is intentionally
+  1227→// NOT chained here so totpPending tokens are allowed.
+  1228→router.post(
+  1229→  '/totp/verify',
+  1230→  requireAuth,
+  1231→  asyncHandler(async (req: AuthedRequest, res) => {
+  1232→    const user = await prisma.user.findUnique({ where: { id: req.user!.id } })
+  1233→    if (!user?.totpSecret) {
+  1234→      return res.status(400).json({ error: 'Сначала вызовите /totp/setup для генерации секрета.' })
+  1235→    }
+  1236→    const code = (req.body as { code?: string })?.code
+  1237→    if (!code) {
+  1238→      return res.status(400).json({ error: 'Не указан код подтверждения.' })
+  1239→    }
+  1240→    const { verifyTotp } = await import('../lib/totp.js')
+  1241→    if (!verifyTotp(code, user.totpSecret)) {
+  1242→      return res.status(401).json({ error: 'Неверный код. Попробуйте снова.' })
+  1243→    }
+  1244→    await prisma.user.update({
+  1245→      where: { id: user.id },
+  1246→      data: { totpEnabled: true },
+  1247→    })
+  1248→    await auditLogRaw(user.id, req, 'auth', user.id, 'totp_enabled', {})
+  1249→
+  1250→    // Issue a fresh regular JWT (no totpPending). If the caller used a
+  1251→    // setup token, this regular token replaces it — full admin access
+  1252→    // restored. If the caller already had a regular token, this just
+  1253→    // refreshes it (harmless).
+  1254→    const freshToken = signToken({
+  1255→      sub: user.id,
+  1256→      username: user.username,
+  1257→      role: user.role as 'user' | 'admin',
+  1258→      v: user.tokenVersion,
+  1259→    })
+  1260→
+  1261→    res.json({ enabled: true, token: freshToken, user: publicUser(user, { includeContact: true }) })
+  1262→  }),
+  1263→)
+  1264→
+  1265→// POST /api/auth/totp/disable — disable TOTP (requires current code).
+  1266→router.post(
+  1267→  '/totp/disable',
+  1268→  requireAuth,
+  1269→  asyncHandler(async (req: AuthedRequest, res) => {
+  1270→    const user = await prisma.user.findUnique({ where: { id: req.user!.id } })
+  1271→    if (!user?.totpEnabled) {
+  1272→      return res.status(400).json({ error: 'TOTP не включён.' })
+  1273→    }
+  1274→    const code = (req.body as { code?: string })?.code
+  1275→    if (!code || !user.totpSecret) {
+  1276→      return res.status(400).json({ error: 'Требуется код для подтверждения отключения.' })
+  1277→    }
+  1278→    const { verifyTotp } = await import('../lib/totp.js')
+  1279→    if (!verifyTotp(code, user.totpSecret)) {
+  1280→      return res.status(401).json({ error: 'Неверный код.' })
+  1281→    }
+  1282→    await prisma.user.update({
+  1283→      where: { id: user.id },
+  1284→      data: { totpSecret: null, totpEnabled: false },
+  1285→    })
+  1286→    await auditLogRaw(user.id, req, 'auth', user.id, 'totp_disabled', {})
+  1287→    res.json({ enabled: false })
+  1288→  }),
+  1289→)
+  1290→
+  1291→// ============================================================================
+  1292→// v19.0 — Email 2FA + Backup codes verification on login
+  1293→// ============================================================================
+  1294→
+  1295→/**
+  1296→ * Try to authenticate using a TOTP backup code.
+  1297→ * Backup codes are stored as bcrypt hashes. On successful match, the
+  1298→ * code is removed from the user's list (one-time use).
+  1299→ * Returns true if a backup code matched.
+  1300→ */
+  1301→async function tryBackupCode(userId: string, code: string): Promise<boolean> {
+  1302→  const user = await prisma.user.findUnique({
+  1303→    where: { id: userId },
+  1304→    select: { totpBackupCodes: true },
+  1305→  })
+  1306→  if (!user?.totpBackupCodes) return false
+  1307→  let arr: string[] = []
+  1308→  try {
+  1309→    arr = JSON.parse(user.totpBackupCodes)
+  1310→    if (!Array.isArray(arr)) return false
+  1311→  } catch {
+  1312→    return false
+  1313→  }
+  1314→  for (let i = 0; i < arr.length; i++) {
+  1315→    const hash = arr[i]
+  1316→    try {
+  1317→      const match = await bcrypt.compare(code, hash)
+  1318→      if (match) {
+  1319→        // Remove this code (one-time use)
+  1320→        arr.splice(i, 1)
+  1321→        await prisma.user.update({
+  1322→          where: { id: userId },
+  1323→          data: { totpBackupCodes: JSON.stringify(arr) },
+  1324→        })
+  1325→        return true
+  1326→      }
+  1327→    } catch {
+  1328→      // skip malformed hashes
+  1329→    }
+  1330→  }
+  1331→  return false
+  1332→}
+  1333→
+  1334→// ============================================================================
+  1335→// v9-audit-fix: S-CRIT-007 — Email verification endpoint
+  1336→// Env-gated: only required when EMAIL_VERIFICATION_REQUIRED=true.
+  1337→// Without SMTP configured, verification links are logged to console.
+  1338→// ============================================================================
+  1339→
+  1340→// GET /api/auth/verify-email?token=xxx — verify email with token
+  1341→router.get(
+  1342→  '/verify-email',
+  1343→  asyncHandler(async (req, res) => {
+  1344→    const token = String(req.query.token || '')
+  1345→    if (!token || token.length < 16) {
+  1346→      return res.status(400).json({ error: 'Недействительный токен верификации.' })
+  1347→    }
+  1348→
+  1349→    // Look up the verification token in AppSetting
+  1350→    const setting = await prisma.appSetting.findUnique({
+  1351→      where: { id: `email:verify:${token}` },
+  1352→    })
+  1353→    if (!setting) {
+  1354→      return res.status(400).json({ error: 'Токен не найден или уже использован.' })
+  1355→    }
+  1356→
+  1357→    try {
+  1358→      const data = JSON.parse(setting.value) as { userId: string; expires: string }
+  1359→      if (new Date(data.expires) < new Date()) {
+  1360→        await prisma.appSetting.delete({ where: { id: setting.id } })
+  1361→        return res.status(400).json({ error: 'Срок действия токена истёк. Запросите новый.' })
+  1362→      }
+  1363→
+  1364→      // Mark email as verified
+  1365→      await prisma.user.update({
+  1366→        where: { id: data.userId },
+  1367→        data: { emailVerified: new Date() },
+  1368→      })
+  1369→
+  1370→      // Delete the token (single-use)
+  1371→      await prisma.appSetting.delete({ where: { id: setting.id } })
+  1372→
+  1373→      await auditLogRaw(data.userId, req, 'auth', data.userId, 'email_verified', {})
+  1374→      res.json({ ok: true, message: 'Email успешно подтверждён.' })
+  1375→    } catch {
+  1376→      return res.status(400).json({ error: 'Недействительный токен.' })
+  1377→    }
+  1378→  }),
+  1379→)
+  1380→
+  1381→// POST /api/auth/send-verification — send a new verification email
+  1382→router.post(
+  1383→  '/send-verification',
+  1384→  requireAuth,
+  1385→  asyncHandler(async (req: AuthedRequest, res) => {
+  1386→    // Fetch full user record (req.user only has JWT payload fields)
+  1387→    const user = await prisma.user.findUnique({
+  1388→      where: { id: req.user!.id },
+  1389→      select: { id: true, email: true, emailVerified: true },
+  1390→    })
+  1391→    if (!user) {
+  1392→      return res.status(404).json({ error: 'User not found.' })
+  1393→    }
+  1394→
+  1395→    // Already verified?
+  1396→    if (user.emailVerified) {
+  1397→      return res.status(400).json({ error: 'Email уже подтверждён.' })
+  1398→    }
+  1399→
+  1400→    // Generate a verification token (32 hex chars = 128 bits)
+  1401→    const crypto = await import('node:crypto')
+  1402→    const token = crypto.randomBytes(16).toString('hex')
+  1403→
+  1404→    // Store in AppSetting with 24h expiry
+  1405→    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000)
+  1406→    await prisma.appSetting.upsert({
+  1407→      where: { id: `email:verify:${token}` },
+  1408→      update: { value: JSON.stringify({ userId: user.id, expires: expires.toISOString() }) },
+  1409→      create: {
+  1410→        id: `email:verify:${token}`,
+  1411→        value: JSON.stringify({ userId: user.id, expires: expires.toISOString() }),
+  1412→      },
+  1413→    })
+  1414→
+  1415→    // Construct verification URL
+  1416→    const baseUrl = process.env.APP_PUBLIC_URL || 'http://localhost:3000'
+  1417→    const verifyUrl = `${baseUrl}/api/auth/verify-email?token=${token}`
+  1418→
+  1419→    // AUDIT-3 S-HIGH-002 fix (v16.8): actually send the email via SMTP.
+  1420→    // Previously this was a TODO + the URL was logged to stderr — anyone
+  1421→    // with log access could see the verification token. Now we use the
+  1422→    // real sendVerificationEmail() from lib/email.ts, which:
+  1423→    //   • sends via SMTP if SMTP_HOST is configured
+  1424→    //   • silently skips (with a non-token log line) if no SMTP configured
+  1425→    // The verification URL itself is NEVER logged — only recipient + subject.
+  1426→    const { sendVerificationEmail } = await import('../lib/email.js')
+  1427→    await sendVerificationEmail(user.email, verifyUrl)
+  1428→
+  1429→    res.json({ ok: true, message: 'Письмо верификации отправлено.' })
+  1430→  }),
+  1431→)
+  1432→
+  1433→// ============================================================================
+  1434→// AUDIT-3 S-MED-008 fix (v16.8): forgot-password flow.
+  1435→// Previously, users who forgot their password had NO way to recover the
+  1436→// account — the only option was admin /reset-admin which deletes ALL admins.
+  1437→// Now: POST /api/auth/forgot-password (public, rate-limited) → sends email
+  1438→// with a 1-hour reset token. POST /api/auth/reset-password (public) →
+  1439→// verifies token + sets new password + bumps tokenVersion (invalidates all
+  1440→// existing sessions, including the attacker's if the password was leaked).
+  1441→// ============================================================================
+  1442→
+  1443→// POST /api/auth/forgot-password — request a password reset email.
+  1444→// Always returns 200 (even if email doesn't exist) to prevent user enumeration.
+  1445→// (Rate-limited globally by app.use('/api/auth', authLimiter) in index.ts.)
+  1446→router.post(
+  1447→  '/forgot-password',
+  1448→  asyncHandler(async (req, res) => {
+  1449→    const schema = z.object({ email: z.string().email().or(z.string().min(3).max(50)) })
+  1450→    const parsed = schema.safeParse(req.body)
+  1451→    if (!parsed.success) {
+  1452→      return res.status(200).json({ ok: true, message: 'Если аккаунт существует, письмо отправлено.' })
+  1453→    }
+  1454→    const login = parsed.data.email.toLowerCase().trim()
+  1455→
+  1456→    const user = await prisma.user.findFirst({
+  1457→      where: { OR: [{ email: login }, { username: login }, { phone: login }], deletedAt: null },
+  1458→      select: { id: true, email: true, username: true },
+  1459→    })
+  1460→
+  1461→    // Always return 200 — do not leak whether the email exists.
+  1462→    if (user) {
+  1463→      // Generate a 32-byte hex token + store in AppSetting with 1h expiry.
+  1464→      const token = crypto.randomBytes(32).toString('hex')
+  1465→      const expires = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+  1466→      await prisma.appSetting.upsert({
+  1467→        where: { id: `pwd:reset:${token}` },
+  1468→        update: { value: JSON.stringify({ userId: user.id, expires: expires.toISOString() }) },
+  1469→        create: {
+  1470→          id: `pwd:reset:${token}`,
+  1471→          value: JSON.stringify({ userId: user.id, expires: expires.toISOString() }),
+  1472→        },
+  1473→      })
+  1474→
+  1475→      const baseUrl = process.env.APP_PUBLIC_URL || 'http://localhost:3000'
+  1476→      const resetUrl = `${baseUrl}/?view=reset-password&token=${token}`
+  1477→
+  1478→      const { sendPasswordResetEmail } = await import('../lib/email.js')
+  1479→      await sendPasswordResetEmail(user.email, resetUrl)
+  1480→
+  1481→      // Audit the reset request (without logging the token).
+  1482→      await auditLogRaw(user.id, req, 'auth', user.id, 'password_reset_requested', {
+  1483→        after: { username: user.username },
+  1484→      })
+  1485→    }
+  1486→
+  1487→    res.status(200).json({ ok: true, message: 'Если аккаунт существует, письмо отправлено.' })
+  1488→  }),
+  1489→)
+  1490→
+  1491→// POST /api/auth/reset-password — set a new password using a reset token.
+  1492→// (Rate-limited globally by app.use('/api/auth', authLimiter) in index.ts.)
+  1493→router.post(
+  1494→  '/reset-password',
+  1495→  asyncHandler(async (req, res) => {
+  1496→    const schema = z.object({
+  1497→      token: z.string().min(64).max(64),
+  1498→      newPassword: z.string().min(8).max(200),
+  1499→    })
+  1500→    const parsed = schema.safeParse(req.body)
+  1501→    if (!parsed.success) {
+  1502→      return res.status(400).json({ error: 'Неверный запрос', issues: parsed.error.issues })
+  1503→    }
+  1504→    const { token, newPassword } = parsed.data
+  1505→
+  1506→    // Look up the token in AppSetting.
+  1507→    const setting = await prisma.appSetting.findUnique({ where: { id: `pwd:reset:${token}` } })
+  1508→    if (!setting) {
+  1509→      return res.status(400).json({ error: 'Недействительный или истёкший токен' })
+  1510→    }
+  1511→
+  1512→    let tokenData: { userId: string; expires: string }
+  1513→    try {
+  1514→      tokenData = JSON.parse(setting.value)
+  1515→    } catch {
+  1516→      return res.status(400).json({ error: 'Недействительный токен' })
+  1517→    }
+  1518→
+  1519→    // Check expiry.
+  1520→    if (new Date(tokenData.expires) < new Date()) {
+  1521→      // Delete the expired token so it can't be reused.
+  1522→      await prisma.appSetting.delete({ where: { id: `pwd:reset:${token}` } }).catch(() => {})
+  1523→      return res.status(400).json({ error: 'Срок действия токена истёк. Запросите новый.' })
+  1524→    }
+  1525→
+  1526→    // Fetch the user.
+  1527→    const user = await prisma.user.findUnique({
+  1528→      where: { id: tokenData.userId, deletedAt: null },
+  1529→      select: { id: true, username: true, tokenVersion: true },
+  1530→    })
+  1531→    if (!user) {
+  1532→      return res.status(400).json({ error: 'Аккаунт не найден' })
+  1533→    }
+  1534→
+  1535→    // Hash the new password + bump tokenVersion to invalidate ALL existing
+  1536→    // sessions (including the attacker's, if the password was leaked).
+  1537→    const newHash = await hashPassword(newPassword)
+  1538→    await prisma.$transaction([
+  1539→      prisma.user.update({
+  1540→        where: { id: user.id },
+  1541→        data: {
+  1542→          password: newHash,
+  1543→          tokenVersion: { increment: 1 }, // invalidate all existing JWTs
+  1544→          failedLoginCount: 0,
+  1545→          lockedUntil: null, // clear any active lockout
+  1546→        },
+  1547→      }),
+  1548→      // Delete the reset token so it can't be reused.
+  1549→      prisma.appSetting.delete({ where: { id: `pwd:reset:${token}` } }),
+  1550→    ])
+  1551→
+  1552→    // Audit the successful reset.
+  1553→    await auditLogRaw(user.id, req, 'auth', user.id, 'password_reset_completed', {
+  1554→      after: { username: user.username },
+  1555→    })
+  1556→
+  1557→    // Kick any active socket sessions so the user has to re-login everywhere.
+  1558→    try {
+  1559→      const { kickUserSockets } = await import('../socket/handlers.js')
+  1560→      kickUserSockets(user.id)
+  1561→    } catch { /* non-critical */ }
+  1562→
+  1563→    res.json({ ok: true, message: 'Пароль изменён. Войдите с новым паролем.' })
+  1564→  }),
+  1565→)
+  1566→
+  1567→export default router
+  1568→

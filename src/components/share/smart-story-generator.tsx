@@ -51,8 +51,12 @@ interface Props {
   shortId: string
 }
 
+// v25.4 (share card audit): changed from 9:16 (1080×1920) to 3:4 (1080×1440).
+// 3:4 is the standard portrait share-card ratio — fits Instagram feed (4:5 is
+// 1080×1350, also acceptable), WhatsApp/Telegram link previews, and prints
+// better on product cards. All downstream layout constants are re-tuned below.
 const STORY_W = 1080
-const STORY_H = 1920
+const STORY_H = 1440
 const TAGLINE = 'Маркетплейс нового поколения'
 
 export function SmartStoryGenerator({ open, onClose, product, shareUrl, deepLinkUrl, shortId }: Props) {
@@ -283,7 +287,7 @@ export function SmartStoryGenerator({ open, onClose, product, shareUrl, deepLink
                   ref={previewRef}
                   width={270}
                   className="rounded-2xl shadow-2xl"
-                  style={{ aspectRatio: '9 / 16', height: 'auto', maxHeight: '60vh' }}
+                  style={{ aspectRatio: '3 / 4', height: 'auto', maxHeight: '60vh' }}
                 />
 
                 {/* Navigation arrows */}
@@ -330,9 +334,10 @@ export function SmartStoryGenerator({ open, onClose, product, shareUrl, deepLink
                         if (el && stories[i]) {
                           const ctx = el.getContext('2d')
                           if (ctx) {
+                            // v25.4: 3:4 thumbnails (was 36×64 for 9:16)
                             el.width = 36
-                            el.height = 64
-                            ctx.drawImage(stories[i], 0, 0, 36, 64)
+                            el.height = 48
+                            ctx.drawImage(stories[i], 0, 0, 36, 48)
                           }
                         }
                       }}
@@ -400,28 +405,30 @@ async function renderProductStory(opts: {
   ctx.drawImage(img, dx, dy, drawW, drawH)
 
   // 2. Dark gradient overlay (top + bottom) for text readability.
-  const topGrad = ctx.createLinearGradient(0, 0, 0, 400)
+  // v25.4: re-tuned for 1440px height (was 400/700 for 1920px).
+  const topGrad = ctx.createLinearGradient(0, 0, 0, 300)
   topGrad.addColorStop(0, 'rgba(15, 23, 42, 0.85)')
   topGrad.addColorStop(1, 'rgba(15, 23, 42, 0)')
   ctx.fillStyle = topGrad
-  ctx.fillRect(0, 0, STORY_W, 400)
+  ctx.fillRect(0, 0, STORY_W, 300)
 
-  const bottomGrad = ctx.createLinearGradient(0, STORY_H - 700, 0, STORY_H)
+  const bottomGrad = ctx.createLinearGradient(0, STORY_H - 560, 0, STORY_H)
   bottomGrad.addColorStop(0, 'rgba(15, 23, 42, 0)')
   bottomGrad.addColorStop(0.5, 'rgba(15, 23, 42, 0.7)')
   bottomGrad.addColorStop(1, 'rgba(15, 23, 42, 0.95)')
   ctx.fillStyle = bottomGrad
-  ctx.fillRect(0, STORY_H - 700, STORY_W, 700)
+  ctx.fillRect(0, STORY_H - 560, STORY_W, 560)
 
   // 3. Brand logo top-left — gradient badge + wordmark.
-  drawBrandBadge(ctx, 60, 60, 80)
+  // v25.4: badge size 80 → 64 (proportional to shorter canvas).
+  drawBrandBadge(ctx, 60, 60, 64)
 
   // 4. Tagline (top, below logo).
   ctx.fillStyle = '#ffffff'
-  ctx.font = `500 32px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `500 28px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
-  ctx.fillText(TAGLINE, 160, 90)
+  ctx.fillText(TAGLINE, 140, 80)
 
   // 5. Image counter (top-right).
   if (opts.totalImages > 1 && !opts.isCover) {
@@ -462,15 +469,16 @@ function drawBrandBadge(ctx: CanvasRenderingContext2D, x: number, y: number, siz
 }
 
 function drawProductCard(ctx: CanvasRenderingContext2D, opts: any) {
+  // v25.4: re-tuned card dimensions for 1440px height (was 380/320 for 1920px).
   const cardX = 60
-  const cardY = STORY_H - 380
+  const cardY = STORY_H - 320
   const cardW = STORY_W - 120
-  const cardH = 320
+  const cardH = 260
 
   // Glass card — semi-transparent white with blur effect (canvas doesn't
   // have native backdrop-blur, so we approximate with a subtle gradient).
   ctx.save()
-  roundRectPath(ctx, cardX, cardY, cardW, cardH, 32)
+  roundRectPath(ctx, cardX, cardY, cardW, cardH, 28)
   ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
   ctx.fill()
   // Border
@@ -479,84 +487,91 @@ function drawProductCard(ctx: CanvasRenderingContext2D, opts: any) {
   ctx.stroke()
   ctx.restore()
 
-  // Title
+  // Title — v25.4: 42→36px font, 52→46 line height (proportional to shorter card)
   ctx.fillStyle = '#ffffff'
-  ctx.font = `700 42px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `700 36px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
-  wrapText(ctx, opts.title, cardX + 32, cardY + 32, cardW - 64, 52, 2)
+  wrapText(ctx, opts.title, cardX + 28, cardY + 28, cardW - 56, 44, 2)
 
-  // Rating row
+  // Rating row — v25.4: 145→120 (proportional)
   if (opts.rating > 0) {
-    const starY = cardY + 145
-    drawStars(ctx, cardX + 32, starY, 32, Math.round(opts.rating))
+    const starY = cardY + 120
+    drawStars(ctx, cardX + 28, starY, 26, Math.round(opts.rating))
     ctx.fillStyle = '#fbbf24'
-    ctx.font = `600 28px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+    ctx.font = `600 24px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
     ctx.textAlign = 'left'
-    ctx.fillText(`${opts.rating.toFixed(1)}`, cardX + 32 + 5 * 36 + 16, starY + 2)
+    ctx.fillText(`${opts.rating.toFixed(1)}`, cardX + 28 + 5 * 30 + 14, starY + 2)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
-    ctx.font = `400 24px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
-    ctx.fillText(`· ${opts.reviewsCount} отзывов`, cardX + 32 + 5 * 36 + 80, starY + 4)
+    ctx.font = `400 20px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+    ctx.fillText(`· ${opts.reviewsCount} отзывов`, cardX + 28 + 5 * 30 + 70, starY + 4)
   }
 
-  // Price
-  const priceY = cardY + cardH - 90
+  // Price — v25.4: 64→52px (proportional)
+  const priceY = cardY + cardH - 80
   ctx.fillStyle = '#ffffff'
-  ctx.font = `800 64px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `800 52px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'left'
-  ctx.fillText(formatPrice(opts.price, opts.currency), cardX + 32, priceY)
+  ctx.fillText(formatPrice(opts.price, opts.currency), cardX + 28, priceY)
 
   if (opts.oldPrice && opts.oldPrice > opts.price) {
     const priceW = ctx.measureText(formatPrice(opts.price, opts.currency)).width
     ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'
-    ctx.font = `400 36px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
-    ctx.fillText(formatPrice(opts.oldPrice, opts.currency), cardX + 32 + priceW + 24, priceY + 20)
+    ctx.font = `400 30px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+    ctx.fillText(formatPrice(opts.oldPrice, opts.currency), cardX + 28 + priceW + 20, priceY + 18)
     // Strikethrough
     const oldPriceW = ctx.measureText(formatPrice(opts.oldPrice, opts.currency)).width
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
     ctx.lineWidth = 3
     ctx.beginPath()
-    ctx.moveTo(cardX + 32 + priceW + 24, priceY + 38)
-    ctx.lineTo(cardX + 32 + priceW + 24 + oldPriceW, priceY + 38)
+    ctx.moveTo(cardX + 28 + priceW + 20, priceY + 34)
+    ctx.lineTo(cardX + 28 + priceW + 20 + oldPriceW, priceY + 34)
     ctx.stroke()
   }
 
   // CTA hint
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
-  ctx.font = `500 26px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `500 22px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'right'
-  ctx.fillText('Открой в 999 — Три девятки →', cardX + cardW - 32, cardY + cardH - 50)
+  ctx.fillText('Открой в 999 — Три девятки →', cardX + cardW - 28, cardY + cardH - 44)
 }
 
 function drawCoverCard(ctx: CanvasRenderingContext2D, opts: any) {
+  // v25.4: re-tuned vertical anchors for 1440px height.
+  //   title:   STORY_H-720 → STORY_H-560
+  //   price:   STORY_H-580 → STORY_H-440
+  //   rating:  STORY_H-470 → STORY_H-360
+  //   QR:      STORY_H-420, size 360 → STORY_H-320, size 280
+  //   CTA:     STORY_H-110/65 → STORY_H-90/50
+
   // Title (large, centered in bottom third)
   ctx.fillStyle = '#ffffff'
-  ctx.font = `800 56px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `800 48px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
-  wrapText(ctx, opts.title, STORY_W / 2, STORY_H - 720, STORY_W - 120, 64, 2)
+  wrapText(ctx, opts.title, STORY_W / 2, STORY_H - 560, STORY_W - 120, 54, 2)
 
   // Price
-  ctx.font = `800 80px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `800 68px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.fillStyle = '#ffffff'
-  ctx.fillText(formatPrice(opts.price, opts.currency), STORY_W / 2, STORY_H - 580)
+  ctx.fillText(formatPrice(opts.price, opts.currency), STORY_W / 2, STORY_H - 440)
 
   // Rating
   if (opts.rating > 0) {
-    const ratingY = STORY_H - 470
-    drawStars(ctx, STORY_W / 2 - 5 * 32 / 2, ratingY, 32, Math.round(opts.rating))
+    const ratingY = STORY_H - 360
+    drawStars(ctx, STORY_W / 2 - 5 * 28 / 2, ratingY, 28, Math.round(opts.rating))
   }
 
-  // QR code (centered, with brand badge)
-  const qrSize = 360
+  // QR code (centered, with brand badge) — v25.4: 360→280
+  const qrSize = 280
   const qrX = (STORY_W - qrSize) / 2
-  const qrY = STORY_H - 420
+  const qrY = STORY_H - 320
   if (opts.deepLinkUrl) {
     const matrix = generateQrMatrix(opts.deepLinkUrl)
     if (matrix) {
       // White rounded background for QR
       ctx.fillStyle = '#ffffff'
-      roundRectPath(ctx, qrX - 20, qrY - 20, qrSize + 40, qrSize + 40, 24)
+      roundRectPath(ctx, qrX - 16, qrY - 16, qrSize + 32, qrSize + 32, 20)
       ctx.fill()
 
       // Draw QR
@@ -570,20 +585,20 @@ function drawCoverCard(ctx: CanvasRenderingContext2D, opts: any) {
         }
       }
 
-      // Brand badge in center
-      const badgeSize = 80
+      // Brand badge in center — v25.4: 80→64
+      const badgeSize = 64
       drawBrandBadge(ctx, STORY_W / 2 - badgeSize / 2, qrY + qrSize / 2 - badgeSize / 2, badgeSize)
     }
   }
 
-  // CTA below QR
+  // CTA below QR — v25.4: 32→26px, 26→22px (proportional)
   ctx.fillStyle = '#ffffff'
-  ctx.font = `600 32px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `600 26px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'center'
-  ctx.fillText('Отсканируй, чтобы открыть', STORY_W / 2, STORY_H - 110)
+  ctx.fillText('Отсканируй, чтобы открыть', STORY_W / 2, STORY_H - 90)
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
-  ctx.font = `400 26px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
-  ctx.fillText('Маркетплейс нового поколения', STORY_W / 2, STORY_H - 65)
+  ctx.font = `400 22px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.fillText('Маркетплейс нового поколения', STORY_W / 2, STORY_H - 50)
 }
 
 function drawStars(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, rating: number) {

@@ -165,14 +165,16 @@ export function FloatingLiveInfo() {
   }, [settings])
 
   // ---- Initial fetch + periodic refresh ----
+  // v25.4 (perf audit P-5): collapsed two overlapping intervals into one.
+  // Previously both `financeTimer` (5 min) and `prayerTimer` (60s) called
+  // the same `buildItems`, which does 3 sequential awaits — at the 5-min
+  // mark both fired in the same tick → 6 sequential network requests.
+  // Now a single 60s interval fires `buildItems`, and inside `buildItems`
+  // finance is only re-fetched if 5 min have elapsed since the last fetch.
   useEffect(() => {
     buildItems()
-    const financeTimer = setInterval(buildItems, FINANCE_REFRESH_MS)
-    const prayerTimer = setInterval(buildItems, PRAYER_REFRESH_MS)
-    return () => {
-      clearInterval(financeTimer)
-      clearInterval(prayerTimer)
-    }
+    const timer = setInterval(buildItems, PRAYER_REFRESH_MS)
+    return () => clearInterval(timer)
   }, [buildItems])
 
   // v19.0 — Auto-request browser geolocation once on first mount if:

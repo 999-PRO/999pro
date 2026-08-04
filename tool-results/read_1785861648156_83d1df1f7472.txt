@@ -1,0 +1,602 @@
+   700→        <Calculator className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+   701→        <span className="text-sm font-semibold flex-1">
+   702→          {calculation.product?.name ? `Расчёт: ${calculation.product.name}` : 'Расчёт стоимости'}
+   703→        </span>
+   704→        {calculation.total > 0 && (
+   705→          <span className="text-base font-bold text-blue-700 dark:text-blue-300">{calculation.total.toLocaleString('ru-RU')} ₽</span>
+   706→        )}
+   707→        {calculation.range && (
+   708→          <span className="text-base font-bold text-blue-700 dark:text-blue-300">
+   709→            {calculation.range[0].toLocaleString('ru-RU')}–{calculation.range[1].toLocaleString('ru-RU')} ₽
+   710→          </span>
+   711→        )}
+   712→        <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
+   713→      </button>
+   714→      <AnimatePresence>
+   715→        {open && (
+   716→          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+   717→            <div className="px-3 pb-3 space-y-1">
+   718→              {calculation.breakdown?.map((line: string, i: number) => (
+   719→                <div key={i} className="text-xs text-foreground/70 font-mono">{line}</div>
+   720→              ))}
+   721→              {calculation.missing?.length > 0 && (
+   722→                <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 font-medium">
+   723→                  Нужно уточнить: {calculation.missing.join(', ')}
+   724→                </div>
+   725→              )}
+   726→            </div>
+   727→          </motion.div>
+   728→        )}
+   729→      </AnimatePresence>
+   730→    </div>
+   731→  )
+   732→}
+   733→
+   734→function OrderWizard({ data, onSubmitted }: { data: any; onSubmitted: (orderId: string, total: number, message: string) => void }) {
+   735→  const [step, setStep] = useState<'confirm' | 'form' | 'submitting' | 'done' | 'error'>('confirm')
+   736→  const [name, setName] = useState('')
+   737→  const [phone, setPhone] = useState('')
+   738→  const [email, setEmail] = useState('')
+   739→  const [address, setAddress] = useState('')
+   740→  const [comment, setComment] = useState('')
+   741→  const [result, setResult] = useState<any>(null)
+   742→  const [error, setError] = useState('')
+   743→
+   744→  const handleSubmit = async () => {
+   745→    if (!name.trim() || !phone.trim()) return
+   746→    setStep('submitting')
+   747→    setError('')
+   748→    try {
+   749→      const r = await api.post<{ ok: boolean; orderId?: string; orderNumber?: string; total: number; message: string; error?: string }>('/api/ai/order', {
+   750→        json: {
+   751→          productSlug: data.productSlug,
+   752→          productName: data.productName,
+   753→          customerName: name,
+   754→          customerPhone: phone,
+   755→          customerEmail: email,
+   756→          deliveryAddress: address,
+   757→          customerComment: comment,
+   758→          totalQuote: data.calculation?.total,
+   759→        },
+   760→      })
+   761→      if (r.ok === true && (r.orderId || r.orderNumber)) {
+   762→        setResult(r)
+   763→        setStep('done')
+   764→        onSubmitted(r.orderId || r.orderNumber || '', r.total, r.message)
+   765→      } else {
+   766→        setError(r.error || r.message || 'Не удалось создать заказ')
+   767→        setStep('error')
+   768→      }
+   769→    } catch (e: any) {
+   770→      setError(e?.message || 'Не удалось связаться с сервером')
+   771→      setStep('error')
+   772→    }
+   773→  }
+   774→
+   775→  if (step === 'done' && result) {
+   776→    return (
+   777→      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+   778→        className="w-full rounded-2xl overflow-hidden border border-emerald-400/40 bg-gradient-to-br from-emerald-50/90 to-teal-50/70 dark:from-emerald-950/30 dark:to-teal-950/20 backdrop-blur-xl p-4">
+   779→        <div className="flex items-center gap-3 text-emerald-700 dark:text-emerald-300 mb-3">
+   780→          <div className="h-10 w-10 rounded-full bg-emerald-500 grid place-items-center">
+   781→            <CheckCircle2 className="h-6 w-6 text-white" />
+   782→          </div>
+   783→          <div>
+   784→            <div className="font-bold text-base">Заявка успешно создана</div>
+   785→            <div className="text-xs opacity-80">Номер: <span className="font-mono font-bold">{result.orderNumber || result.orderId?.slice(-8).toUpperCase()}</span></div>
+   786→          </div>
+   787→        </div>
+   788→        {result.total > 0 && <div className="text-sm mb-2">Сумма: <span className="font-bold text-lg">{result.total.toLocaleString('ru-RU')} ₽</span></div>}
+   789→        <div className="text-xs text-muted-foreground">{result.message}</div>
+   790→      </motion.div>
+   791→    )
+   792→  }
+   793→
+   794→  if (step === 'error') {
+   795→    return (
+   796→      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+   797→        className="w-full rounded-2xl overflow-hidden border border-red-400/40 bg-red-50/80 dark:bg-red-950/30 backdrop-blur-xl p-4">
+   798→        <div className="flex items-center gap-2 text-red-700 dark:text-red-300 mb-2">
+   799→          <AlertCircle className="h-5 w-5" />
+   800→          <span className="font-semibold">Не удалось создать заявку</span>
+   801→        </div>
+   802→        <div className="text-xs text-muted-foreground mb-3">{error}</div>
+   803→        <button onClick={() => setStep('form')} className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600">Попробовать снова</button>
+   804→      </motion.div>
+   805→    )
+   806→  }
+   807→
+   808→  if (step === 'submitting') {
+   809→    return (
+   810→      <div className="w-full rounded-2xl overflow-hidden border border-primary/30 bg-primary/5 backdrop-blur-xl p-6 flex flex-col items-center gap-3">
+   811→        <Loader2 className="h-8 w-8 text-primary animate-spin" />
+   812→        <div className="text-sm font-medium">Создаём заявку…</div>
+   813→        <div className="text-xs text-muted-foreground">Пожалуйста, подождите</div>
+   814→      </div>
+   815→    )
+   816→  }
+   817→
+   818→  if (step === 'confirm') {
+   819→    return (
+   820→      <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+   821→        className="w-full rounded-2xl overflow-hidden border border-primary/30 bg-gradient-to-br from-primary/5 to-blue-50/40 dark:from-primary/10 dark:to-blue-950/20 backdrop-blur-xl p-4">
+   822→        <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+   823→          <ShoppingBag className="h-4 w-4 text-primary" />
+   824→          Оформить «{data.productName}»?
+   825→        </div>
+   826→        {data.calculation && (
+   827→          <div className="text-xs text-foreground/80 space-y-0.5 mb-3 bg-background/60 rounded-lg p-2">
+   828→            {data.calculation.breakdown?.map((line: string, i: number) => (
+   829→              <div key={i} className="font-mono">{line}</div>
+   830→            ))}
+   831→            {data.calculation.total > 0 && (
+   832→              <div className="text-sm font-bold text-primary mt-1">Итого: {data.calculation.total.toLocaleString('ru-RU')} ₽</div>
+   833→            )}
+   834→          </div>
+   835→        )}
+   836→        <div className="flex gap-2">
+   837→          <button onClick={() => setStep('form')} className="flex-1 px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">
+   838→            Оформить
+   839→          </button>
+   840→          <button onClick={() => setStep('done')} className="px-3 py-2.5 rounded-xl bg-accent text-sm hover:bg-accent/80 transition-colors">
+   841→            Позже
+   842→          </button>
+   843→        </div>
+   844→      </motion.div>
+   845→    )
+   846→  }
+   847→
+   848→  // step === 'form'
+   849→  return (
+   850→    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+   851→      className="w-full rounded-2xl overflow-hidden border border-primary/30 bg-background/95 backdrop-blur-xl p-4 space-y-2">
+   852→      <div className="text-sm font-semibold mb-1">Контактные данные</div>
+   853→      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ваше имя *" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   854→      <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Телефон *" type="tel" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   855→      <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email (опционально)" type="email" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   856→      <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Адрес доставки" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   857→      <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Комментарий к заказу" rows={2} className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 resize-none" />
+   858→      <div className="flex gap-2 pt-1">
+   859→        <button onClick={handleSubmit} disabled={!name.trim() || !phone.trim()} className="flex-1 px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+   860→          Отправить заявку
+   861→        </button>
+   862→        <button onClick={() => setStep('confirm')} className="px-3 py-2.5 rounded-xl bg-accent text-sm hover:bg-accent/80 transition-colors">Назад</button>
+   863→      </div>
+   864→    </motion.div>
+   865→  )
+   866→}
+   867→
+   868→function ActionButton({ action, onAction }: { action: ChatAction; onAction: (a: ChatAction) => void }) {
+   869→  const icons: Record<string, any> = {
+   870→    open_catalog: Package, open_product: Package, open_cart: ShoppingBag, open_checkout: ShoppingBag,
+   871→    open_films: Film, open_music: Music, open_media: Film, open_chat: MessageCircle,
+   872→    open_support: HelpCircle, open_orders: ShoppingBag, show_contacts: Phone,
+   873→    start_order_wizard: ShoppingBag, navigate: Sparkles,
+   874→  }
+   875→  const Icon = icons[action.type] || Sparkles
+   876→  return (
+   877→    <button onClick={() => onAction(action)}
+   878→      className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full bg-white/10 text-white hover:bg-white/20 border border-white/20 transition-all">
+   879→      <Icon className="h-3.5 w-3.5" />
+   880→      {action.label}
+   881→    </button>
+   882→  )
+   883→}
+   884→
+   885→// ===========================================================================
+   886→//  v8: ChatBubble — рендер одного сообщения в истории диалога
+   887→//  Поддерживает:
+   888→//    • role='user' — правая сторона, indigo gradient
+   889→//    • role='assistant' — левая сторона, glass-фон
+   890→//    • isTyping=true — показываем displayedText с мигающим курсором
+   891→//    • response.cards / response.actions / response.calculation
+   892→// ===========================================================================
+   893→function ChatBubble({
+   894→  role,
+   895→  text,
+   896→  response,
+   897→  isTyping,
+   898→  displayedText,
+   899→  onAction,
+   900→  onOpenProduct,
+   901→}: {
+   902→  role: 'user' | 'assistant'
+   903→  text?: string
+   904→  response?: AIResponse
+   905→  isTyping?: boolean
+   906→  displayedText?: string
+   907→  onAction?: (a: ChatAction) => void
+   908→  onOpenProduct?: (id: string) => void
+   909→}) {
+   910→  const isUser = role === 'user'
+   911→  const content = isTyping ? (displayedText || '') : (text ?? response?.text ?? '')
+   912→
+   913→  if (isUser) {
+   914→    return (
+   915→      <div className="flex justify-end">
+   916→        <div
+   917→          className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-br-md text-white text-sm leading-relaxed shadow-lg"
+   918→          style={{
+   919→            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+   920→            boxShadow: '0 4px 16px -4px rgba(99,102,241,0.4)',
+   921→          }}
+   922→        >
+   923→          {content}
+   924→        </div>
+   925→      </div>
+   926→    )
+   927→  }
+   928→
+   929→  return (
+   930→    <div className="flex justify-start">
+   931→      {/* v11: max-w-[95%] (было 92%) — больше места для длинных ответов AI.
+   932→          w-full чтобы контент мог растягиваться по ширине. */}
+   933→      <div className="max-w-[95%] w-full flex flex-col gap-2">
+   934→        {/* AI avatar row */}
+   935→        <div className="flex items-center gap-2">
+   936→          <div className="h-6 w-6 rounded-full bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 grid place-items-center shrink-0">
+   937→            <Sparkles className="h-3 w-3 text-white" />
+   938→          </div>
+   939→          <span className="text-[10px] text-white/40 uppercase tracking-wide">AI</span>
+   940→        </div>
+   941→        {/* Bubble — v11: без max-height, без overflow. Текст растёт автоматически. */}
+   942→        <div
+   943→          className="px-4 py-2.5 rounded-2xl rounded-tl-md text-white text-sm leading-relaxed bg-white/5 border border-white/10 backdrop-blur-sm"
+   944→          style={{ boxShadow: '0 2px 8px -2px rgba(0,0,0,0.3)' }}
+   945→        >
+   946→          {isTyping ? (
+   947→            <div className="whitespace-pre-wrap">
+   948→              {content}
+   949→              <span
+   950→                className="inline-block w-[2px] h-[1.1em] ml-0.5 align-text-bottom bg-violet-400 animate-pulse"
+   951→                aria-hidden="true"
+   952→              />
+   953→            </div>
+   954→          ) : (
+   955→            <AIResponseRenderer text={content} />
+   956→          )}
+   957→        </div>
+   958→
+   959→        {/* Calculation card */}
+   960→        {!isTyping && response?.calculation && <CalculationCard calculation={response.calculation} />}
+   961→
+   962→        {/* Rich cards (grouped by category if available) */}
+   963→        {!isTyping && response?.cards && response.cards.length > 0 && (
+   964→          <ResponseCards cards={response.cards} onOpenProduct={onOpenProduct} />
+   965→        )}
+   966→
+   967→        {/* Action buttons */}
+   968→        {!isTyping && response?.actions && response.actions.length > 0 && (
+   969→          <div className="flex flex-wrap gap-2 pl-1">
+   970→            {response.actions.map((a, i) => (
+   971→              <ActionButton key={i} action={a} onAction={onAction!} />
+   972→            ))}
+   973→          </div>
+   974→        )}
+   975→      </div>
+   976→    </div>
+   977→  )
+   978→}
+   979→
+   980→// ===========================================================================
+   981→//  v8: ResponseCards — рендер карточек с группировкой по категориям
+   982→//  Поддерживает:
+   983→//    • Категория с заголовком → горизонтальная прокрутка
+   984→//    • Несколько категорий → разделители
+   985→//    • Компактные карточки товаров
+   986→// ===========================================================================
+   987→function ResponseCards({
+   988→  cards,
+   989→  onOpenProduct,
+   990→}: {
+   991→  cards: ChatCard[]
+   992→  onOpenProduct?: (id: string) => void
+   993→}) {
+   994→  // Группируем product/similar_products карточки по category
+   995→  // Если у карточки есть data.category — берём его; иначе — общий "Товары"
+   996→  type Group = { title: string; emoji: string; products: any[] }
+   997→  const productCards = cards.filter(c => c.kind === 'product' || c.kind === 'similar_products')
+   998→  const otherCards = cards.filter(c => c.kind !== 'product' && c.kind !== 'similar_products')
+   999→
+  1000→  const groups: Group[] = []
+  1001→  for (const card of productCards) {
+  1002→    const items = Array.isArray(card.data) ? card.data : [card.data]
+  1003→    for (const item of items) {
+  1004→      const cat = item?.category || item?.categoryName || (card.kind === 'similar_products' ? 'Похожие товары' : 'Товары')
+  1005→      let g = groups.find(x => x.title === cat)
+  1006→      if (!g) {
+  1007→        const emoji = categoryEmoji(cat)
+  1008→        g = { title: cat, emoji, products: [] }
+  1009→        groups.push(g)
+  1010→      }
+  1011→      g.products.push(item)
+  1012→    }
+  1013→  }
+  1014→
+  1015→  return (
+  1016→    <div className="flex flex-col gap-3 pl-1">
+  1017→      {groups.map((g, gi) => (
+  1018→        <div key={gi} className="flex flex-col gap-2">
+  1019→          {gi > 0 && <div className="h-px bg-white/10 my-1" />}
+  1020→          <div className="flex items-center gap-1.5 text-xs text-white/70 font-medium">
+  1021→            <span>{g.emoji}</span>
+  1022→            <span>{g.title}</span>
+  1023→            <span className="text-white/30">·</span>
+  1024→            <span className="text-white/40">{g.products.length}</span>
+  1025→          </div>
+  1026→          <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1 snap-x snap-mandatory no-scrollbar">
+  1027→            {g.products.map((p, i) => (
+  1028→              <CompactProductCard
+  1029→                key={i}
+  1030→                product={p}
+  1031→                onClick={onOpenProduct ? () => onOpenProduct(p.id || p.productId) : undefined}
+  1032→              />
+  1033→            ))}
+  1034→          </div>
+  1035→        </div>
+  1036→      ))}
+  1037→      {otherCards.map((card, i) => {
+  1038→        if (card.kind === 'contacts') return <ContactsCard key={i} contacts={card.data} />
+  1039→        if (card.kind === 'order_wizard') return <OrderWizard key={i} data={card.data} onSubmitted={() => {}} />
+  1040→        return null
+  1041→      })}
+  1042→    </div>
+  1043→  )
+  1044→}
+  1045→
+  1046→function categoryEmoji(cat: string): string {
+  1047→  const c = (cat || '').toLowerCase()
+  1048→  if (c.includes('подар')) return '🎁'
+  1049→  if (c.includes('баннер') || c.includes('banner')) return '🖨'
+  1050→  if (c.includes('печат') || c.includes('print')) return '🖨'
+  1051→  if (c.includes('визитк')) return '💳'
+  1052→  if (c.includes('футбол') || c.includes('одежд')) return '👕'
+  1053→  if (c.includes('кружк')) return '☕'
+  1054→  if (c.includes('плакат') || c.includes('постер')) return '🖼'
+  1055→  if (c.includes('буклет') || c.includes('листовк')) return '📄'
+  1056→  if (c.includes('наклейк') || c.includes('стикер')) return '✨'
+  1057→  if (c.includes('книг') || c.includes('журнал')) return '📚'
+  1058→  if (c.includes('упаков')) return '📦'
+  1059→  if (c.includes('сувенир')) return '🎀'
+  1060→  return '🛍'
+  1061→}
+  1062→
+  1063→// ===========================================================================
+  1064→//  v8: CompactProductCard — компактная карточка товара для чата
+  1065→//  Размеры: ~160px ширина, миниатюрное изображение 16:9, минимум текста
+  1066→// ===========================================================================
+  1067→function CompactProductCard({ product, onClick }: { product: any; onClick?: () => void }) {
+  1068→  if (!product) return null
+  1069→  const name = product.name || product.title || 'Товар'
+  1070→  const price = product.price != null ? product.price : product.basePrice
+  1071→  const oldPrice = product.oldPrice
+  1072→  const image = product.image || product.imageUrl || product.coverImage || (Array.isArray(product.images) ? product.images[0] : null)
+  1073→  const currencySymbol = (() => {
+  1074→    const c = (product.currency || 'RUB').toString().toUpperCase()
+  1075→    if (c === 'RUB' || c === 'РУБ') return '₽'
+  1076→    if (c === 'USD') return '$'
+  1077→    if (c === 'EUR') return '€'
+  1078→    if (c === 'KZT') return '₸'
+  1079→    if (c === 'UAH') return '₴'
+  1080→    if (c === 'BYN') return 'Br'
+  1081→    return c
+  1082→  })()
+  1083→  const isAction = product.isAction || product.discount
+  1084→  const isNew = product.isNew
+  1085→  const isPopular = product.isPopular
+  1086→  const inStock = product.inStock !== false && product.stockStatus !== 'out_of_stock' && product.quantity !== 0
+  1087→  const discountPct = oldPrice && price != null && oldPrice > price
+  1088→    ? Math.round((1 - price / oldPrice) * 100)
+  1089→    : null
+  1090→
+  1091→  return (
+  1092→    <button
+  1093→      onClick={onClick}
+  1094→      className="snap-start shrink-0 text-left w-[160px] rounded-xl overflow-hidden bg-white/5 border border-white/10 hover:border-violet-400/40 hover:bg-white/10 transition-all group"
+  1095→    >
+  1096→      {/* Image — compact 16:9 */}
+  1097→      <div className="relative aspect-[16/9] bg-black/30 overflow-hidden">
+  1098→        {image ? (
+  1099→          <img
+  1100→            src={typeof image === 'string' ? image : image.url}
+  1101→            alt={name}
+  1102→            className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform"
+  1103→            loading="lazy"
+  1104→          />
+  1105→        ) : (
+  1106→          <div className="absolute inset-0 grid place-items-center">
+  1107→            <Package className="h-5 w-5 text-white/30" />
+  1108→          </div>
+  1109→        )}
+  1110→        {/* Discount / Action badge */}
+  1111→        {discountPct ? (
+  1112→          <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-rose-500/90 text-white text-[9px] font-bold leading-none">
+  1113→            -{discountPct}%
+  1114→          </div>
+  1115→        ) : isAction ? (
+  1116→          <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-rose-500/90 text-white text-[9px] font-bold leading-none uppercase">
+  1117→            Акция
+  1118→          </div>
+  1119→        ) : isNew ? (
+  1120→          <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-emerald-500/90 text-white text-[9px] font-bold leading-none uppercase">
+  1121→            Новинка
+  1122→          </div>
+  1123→        ) : isPopular ? (
+  1124→          <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-amber-500/90 text-white text-[9px] font-bold leading-none uppercase">
+  1125→            Хит
+  1126→          </div>
+  1127→        ) : null}
+  1128→        {/* Stock indicator */}
+  1129→        <div
+  1130→          className={cn(
+  1131→            'absolute top-1 right-1 h-1.5 w-1.5 rounded-full',
+  1132→            inStock ? 'bg-emerald-400' : 'bg-rose-400'
+  1133→          )}
+  1134→          title={inStock ? 'В наличии' : 'Нет в наличии'}
+  1135→        />
+  1136→      </div>
+  1137→      {/* Content — compact */}
+  1138→      <div className="p-2 flex flex-col gap-0.5">
+  1139→        <div className="text-[11px] text-white/90 font-medium line-clamp-2 leading-tight min-h-[26px]">
+  1140→          {name}
+  1141→        </div>
+  1142→        <div className="flex items-baseline gap-1">
+  1143→          {price != null && (
+  1144→            <div className="text-xs font-bold text-violet-300">
+  1145→              {Number(price).toLocaleString('ru-RU')} {currencySymbol}
+  1146→            </div>
+  1147→          )}
+  1148→          {oldPrice && (
+  1149→            <div className="text-[10px] text-white/40 line-through">
+  1150→              {Number(oldPrice).toLocaleString('ru-RU')}
+  1151→            </div>
+  1152→          )}
+  1153→        </div>
+  1154→      </div>
+  1155→    </button>
+  1156→  )
+  1157→}
+  1158→
+  1159→// ===========================================================================
+  1160→//  MAIN AI Assistant — Voice-First Full Screen (v5)
+  1161→// ===========================================================================
+  1162→export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: AssistantProps) {
+  1163→  const [open, setOpen] = useState(false)
+  1164→  // v6: minimized — AI сворачивается в маленькую плавающую кнопку
+  1165→  // когда AI открывает раздел (каталог, чат и т.д.). Пользователь видит
+  1166→  // открытый раздел, а AI доступен одним тапом по плавающей кнопке.
+  1167→  const [minimized, setMinimized] = useState(false)
+  1168→  const [inputMode, setInputMode] = useState<'voice' | 'keyboard'>('voice')
+  1169→  const [hasUserSentMessage, setHasUserSentMessage] = useState(false)
+  1170→  const [status, setStatus] = useState<AIStatus | null>(null)
+  1171→  const [interim, setInterim] = useState('')
+  1172→  const [userQuery, setUserQuery] = useState('')
+  1173→  const [response, setResponse] = useState<AIResponse | null>(null)
+  1174→  const [input, setInput] = useState('')
+  1175→  const [sending, setSending] = useState(false)
+  1176→  // v5: новая система состояний
+  1177→  const [phase, setPhase] = useState<AIPhase>('idle')
+  1178→  // v24.3: ref-зеркало phase для использования в колбэках (onEnd, handleVoiceEnd),
+  1179→  // чтобы всегда видеть актуальное значение без пересоздания колбэков.
+  1180→  const phaseRef = useRef<AIPhase>('idle')
+  1181→  const setPhaseSafe = useCallback((p: AIPhase) => {
+  1182→    phaseRef.current = p
+  1183→    setPhase(p)
+  1184→  }, [])
+  1185→
+  1186→  // v9: Умный индикатор состояния — динамическая ротация статусов
+  1187→  const [dynamicStatus, setDynamicStatus] = useState<string>('')
+  1188→  const dynamicStatusRef = useRef<string>('')
+  1189→  dynamicStatusRef.current = dynamicStatus
+  1190→  const statusTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  1191→  const statusGroupRef = useRef<'db' | 'calc' | 'thinking'>('thinking')
+  1192→
+  1193→  // v10: scroll-based fade-out для верхней анимации
+  1194→  // При прокрутке вверх — sticky-блок плавно исчезает (opacity 1 → 0)
+  1195→  // Никаких чёрных полос, никаких резких переходов.
+  1196→  const [stickyOpacity, setStickyOpacity] = useState(1)
+  1197→  const stickyOpacityRef = useRef(1)
+  1198→
+  1199→  // v9: Запуск/остановка ротации статусов
+  1200→  const startDynamicStatus = useCallback((message: string) => {
+  1201→    const group = pickStatusGroup(message)
+  1202→    statusGroupRef.current = group
+  1203→    const pool = group === 'db' ? DYNAMIC_STATUSES_DB : group === 'calc' ? DYNAMIC_STATUSES_CALC : DYNAMIC_STATUSES_THINKING
+  1204→    setDynamicStatus(pool[0])
+  1205→    let idx = 0
+  1206→    if (statusTimerRef.current) clearInterval(statusTimerRef.current)
+  1207→    statusTimerRef.current = setInterval(() => {
+  1208→      idx = (idx + 1) % pool.length
+  1209→      setDynamicStatus(pool[idx])
+  1210→    }, 1800) // 1.8 сек на статус
+  1211→  }, [])
+  1212→
+  1213→  const stopDynamicStatus = useCallback(() => {
+  1214→    if (statusTimerRef.current) {
+  1215→      clearInterval(statusTimerRef.current)
+  1216→      statusTimerRef.current = null
+  1217→    }
+  1218→    setDynamicStatus('')
+  1219→  }, [])
+  1220→
+  1221→  // v5: непрерывный голосовой режим
+  1222→  const [continuousVoice, setContinuousVoice] = useState(false)
+  1223→  const continuousVoiceRef = useRef(false)
+  1224→
+  1225→  // v5: накопленный текст пользователя (для логики «Вы закончили?»)
+  1226→  const accumulatedTextRef = useRef('')
+  1227→  const [accumulatedText, setAccumulatedText] = useState('')
+  1228→
+  1229→  // v7: Авто-определение конца речи.
+  1230→  // Таймер запускается ПОСЛЕ каждого финального результата распознавания.
+  1231→  // Если за SILENCE_TIMEOUT_MS не было новых результатов — пользователь закончил говорить,
+  1232→  // отправляем накопленный текст в LLM автоматически. Никаких подтверждений.
+  1233→  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  1234→  const SILENCE_TIMEOUT_MS = 1500  // 1.5 сек тишины → авто-отправка
+  1235→
+  1236→  // v5: таймер подтверждения — если пользователь не отвечает 10 сек после вопроса,
+  1237→  // считаем что подтверждено и отправляем запрос. (v7: больше не используется)
+  1238→  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  1239→  const CONFIRM_TIMEOUT_MS = 10000
+  1240→
+  1241→  // v5: флаг — находится ли AI в режиме «спрашиваю подтверждение» (v7: больше не используется)
+  1242→  const [waitingForConfirmation, setWaitingForConfirmation] = useState(false)
+  1243→  const waitingForConfirmationRef = useRef(false)
+  1244→
+  1245→  // v5/v7: флаг — пользователь прервал ответ (начал говорить во время подготовки)
+  1246→  const userInterruptedRef = useRef(false)
+  1247→
+  1248→  // v5: история разговора для контекста LLM
+  1249→  const [history, setHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
+  1250→  const [conversationLog, setConversationLog] = useState<Array<{ userQuery: string; response: AIResponse }>>([])
+  1251→  const [showHistoryPrompt, setShowHistoryPrompt] = useState(false)
+  1252→
+  1253→  // v5: typing animation state
+  1254→  const [displayedText, setDisplayedText] = useState('')
+  1255→  const [isTyping, setIsTyping] = useState(false)
+  1256→  const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  1257→
+  1258→  // v6: keyboard height — высота мобильной клавиатуры (для адаптации UI).
+  1259→  // Когда клавиатура открыта, bottom-controls поднимаются ровно на высоту
+  1260→  // клавиатуры, не больше. Использует VisualViewport API.
+  1261→  const [keyboardHeight, setKeyboardHeight] = useState(0)
+  1262→
+  1263→  // v5: флаг — был ли ответ уже показан (чтобы не прерывать typing повторно)
+  1264→  const responseShownRef = useRef(false)
+  1265→
+  1266→  // v5: ref на скролл-контейнер — для автоскролла вниз при typing
+  1267→  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  1268→
+  1269→  // v7: Логика непрерывного разговора:
+  1270→  //   1. Пользователь нажимает микрофон один раз → начинается прослушивание.
+  1271→  //   2. Пользователь говорит → распознанный текст копится в accumulatedText.
+  1272→  //   3. После каждого финального результата запускается silence-таймер (1.5 сек).
+  1273→  //      Если за это время не было новых результатов → пользователь закончил →
+  1274→  //      авто-отправка в LLM.
+  1275→  //   4. AI думает → отвечает (typing animation).
+  1276→  //   5. После завершения typing → автоматически возвращается в режим прослушивания.
+  1277→  //   6. Если пользователь начинает говорить ВО ВРЕМЯ ответа AI — ПРЕРЫВАНИЕ:
+  1278→  //      AI немедленно останавливается и слушает дальше.
+  1279→
+  1280→  // v7: обработчик финального результата распознавания
+  1281→  const handleVoiceResult = useCallback((text: string) => {
+  1282→    // v7: ПРЕРЫВАНИЕ — если AI отвечает/думает и пользователь начал говорить,
+  1283→    // немедленно останавливаем ответ и слушаем дальше. Никаких кнопок.
+  1284→    if (phase === 'responding' || phase === 'thinking' || phase === 'acting') {
+  1285→      userInterruptedRef.current = true
+  1286→      // Останавливаем typing animation
+  1287→      if (typingTimerRef.current) {
+  1288→        clearInterval(typingTimerRef.current)
+  1289→        typingTimerRef.current = null
+  1290→      }
+  1291→      setIsTyping(false)
+  1292→      // v8: НЕ сбрасываем response — оставляем предыдущий ответ видимым
+  1293→      // в истории диалога. Старый ответ уже добавлен в conversationLog.
+  1294→      setDisplayedText('')
+  1295→      // Останавливаем TTS (если было)
+  1296→      voiceOutRef.current.stop()
+  1297→      // Начинаем новую фразу
+  1298→      accumulatedTextRef.current = text
+  1299→      setAccumulatedText(text)
+
+[showing lines 700-1299 of 2477; use offset=1300 with limit to continue reading]

@@ -39,21 +39,19 @@ interface DesktopHomeProps {
 export function DesktopHome({ onNavigate, onOpenProduct, onOpenSearch }: DesktopHomeProps) {
   return (
     <div className="hidden md:block page-top-padding-md">
-      {/* Soft ambient gradient background — premium feel */}
-      <div className="fixed inset-0 pointer-events-none -z-10 premium-ambient" />
+      {/* v25.4 (home redesign): removed the always-on `premium-ambient` fixed
+          background — modern premium = generous whitespace, no decorative
+          blur orbs. Kept a very subtle one for depth. */}
+      <div className="fixed inset-0 pointer-events-none -z-10 premium-ambient opacity-40" />
 
-      <div className="max-w-[1440px] mx-auto px-8 lg:px-12 xl:px-16 py-6 lg:py-8 space-y-8 lg:space-y-10">
-        {/* ── 1. BENTO HERO ───────────────────────────────────────────── */}
+      <div className="max-w-[1440px] mx-auto px-8 lg:px-12 xl:px-16 py-6 lg:py-8 space-y-10 lg:space-y-14">
+        {/* ── 1. HERO ─────────────────────────────────────────────────── */}
         <BentoHero onNavigate={onNavigate} onOpenSearch={onOpenSearch} />
 
-        {/* v12.3.1: Stories strip RESTORED (standalone module — not Feed). */}
-        {/* Stories — uses the same round Stories component as mobile (md:h-20 md:w-20 on desktop) */}
+        {/* ── 2. STORIES ──────────────────────────────────────────────── */}
         <Stories />
 
-        {/* ── 3. BANNER BENTO ─────────────────────────────────────────── */}
-        <BannerBento />
-
-        {/* ── 4. SMART BLOCKS — Trending ──────────────────────────────── */}
+        {/* ── 3. SMART BLOCKS — Trending ──────────────────────────────── */}
         <SmartSection
           blockId="trending"
           title="Сейчас в тренде"
@@ -61,12 +59,10 @@ export function DesktopHome({ onNavigate, onOpenProduct, onOpenSearch }: Desktop
           icon={<Flame className="h-5 w-5" />}
           accent="orange"
           onOpenProduct={onOpenProduct}
+          onNavigate={onNavigate}
         />
 
-        {/* ── 5. EDITORIAL SPLIT — Catalog CTA + Feed preview ────────── */}
-        <EditorialSplit onNavigate={onNavigate} />
-
-        {/* ── 6. SMART BLOCKS — Recommended ──────────────────────────── */}
+        {/* ── 4. SMART BLOCKS — Recommended ──────────────────────────── */}
         <SmartSection
           blockId="recommended"
           title="Рекомендуем вам"
@@ -74,9 +70,10 @@ export function DesktopHome({ onNavigate, onOpenProduct, onOpenSearch }: Desktop
           icon={<Heart className="h-5 w-5" />}
           accent="pink"
           onOpenProduct={onOpenProduct}
+          onNavigate={onNavigate}
         />
 
-        {/* ── 7. FEATURED — Best rating ──────────────────────────────── */}
+        {/* ── 5. FEATURED — Best rating ──────────────────────────────── */}
         <SmartSection
           blockId="best-rating"
           title="Лучший рейтинг"
@@ -84,10 +81,23 @@ export function DesktopHome({ onNavigate, onOpenProduct, onOpenSearch }: Desktop
           icon={<Crown className="h-5 w-5" />}
           accent="amber"
           onOpenProduct={onOpenProduct}
+          onNavigate={onNavigate}
         />
 
-        {/* ── 8. CLOSING CTA ─────────────────────────────────────────── */}
-        <ClosingCTA onNavigate={onNavigate} />
+        {/* v25.4: removed BannerBento, EditorialSplit, ClosingCTA — they
+            duplicated CTAs already in the hero and added visual noise.
+            The page now ends cleanly with the last product grid. */}
+
+        {/* ── QUIET FOOTER LINK ──────────────────────────────────────── */}
+        <div className="pt-4 pb-8 text-center">
+          <button
+            onClick={() => onNavigate('catalog')}
+            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Смотреть весь каталог
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -388,6 +398,7 @@ function SmartSection({
   icon,
   accent,
   onOpenProduct,
+  onNavigate,
 }: {
   blockId: string
   title: string
@@ -395,6 +406,7 @@ function SmartSection({
   icon: React.ReactNode
   accent: keyof typeof ACCENT_STYLES
   onOpenProduct: (id: string) => void
+  onNavigate?: (v: string) => void
 }) {
   // F-CRIT-002 fix: use shared cache via useSmartBlock. Previously each
   // SmartSection independently called api.get('/api/products/smart/blocks')
@@ -407,24 +419,28 @@ function SmartSection({
 
   return (
     <section>
-      {/* Section header — editorial style */}
+      {/* v25.4 (home redesign): simplified section header — neutral title,
+          thin "Смотреть все" link. Removed the gradient icon bubble to reduce
+          visual noise (3 competing chromatic accents was too busy). */}
       <div className="flex items-end justify-between mb-6">
-        <div className="flex items-center gap-4">
-          <div className={cn('h-11 w-11 rounded-2xl bg-gradient-to-br grid place-items-center shadow-lg', a.bg, a.ring)}>
+        <div className="flex items-center gap-3">
+          <div className={cn('h-10 w-10 rounded-xl bg-gradient-to-br grid place-items-center shadow-sm', a.bg)}>
             <div className="text-white">{icon}</div>
           </div>
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+            <h2 className="text-xl lg:text-2xl font-bold tracking-tight">{title}</h2>
+            <p className="text-xs lg:text-sm text-muted-foreground mt-0.5">{subtitle}</p>
           </div>
         </div>
-        <button
-          onClick={() => onOpenProduct('')} // would navigate to filtered catalog
-          className="inline-flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors group"
-        >
-          Смотреть все
-          <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-        </button>
+        {onNavigate && (
+          <button
+            onClick={() => onNavigate('catalog')}
+            className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors group"
+          >
+            Смотреть все
+            <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+          </button>
+        )}
       </div>
 
       {/* Product grid — uses existing ProductCard, unchanged sizes */}

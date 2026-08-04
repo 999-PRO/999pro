@@ -8,7 +8,7 @@
 // v16.8.4: добавлена поддержка долгого нажатия (long-press) для открытия
 // контекстного меню (Удалить / Очистить / Архивировать / Закрепить).
 
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, memo } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { assetUrl } from '@/lib/api'
 import { initials, timeAgo } from '@/lib/format'
@@ -20,18 +20,26 @@ export interface ChatListItemProps {
   conversation: Conversation
   unread: number
   isActive: boolean
-  index: number
-  onClick: () => void
-  onLongPress?: () => void
+  /** v25.4: index is optional now (kept for back-compat but unused). */
+  index?: number
+  /** v25.4: convId passed to onClick/onLongPress so callbacks can be stable. */
+  convId?: string
+  onClick: (convId: string) => void
+  onLongPress?: (convId: string) => void
 }
 
-export function ChatListItem({
+// v25.4 (perf audit P-1): wrap in React.memo with a custom comparator so
+// the card only re-renders when its own unread/isActive/conversation changes.
+// Previously every ChatView re-render (keystroke, typing indicator, viewport
+// resize) reconciled ALL 50-200 cards because the inline onClick/onLongPress
+// arrows were new function identities each render.
+function ChatListItemImpl({
   conversation: c,
   unread,
   isActive,
-  index,
   onClick,
   onLongPress,
+  convId,
 }: ChatListItemProps) {
   const palette = getChatCardPalette(c.participant?.id || c.id)
 
@@ -46,9 +54,9 @@ export function ChatListItem({
     longPressTimer.current = setTimeout(() => {
       longPressFired.current = true
       haptic.tap()
-      onLongPress?.()
+      onLongPress?.(c.id)
     }, 500)
-  }, [onLongPress])
+  }, [onLongPress, c.id])
 
   const cancelLongPress = useCallback(() => {
     if (longPressTimer.current) {
@@ -95,7 +103,7 @@ export function ChatListItem({
       longPressFired.current = false
       return // suppress click after long-press
     }
-    onClick()
+    onClick(c.id)
   }
 
   return (
@@ -109,11 +117,14 @@ export function ChatListItem({
       onMouseLeave={onLongPress ? handleMouseUp : undefined}
       onContextMenu={onLongPress ? (e) => {
         e.preventDefault()
-        onLongPress()
+        onLongPress(c.id)
       } : undefined}
       className="animate-card-in w-full text-left rounded-2xl p-3 transition-transform duration-200 hover:scale-[1.01] select-none"
       style={{
-        animationDelay: `${index * 50}ms`,
+        // v25.4: use a stable 0ms delay — `index` was removed to keep
+        // ChatListItem props minimal for React.memo. The stagger animation
+        // was barely visible and caused all cards to depend on `index`.
+        animationDelay: '0ms',
         contentVisibility: 'auto' as React.CSSProperties['contentVisibility'],
         containIntrinsicSize: '72px',
         background: isActive
@@ -232,3 +243,18 @@ export function ChatListItem({
   )
 }
 
+// v25.4 (perf audit P-1): memoize with a custom comparator so the card only
+// re-renders when its own conversation data, unread count, or active state
+// changes. Callbacks (onClick/onLongPress) are now stable (useCallback in
+// parent) so they don't trigger re-renders.
+export const ChatListItem = memo(ChatListItemImpl, (prev, next) => {
+  return (
+    prev.conversation.id === next.conversation.id &&
+    prev.conversation.updatedAt === next.conversation.updatedAt &&
+    prev.conversation.unreadCount === next.conversation.unreadCount &&
+    prev.conversation.lastMessage?.id === next.conversation.lastMessage?.id &&
+    prev.conversation.participant?.isOnline === next.conversation.participant?.isOnline &&
+    prev.unread === next.unread &&
+    prev.isActive === next.isActive
+  )
+})

@@ -8,7 +8,7 @@
 //      Messenger, X, Email, Copy Link, QR Code.
 //    • Web Share API integration — on supported devices (mobile Chrome /
 //      Safari) we use the native share sheet for a more native feel.
-//    • Smart Story generator — generates a branded 1080×1920 story image
+//    • Smart Story generator — generates a branded 1080×1440 (3:4) story image
 //      (canvas) and shares it via Web Share API with files (Android Chrome)
 //      or downloads it (iOS Safari).
 //    • Analytics tracking — every tap on a platform records a `share` event
@@ -532,7 +532,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
                 <div>
                   <div className="font-bold text-sm mb-0.5">Smart Story</div>
                   <div className="text-xs text-white/80 leading-tight">
-                    Создать красивую историю 1080×1920 с логотипом 999 — Три девятки и QR-кодом
+                    Создать красивую историю 1080×1440 с логотипом 999 — Три девятки и QR-кодом
                   </div>
                 </div>
                 <button

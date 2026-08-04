@@ -1,6 +1,6 @@
 {
   "name": "999pro-marketplace",
-  "version": "25.2.0",
+  "version": "25.5.0",
   "private": true,
   "description": "999 PRO Marketplace — frontend (Next.js), backend (Express + Prisma), studio (admin panel)",
   "scripts": {
@@ -71,7 +71,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
-    "@next/bundle-analyzer": "^16.2.10",
+    "@next/bundle-analyzer": "^16.3.0",
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^26.1.1",

@@ -1,0 +1,776 @@
+     1→     1→     1→'use client'
+     2→     2→     2→
+     3→     3→     3→import { useState, useEffect, useCallback } from 'react'
+     4→     4→     4→import dynamic from 'next/dynamic'
+     5→     5→     5→import { AppShell } from '@/components/app-shell'
+     6→     6→     6→import { Stories } from '@/components/stories'
+     7→     7→     7→import { PromoBannerCarousel } from '@/components/promo-banner'
+     8→     8→     8→import { Hero } from '@/components/hero'
+     9→     9→     9→import { ProductsGrid } from '@/components/products-grid'
+    10→    10→    10→import { DesktopHome } from '@/components/desktop-home'
+    11→    11→    11→import { SmartBlocks } from '@/components/smart-blocks'
+    12→    12→    12→import { Button } from '@/components/ui/button'
+    13→    13→    13→import { toast } from '@/lib/notifications'
+    14→    14→    14→import { AnimatePresence } from 'framer-motion'
+    15→    15→    15→import { useNotifications } from '@/lib/use-notifications'
+    16→    16→    16→import { useNotificationsStore } from '@/lib/use-notifications'
+    17→    17→    17→import { usePushNotifications } from '@/lib/use-push'
+    18→    18→    18→import { useAuthStore } from '@/lib/auth-store'
+    19→    19→    19→import { useIsDesktop } from '@/lib/use-media-query'
+    20→    20→    20→import { useHomeLayout } from '@/lib/home-layout'
+    21→    21→    21→import { RetryableErrorBoundary } from '@/components/retryable-error-boundary'
+    22→    22→    22→import { InlineSearch } from '@/components/search/inline-search'
+    23→    23→    23→import { FloatingLiveInfo } from '@/components/floating-live-info'
+    24→    24→    24→
+    25→    25→    25→// v12.3: the Feed module has been removed and replaced by the 999 CLUB module.
+    26→    26→    26→// The entire CLUB module is code-split via `next/dynamic` — if the user never
+    27→    27→    27→// opens CLUB, none of its code (animations, store, hooks, components) is
+    28→    28→    28→// downloaded.
+    29→    29→    29→const ClubView = dynamic(() => import('@/modules/999-club').then((m) => m.ClubView), { ssr: false })
+    30→    30→    30→const ChatView = dynamic(() => import('@/components/chat').then((m) => m.ChatView), { ssr: false })
+    31→    31→    31→const ProfileView = dynamic(() => import('@/components/profile-view').then((m) => m.ProfileView), { ssr: false })
+    32→    32→    32→const AuthDialog = dynamic(() => import('@/components/auth-dialog').then((m) => m.AuthDialog), { ssr: false })
+    33→    33→    33→const MoreSheet = dynamic(() => import('@/components/more-sheet').then((m) => m.MoreSheet), { ssr: false })
+    34→    34→    34→const ProductPage = dynamic(() => import('@/components/product-page').then((m) => m.ProductPage), { ssr: false })
+    35→    35→    35→const FilmBottomSheet = dynamic(() => import('@/modules/films/film-bottom-sheet').then((m) => m.FilmBottomSheet), { ssr: false })
+    36→    36→    36→const SearchPage = dynamic(() => import('@/components/search-page').then((m) => m.SearchPage), { ssr: false })
+    37→    37→    37→const StudioView = dynamic(() => import('@/components/studio-view').then((m) => m.StudioView), { ssr: false })
+    38→    38→    38→
+    39→    39→    39→// v22 audit: Analytics view — admin/manager dashboard with real data from /api/analytics.
+    40→    40→    40→const AnalyticsView = dynamic(() => import('@/components/analytics-view').then((m) => m.AnalyticsView), { ssr: false })
+    41→    41→    41→
+    42→    42→    42→// v18.6: Admin login view — separate page for administrators.
+    43→    43→    43→const AdminLoginView = dynamic(() => import('@/components/admin-login-view').then((m) => m.AdminLoginView), { ssr: false })
+    44→    44→    44→
+    45→    45→    45→// Lazy-load new views added in v0.1: orders, reviews, support, settings, etc.
+    46→    46→    46→const OrdersView = dynamic(() => import('@/components/orders-view').then((m) => m.OrdersView), { ssr: false })
+    47→    47→    47→const ReviewsView = dynamic(() => import('@/components/reviews-view').then((m) => m.ReviewsView), { ssr: false })
+    48→    48→    48→// v25.6 (Task #2 + #7): SupportView kept for backward-compat with deep links,
+    49→    49→    49→// but the user-facing menu entries now route to ContactsView instead.
+    50→    50→    50→const SupportView = dynamic(() => import('@/components/support-view').then((m) => m.SupportView), { ssr: false })
+    51→    51→    51→const ContactsView = dynamic(() => import('@/components/contacts-view').then((m) => m.ContactsView), { ssr: false })
+    52→    52→    52→const SettingsView = dynamic(() => import('@/components/settings-view').then((m) => m.SettingsView), { ssr: false })
+    53→    53→    53→const PrivacyView = dynamic(() => import('@/components/privacy-view').then((m) => m.PrivacyView), { ssr: false })
+    54→    54→    54→const AboutView = dynamic(() => import('@/components/about-view').then((m) => m.AboutView), { ssr: false })
+    55→    55→    55→const InfoPageView = dynamic(() => import('@/components/info-page-view').then((m) => m.InfoPageView), { ssr: false })
+    56→    56→    56→
+    57→    57→    57→type View = 'home' | 'catalog' | 'club' | 'chat' | 'profile' | 'search' | 'studio' | 'orders' | 'reviews' | 'support' | 'contacts' | 'settings' | 'privacy' | 'about' | 'info' | 'admin-login' | 'analytics'
+    58→    58→    58→
+    59→    59→    59→function getInitialView(): View {
+    60→    60→    60→  if (typeof window === 'undefined') return 'home'
+    61→    61→    61→  const params = new URLSearchParams(window.location.search)
+    62→    62→    62→  const v = params.get('view')
+    63→    63→    63→  // v25.6: 'support' is kept as a valid view for backward-compat with deep
+    64→    64→    64→  // links, but it now resolves to ContactsView (see routing below). Old
+    65→    65→    65→  // bookmarks /?view=support still work — they show Contacts.
+    66→    66→    66→  const validViews: View[] = ['home', 'catalog', 'club', 'chat', 'profile', 'search', 'studio', 'orders', 'reviews', 'support', 'contacts', 'settings', 'privacy', 'about', 'info', 'admin-login']
+    67→    67→    67→  if (v && validViews.includes(v as View)) return v as View
+    68→    68→    68→  return 'home'
+    69→    69→    69→}
+    70→    70→    70→
+    71→    71→    71→// Get the initial info page slug from ?page= URL param (used with ?view=info)
+    72→    72→    72→function getInitialInfoSlug(): string | null {
+    73→    73→    73→  if (typeof window === 'undefined') return null
+    74→    74→    74→  const params = new URLSearchParams(window.location.search)
+    75→    75→    75→  const p = params.get('page')
+    76→    76→    76→  return p || null
+    77→    77→    77→}
+    78→    78→    78→
+    79→    79→    79→function getInitialProductId(): string | null {
+    80→    80→    80→  if (typeof window === 'undefined') return null
+    81→    81→    81→  const params = new URLSearchParams(window.location.search)
+    82→    82→    82→  const p = params.get('product')
+    83→    83→    83→  return p || null
+    84→    84→    84→}
+    85→    85→    85→
+    86→    86→    86→export default function Home() {
+    87→    87→    87→  // Lazy initializers — first render matches the URL, no flash of 'home' (FE-014)
+    88→    88→    88→  const [view, setView] = useState<View>(() => getInitialView())
+    89→    89→    89→  const [authOpen, setAuthOpen] = useState(false)
+    90→    90→    90→  const [moreOpen, setMoreOpen] = useState(false)
+    91→    91→    91→  const [activeProductId, setActiveProductId] = useState<string | null>(() => getInitialProductId())
+    92→    92→    92→  // v21: initial product data (from orders) — allows ProductPage to render
+    93→    93→    93→  // soft-deleted products that are no longer in the catalog.
+    94→    94→    94→  const [activeInitialProduct, setActiveInitialProduct] = useState<any | null>(null)
+    95→    95→    95→  const [activeFilmPayload, setActiveFilmPayload] = useState<any | null>(null)
+    96→    96→    96→  const [searchQuery, setSearchQuery] = useState<string>('')
+    97→    97→    97→  // v16.8: info page slug — when view='info', this is the slug to display.
+    98→    98→    98→  const [activeInfoSlug, setActiveInfoSlug] = useState<string | null>(() => getInitialInfoSlug())
+    99→    99→    99→
+   100→   100→   100→  // Gate the desktop layout on viewport — mounting DesktopHome on mobile
+   101→   101→   101→  // wastes 3 API calls + 5 component subtrees per mobile page load.
+   102→   102→   102→  const isDesktop = useIsDesktop()
+   103→   103→   103→
+   104→   104→   104→  // Remove the inline splash overlay as soon as React hydrates this
+   105→   105→   105→  // component. The overlay is injected by the inline script in layout.tsx
+   106→   106→   106→  // and shows a brand-gradient + spinner so the user never sees a white
+   107→   107→   107→  // screen during cold launch. By the time this effect runs, hydration
+   108→   108→   108→  // is complete and the real UI is on screen — safe to fade out the
+   109→   109→   109→  // splash.
+   110→   110→   110→  useEffect(() => {
+   111→   111→   111→    const splash = document.getElementById('app-splash')
+   112→   112→   112→    if (!splash) return
+   113→   113→   113→    splash.style.opacity = '0'
+   114→   114→   114→    const t = setTimeout(() => splash.remove(), 350)
+   115→   115→   115→    return () => clearTimeout(t)
+   116→   116→   116→  }, [])
+   117→   117→   117→
+   118→   118→   118→  // Reset the "update already applied" flag on each successful hydration.
+   119→   119→   119→  // The flag prevents infinite reload loops when the SW sends multiple
+   120→   120→   120→  // UPDATE_AVAILABLE messages in one session, but we want the NEXT
+   121→   121→   121→  // deployment (after this page has loaded) to still trigger a reload.
+   122→   122→   122→  // Waiting 3 seconds before clearing ensures the current update cycle
+   123→   123→   123→  // has completed (if any).
+   124→   124→   124→  useEffect(() => {
+   125→   125→   125→    const t = setTimeout(() => {
+   126→   126→   126→      try {
+   127→   127→   127→        sessionStorage.removeItem('999pro-update-applied')
+   128→   128→   128→      } catch {}
+   129→   129→   129→    }, 3000)
+   130→   130→   130→    return () => clearTimeout(t)
+   131→   131→   131→  }, [])
+   132→   132→   132→
+   133→   133→   133→  // Notifications — listen for incoming messages across ALL views. The hook
+   134→   134→   134→  // implements the 3-state policy:
+   135→   135→   135→  //   - tab hidden  → system Push via SW
+   136→   136→   136→  //   - tab visible, but not in this conversation → in-app toast + sound
+   137→   137→   137→  //   - tab visible AND in this conversation → silent (just append)
+   138→   138→   138→  const clearUnread = useNotificationsStore((s) => s.clearUnread)
+   139→   139→   139→  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+   140→   140→   140→
+   141→   141→   141→  // Track which conversation the user is currently viewing inside ChatView.
+   142→   142→   142→  // ChatView emits `chat:active-conversation` whenever its active conv changes
+   143→   143→   143→  // (including null when the user leaves the chat or returns to the list).
+   144→   144→   144→  useEffect(() => {
+   145→   145→   145→    const onActive = (e: Event) => {
+   146→   146→   146→      const detail = (e as CustomEvent).detail as { conversationId?: string | null }
+   147→   147→   147→      const id = detail?.conversationId || null
+   148→   148→   148→      setActiveConversationId(id)
+   149→   149→   149→      // When the user opens a conversation, immediately clear its unread
+   150→   150→   150→      // badge so the badge disappears the moment the conversation is viewed
+   151→   151→   151→      // (not only after the server round-trip).
+   152→   152→   152→      if (id) clearUnread(id)
+   153→   153→   153→    }
+   154→   154→   154→    window.addEventListener('chat:active-conversation', onActive as EventListener)
+   155→   155→   155→    return () => window.removeEventListener('chat:active-conversation', onActive as EventListener)
+   156→   156→   156→  }, [clearUnread])
+   157→   157→   157→
+   158→   158→   158→  useNotifications({ activeConversationId })
+   159→   159→   159→
+   160→   160→   160→  // Web Push — subscribe to OS-level push notifications for background delivery
+   161→   161→   161→  usePushNotifications()
+   162→   162→   162→
+   163→   163→   163→  // Request notification permission on first user activation.
+   164→   164→   164→  // Browsers REQUIRE a user gesture before allowing
+   165→   165→   165→  // Notification.requestPermission() — calling it on page load is silently
+   166→   166→   166→  // ignored.
+   167→   167→   167→  //
+   168→   168→   168→  // F-HIGH-003: previously this attached one-shot listeners for `click`,
+   169→   169→   169→  // `touchstart`, AND `keydown`. The click/touchstart listeners fired on the
+   170→   170→   170→  // very first tap/click ANYWHERE on the page — including taps on the splash
+   171→   171→   171→  // screen, navigation buttons, product cards, etc. — which made the
+   172→   172→   172→  // permission prompt appear aggressively the moment a user touched the app
+   173→   173→   173→  // for the first time, even before they had logged in.
+   174→   174→   174→  //
+   175→   175→   175→  // Now: only `keydown` on Enter/Space (true activation keys per WAI-ARIA),
+   176→   176→   176→  // AND only after the user is authenticated. Anonymous visitors browsing
+   177→   177→   177→  // the catalog are no longer prompted. The `authed` dep re-runs the effect
+   178→   178→   178→  // when the user logs in so the listener is attached at the right time.
+   179→   179→   179→  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+   180→   180→   180→  const token = useAuthStore((s) => s.token)
+   181→   181→   181→  const user = useAuthStore((s) => s.user)
+   182→   182→   182→  const authed = isAuthenticated || (!!token && !!user)
+   183→   183→   183→
+   184→   184→   184→  // v10.3-fix: fetch unread message counts on app boot (not just when the
+   185→   185→   185→  // chat view is opened). This ensures the bottom-nav badge shows the
+   186→   186→   186→  // correct count even if the user never opens the chat view — e.g. they
+   187→   187→   187→  // were offline, received messages, reopened the app, and the badge
+   188→   188→   188→  // should show immediately. Previously, the fetch only ran inside
+   189→   189→   189→  // ChatView (which is lazy-loaded), so the badge was 0 until the user
+   190→   190→   190→  // manually opened the chat list.
+   191→   191→   191→  useEffect(() => {
+   192→   192→   192→    if (!authed) return
+   193→   193→   193→    import('@/lib/api').then(({ api }) => {
+   194→   194→   194→      api
+   195→   195→   195→        .get<{ byConversation: Record<string, number>; total: number }>('/api/chat/unread-counts', { auth: true })
+   196→   196→   196→        .then((d) => {
+   197→   197→   197→          import('@/lib/use-notifications').then(({ useNotificationsStore }) => {
+   198→   198→   198→            useNotificationsStore.getState().setUnread(d.total, d.byConversation)
+   199→   199→   199→          })
+   200→   200→   200→        })
+   201→   201→   201→        .catch(() => {})
+   202→   202→   202→    })
+   203→   203→   203→  }, [authed])
+   204→   204→   204→
+   205→   205→   205→  useEffect(() => {
+   206→   206→   206→    if (!authed) return
+   207→   207→   207→    let permissionRequested = false
+   208→   208→   208→    const requestPermission = () => {
+   209→   209→   209→      if (permissionRequested) return
+   210→   210→   210→      permissionRequested = true
+   211→   211→   211→      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+   212→   212→   212→        Notification.requestPermission().catch(() => {})
+   213→   213→   213→      }
+   214→   214→   214→      // v18.6: remove ALL listeners once we've requested (no need to keep
+   215→   215→   215→      // listening — Notification.permission can only transition from 'default'
+   216→   216→   216→      // to 'granted'/'denied' once per page lifetime).
+   217→   217→   217→      document.removeEventListener('keydown', onKeydown)
+   218→   218→   218→      document.removeEventListener('click', onFirstClick)
+   219→   219→   219→      document.removeEventListener('touchstart', onFirstClick, { capture: true } as any)
+   220→   220→   220→    }
+   221→   221→   221→    const onKeydown = (e: KeyboardEvent) => {
+   222→   222→   222→      // v13.1 (audit P1-15 fix): only trigger on Enter/Space when the user
+   223→   223→   223→      // is NOT already typing in an input/textarea/contenteditable. The
+   224→   224→   224→      // previous version fired on EVERY Enter/Space — including when the
+   225→   225→   225→      // user pressed Enter to send a chat message or submit a form, which
+   226→   226→   226→      // jarringly popped up the notification permission prompt.
+   227→   227→   227→      const target = e.target as HTMLElement | null
+   228→   228→   228→      const tag = target?.tagName
+   229→   229→   229→      if (
+   230→   230→   230→        tag === 'INPUT' ||
+   231→   231→   231→        tag === 'TEXTAREA' ||
+   232→   232→   232→        target?.isContentEditable
+   233→   233→   233→      ) {
+   234→   234→   234→        return
+   235→   235→   235→      }
+   236→   236→   236→      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+   237→   237→   237→        requestPermission()
+   238→   238→   238→      }
+   239→   239→   239→    }
+   240→   240→   240→    // v18.6: also request on first user click/touch anywhere on the page.
+   241→   241→   241→    // Browsers REQUIRE a user gesture before allowing Notification.requestPermission().
+   242→   242→   242→    // The previous Enter/Space-only listener was too restrictive — users never
+   243→   243→   243→    // discovered they had to press Enter, so push notifications never got
+   244→   244→   244→    // permission and the user never received any notifications at all.
+   245→   245→   245→    //
+   246→   246→   246→    // We use { capture: true } so we catch the gesture before any other handler
+   247→   247→   247→    // can stopPropagation it. We also remove the listener immediately after the
+   248→   248→   248→    // first gesture so we don't re-prompt.
+   249→   249→   249→    const onFirstClick = () => {
+   250→   250→   250→      requestPermission()
+   251→   251→   251→    }
+   252→   252→   252→    document.addEventListener('keydown', onKeydown, { passive: true })
+   253→   253→   253→    document.addEventListener('click', onFirstClick, { passive: true })
+   254→   254→   254→    document.addEventListener('touchstart', onFirstClick, { capture: true, passive: true })
+   255→   255→   255→    return () => {
+   256→   256→   256→      document.removeEventListener('keydown', onKeydown)
+   257→   257→   257→      document.removeEventListener('click', onFirstClick)
+   258→   258→   258→      document.removeEventListener('touchstart', onFirstClick, { capture: true } as any)
+   259→   259→   259→    }
+   260→   260→   260→  }, [authed])
+   261→   261→   261→
+   262→   262→   262→  // Listen for notification:click events (fired by use-notifications.ts when
+   263→   263→   263→  // the user clicks a system notification) — navigate to chat and dispatch
+   264→   264→   264→  // an event the ChatView can pick up to open the right conversation.
+   265→   265→   265→  useEffect(() => {
+   266→   266→   266→    const onClick = (e: Event) => {
+   267→   267→   267→      const detail = (e as CustomEvent).detail as { conversationId?: string }
+   268→   268→   268→      setView('chat')
+   269→   269→   269→      // Forward to ChatView — it listens for this event and opens the conv
+   270→   270→   270→      window.dispatchEvent(
+   271→   271→   271→        new CustomEvent('chat:open-conversation', { detail }),
+   272→   272→   272→      )
+   273→   273→   273→    }
+   274→   274→   274→    window.addEventListener('notification:click', onClick as EventListener)
+   275→   275→   275→    return () => window.removeEventListener('notification:click', onClick as EventListener)
+   276→   276→   276→  }, [])
+   277→   277→   277→
+   278→   278→   278→  // Listen for back/forward navigation
+   279→   279→   279→  useEffect(() => {
+   280→   280→   280→    const onPop = () => {
+   281→   281→   281→      setView(getInitialView())
+   282→   282→   282→      setActiveProductId(getInitialProductId())
+   283→   283→   283→      setActiveInfoSlug(getInitialInfoSlug())
+   284→   284→   284→    }
+   285→   285→   285→    window.addEventListener('popstate', onPop)
+   286→   286→   286→    return () => window.removeEventListener('popstate', onPop)
+   287→   287→   287→  }, [])
+   288→   288→   288→
+   289→   289→   289→  const navigate = useCallback((v: string) => {
+   290→   290→   290→    setView(v as View)
+   291→   291→   291→    setActiveProductId(null)
+   292→   292→   292→    if (typeof window !== 'undefined') {
+   293→   293→   293→      const url = new URL(window.location.href)
+   294→   294→   294→      url.searchParams.set('view', v)
+   295→   295→   295→      url.searchParams.delete('product')
+   296→   296→   296→      window.history.pushState({}, '', url.toString())
+   297→   297→   297→    }
+   298→   298→   298→    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'auto' })
+   299→   299→   299→  }, [])
+   300→   300→   300→
+   301→   301→   301→  // v16.8: Navigate to a DB-backed info page by slug.
+   302→   302→   302→  // Updates the URL to ?view=info&page=<slug> so the page is shareable + bookmarkable.
+   303→   303→   303→  const navigateToInfoPage = useCallback((slug: string) => {
+   304→   304→   304→    setView('info')
+   305→   305→   305→    setActiveProductId(null)
+   306→   306→   306→    setActiveInfoSlug(slug)
+   307→   307→   307→    if (typeof window !== 'undefined') {
+   308→   308→   308→      const url = new URL(window.location.href)
+   309→   309→   309→      url.searchParams.set('view', 'info')
+   310→   310→   310→      url.searchParams.set('page', slug)
+   311→   311→   311→      url.searchParams.delete('product')
+   312→   312→   312→      window.history.pushState({}, '', url.toString())
+   313→   313→   313→      window.scrollTo({ top: 0, behavior: 'auto' })
+   314→   314→   314→    }
+   315→   315→   315→  }, [])
+   316→   316→   316→
+   317→   317→   317→  const openProduct = useCallback((id: string) => {
+   318→   318→   318→    setActiveProductId(id)
+   319→   319→   319→    if (typeof window !== 'undefined') {
+   320→   320→   320→      const url = new URL(window.location.href)
+   321→   321→   321→      url.searchParams.set('product', id)
+   322→   322→   322→      window.history.pushState({}, '', url.toString())
+   323→   323→   323→    }
+   324→   324→   324→  }, [])
+   325→   325→   325→
+   326→   326→   326→  // Open a product as a modal overlay WITHOUT changing the URL or the
+   327→   327→   327→  // current view. Used by inline product cards in chat (and any other
+   328→   328→   328→  // component that wants to open a product on top of the current screen
+   329→   329→   329→  // without triggering a navigation). The product sheet renders above
+   330→   330→   330→  // whatever view is active — closing it returns the user to the exact
+   331→   331→   331→  // same screen state (scroll position, mounted components, etc.).
+   332→   332→   332→  const openProductOverlay = useCallback((id: string) => {
+   333→   333→   333→    setActiveProductId(id)
+   334→   334→   334→    // Deliberately NO pushState here — we don't want to change the URL
+   335→   335→   335→    // (changing the URL can trigger Next.js router re-evaluation and
+   336→   336→   336→    // cause the app to appear to "reload"). The product opens as a pure
+   337→   337→   337→    // overlay; if the user reloads the page, the overlay is gone (which
+   338→   338→   338→    // is the expected behaviour for a transient modal).
+   339→   339→   339→  }, [])
+   340→   340→   340→
+   341→   341→   341→  // Listen for navigate events from other parts of the app (e.g. deep links,
+   342→   342→   342→  // notifications, or buttons that don't have direct access to the navigate
+   343→   343→   343→  // callback). The event detail can carry the target view name.
+   344→   344→   344→  useEffect(() => {
+   345→   345→   345→    const onNavigate = (e: Event) => {
+   346→   346→   346→      const detail = (e as CustomEvent).detail as { view?: string } | undefined
+   347→   347→   347→      if (detail?.view) navigate(detail.view)
+   348→   348→   348→    }
+   349→   349→   349→    window.addEventListener('navigate', onNavigate as EventListener)
+   350→   350→   350→    return () => window.removeEventListener('navigate', onNavigate as EventListener)
+   351→   351→   351→  }, [navigate])
+   352→   352→   352→
+   353→   353→   353→  // Listen for "open-product" overlay requests — used by inline product
+   354→   354→   354→  // cards in chat to open the ProductPage as a modal WITHOUT navigation.
+   355→   355→   355→  // This is deliberately a separate event from `navigate` so that opening
+   356→   356→   356→  // a product from chat never switches the view or changes the URL.
+   357→   357→   357→  useEffect(() => {
+   358→   358→   358→    const onOpenProduct = (e: Event) => {
+   359→   359→   359→      const detail = (e as CustomEvent).detail as { productId?: string; initialProduct?: any } | undefined
+   360→   360→   360→      if (detail?.productId) {
+   361→   361→   361→        // v21: stash initialProduct (from orders) so ProductPage can render
+   362→   362→   362→        // soft-deleted products immediately without waiting for a fetch.
+   363→   363→   363→        setActiveInitialProduct(detail.initialProduct ?? null)
+   364→   364→   364→        openProductOverlay(detail.productId)
+   365→   365→   365→      }
+   366→   366→   366→    }
+   367→   367→   367→    window.addEventListener('999pro:open-product', onOpenProduct as EventListener)
+   368→   368→   368→    return () => window.removeEventListener('999pro:open-product', onOpenProduct as EventListener)
+   369→   369→   369→  }, [openProductOverlay])
+   370→   370→   370→
+   371→   371→   371→  // v25.6 (Task #1): Listen for "switch-product" requests from the Similar
+   372→   372→   372→  // Products block inside ProductPage. Previously, the SimilarProducts click
+   373→   373→   373→  // handler did `pushState + dispatchEvent(popstate)` — but popstate is also
+   374→   374→   374→  // intercepted by ProductPage's own Back-button handler, which closed the
+   375→   375→   375→  // card instead of switching the product.
+   376→   376→   376→  // Now SimilarProducts dispatches `999pro:switch-product` and we call
+   377→   377→   377→  // `openProduct(id)` which:
+   378→   378→   378→  //   1. Sets activeProductId → ProductPage refetches the new product.
+   379→   379→   379→  //   2. Pushes ?product=<id> to the URL (so a reload works).
+   380→   380→   380→  //   3. Does NOT close the card.
+   381→   381→   381→  useEffect(() => {
+   382→   382→   382→    const onSwitchProduct = (e: Event) => {
+   383→   383→   383→      const detail = (e as CustomEvent).detail as { productId?: string } | undefined
+   384→   384→   384→      if (detail?.productId) {
+   385→   385→   385→        openProduct(detail.productId)
+   386→   386→   386→      }
+   387→   387→   387→    }
+   388→   388→   388→    window.addEventListener('999pro:switch-product', onSwitchProduct as EventListener)
+   389→   389→   389→    return () => window.removeEventListener('999pro:switch-product', onSwitchProduct as EventListener)
+   390→   390→   390→  }, [openProduct])
+   391→   391→   391→
+   392→   392→   392→  // Listen for "open-film" overlay requests — same pattern as product.
+   393→   393→   393→  // Used by FilmChatCard in chat to open FilmBottomSheet as overlay.
+   394→   394→   394→  useEffect(() => {
+   395→   395→   395→    const onOpenFilm = (e: Event) => {
+   396→   396→   396→      const detail = (e as CustomEvent).detail as { payload?: any } | undefined
+   397→   397→   397→      if (detail?.payload) setActiveFilmPayload(detail.payload)
+   398→   398→   398→    }
+   399→   399→   399→    window.addEventListener('999pro:open-film', onOpenFilm as EventListener)
+   400→   400→   400→    return () => window.removeEventListener('999pro:open-film', onOpenFilm as EventListener)
+   401→   401→   401→  }, [])
+   402→   402→   402→
+   403→   403→   403→  // v35: Listen for "app:open-info-page" requests — used by Universal Search
+   404→   404→   404→  // to open an info-page by slug from anywhere in the app.
+   405→   405→   405→  useEffect(() => {
+   406→   406→   406→    const onOpenInfoPage = (e: Event) => {
+   407→   407→   407→      const detail = (e as CustomEvent).detail as { slug?: string } | undefined
+   408→   408→   408→      if (detail?.slug) navigateToInfoPage(detail.slug)
+   409→   409→   409→    }
+   410→   410→   410→    window.addEventListener('app:open-info-page', onOpenInfoPage as EventListener)
+   411→   411→   411→    return () =>
+   412→   412→   412→      window.removeEventListener('app:open-info-page', onOpenInfoPage as EventListener)
+   413→   413→   413→  }, [navigateToInfoPage])
+   414→   414→   414→
+   415→   415→   415→  // Listen for "open-auth" requests from anywhere in the app (e.g. SmartShareSheet
+   416→   416→   416→  // when an unauthenticated user taps "Отправить в чат"). Opens the AuthDialog
+   417→   417→   417→  // — same dialog that HomeView's onAuth() callback opens.
+   418→   418→   418→  useEffect(() => {
+   419→   419→   419→    const onOpenAuth = () => setAuthOpen(true)
+   420→   420→   420→    window.addEventListener('999pro:open-auth', onOpenAuth)
+   421→   421→   421→    return () => window.removeEventListener('999pro:open-auth', onOpenAuth)
+   422→   422→   422→  }, [])
+   423→   423→   423→
+   424→   424→   424→  // v10.3-fix: deep-link from push notification cold start. When the SW
+   425→   425→   425→  // opens a new window with ?conv=<conversationId>, we need to navigate
+   426→   426→   426→  // to the chat view and dispatch chat:open-conversation so ChatView
+   427→   427→   427→  // opens the right conversation. This runs once on mount, after
+   428→   428→   428→  // ChatView has been mounted (via the view=chat param set by getInitialView).
+   429→   429→   429→  useEffect(() => {
+   430→   430→   430→    if (typeof window === 'undefined') return
+   431→   431→   431→    const params = new URLSearchParams(window.location.search)
+   432→   432→   432→    const convId = params.get('conv')
+   433→   433→   433→    if (convId) {
+   434→   434→   434→      // Clean the URL so the param doesn't persist on refresh.
+   435→   435→   435→      params.delete('conv')
+   436→   436→   436→      const newUrl = params.toString()
+   437→   437→   437→        ? `${window.location.pathname}?${params.toString()}`
+   438→   438→   438→        : window.location.pathname
+   439→   439→   439→      window.history.replaceState({}, '', newUrl)
+   440→   440→   440→      // Dispatch the open-conversation event. ChatView listens for this
+   441→   441→   441→      // and will refresh conversations if needed (handles the case where
+   442→   442→   442→      // the conversation isn't in the local state yet).
+   443→   443→   443→      setTimeout(() => {
+   444→   444→   444→        window.dispatchEvent(
+   445→   445→   445→          new CustomEvent('chat:open-conversation', { detail: { conversationId: convId } }),
+   446→   446→   446→        )
+   447→   447→   447→      }, 500) // delay so ChatView has time to mount
+   448→   448→   448→    }
+   449→   449→   449→  }, [])
+   450→   450→   450→
+   451→   451→   451→  // v16.1: pending-product localStorage code removed — BuySheet is deleted,
+   452→   452→   452→  // so nothing writes that marker anymore. Clean up any stale key from old
+   453→   453→   453→  // clients so it doesn't linger forever.
+   454→   454→   454→  useEffect(() => {
+   455→   455→   455→    if (typeof window !== 'undefined') {
+   456→   456→   456→      try { window.localStorage.removeItem('999pro-pending-product') } catch { /* ignore */ }
+   457→   457→   457→    }
+   458→   458→   458→  }, [])
+   459→   459→   459→
+   460→   460→   460→  const closeProduct = useCallback(() => {
+   461→   461→   461→    setActiveProductId(null)
+   462→   462→   462→    setActiveInitialProduct(null)
+   463→   463→   463→    if (typeof window !== 'undefined') {
+   464→   464→   464→      const url = new URL(window.location.href)
+   465→   465→   465→      url.searchParams.delete('product')
+   466→   466→   466→      window.history.pushState({}, '', url.toString())
+   467→   467→   467→    }
+   468→   468→   468→  }, [])
+   469→   469→   469→
+   470→   470→   470→  // Open Universal Search overlay (v35) — dispatches a window event that
+   471→   471→   471→  // UniversalSearchGlobalOverlay listens for. Cmd/Ctrl+K also works.
+   472→   472→   472→  const openSearch = useCallback(() => {
+   473→   473→   473→    window.dispatchEvent(new CustomEvent('open-universal-search'))
+   474→   474→   474→  }, [])
+   475→   475→   475→
+   476→   476→   476→  // Start a conversation from search results
+   477→   477→   477→  const handleStartConversation = useCallback(
+   478→   478→   478→    (_userId: string) => {
+   479→   479→   479→      navigate('chat')
+   480→   480→   480→      toast.info('Найдите пользователя в чате через поиск, чтобы начать диалог')
+   481→   481→   481→    },
+   482→   482→   482→    [navigate],
+   483→   483→   483→  )
+   484→   484→   484→
+   485→   485→   485→  return (
+   486→   486→   486→    <AppShell
+   487→   487→   487→      view={view}
+   488→   488→   488→      onNavigate={navigate}
+   489→   489→   489→      onMore={() => setMoreOpen(true)}
+   490→   490→   490→      onOpenSearch={openSearch}
+   491→   491→   491→    >
+   492→   492→   492→      <AnimatePresence mode="wait">
+   493→   493→   493→        {/* Phase 23: main-content anchor for skip-to-content link */}
+   494→   494→   494→        {view === 'home' && (
+   495→   495→   495→          <>
+   496→   496→   496→            {/* Desktop: premium bento layout (md+) — gated on viewport
+   497→   497→   497→                to avoid mounting the desktop subtree (and its 3 API calls)
+   498→   498→   498→                on phones where it's CSS-hidden anyway. */}
+   499→   499→   499→            {isDesktop && (
+   500→   500→   500→              <DesktopHome
+   501→   501→   501→                key="desktop-home"
+   502→   502→   502→                onNavigate={navigate}
+   503→   503→   503→                onOpenProduct={openProduct}
+   504→   504→   504→                onOpenSearch={openSearch}
+   505→   505→   505→              />
+   506→   506→   506→            )}
+   507→   507→   507→            {/* Mobile: original HomeView (below md) */}
+   508→   508→   508→            {!isDesktop && (
+   509→   509→   509→              <div key="mobile-home">
+   510→   510→   510→                <HomeView
+   511→   511→   511→                  onNavigate={navigate}
+   512→   512→   512→                  onAuth={() => setAuthOpen(true)}
+   513→   513→   513→                  onOpenProduct={openProduct}
+   514→   514→   514→                  onStartConversation={handleStartConversation}
+   515→   515→   515→                />
+   516→   516→   516→              </div>
+   517→   517→   517→            )}
+   518→   518→   518→          </>
+   519→   519→   519→        )}
+   520→   520→   520→        {view === 'catalog' && (
+   521→   521→   521→          <RetryableErrorBoundary key="catalog">
+   522→   522→   522→            <CatalogView key="catalog-children" onOpenProduct={openProduct} />
+   523→   523→   523→          </RetryableErrorBoundary>
+   524→   524→   524→        )}
+   525→   525→   525→        {view === 'club' && (
+   526→   526→   526→          <RetryableErrorBoundary key="club">
+   527→   527→   527→            <ClubView key="club-children" />
+   528→   528→   528→          </RetryableErrorBoundary>
+   529→   529→   529→        )}
+   530→   530→   530→        {view === 'chat' && (
+   531→   531→   531→          <RetryableErrorBoundary key="chat">
+   532→   532→   532→            <ChatView key="chat-children" />
+   533→   533→   533→          </RetryableErrorBoundary>
+   534→   534→   534→        )}
+   535→   535→   535→        {view === 'profile' && (
+   536→   536→   536→          <RetryableErrorBoundary key="profile">
+   537→   537→   537→            <ProfileView key="profile-children" onNavigate={navigate} />
+   538→   538→   538→          </RetryableErrorBoundary>
+   539→   539→   539→        )}
+   540→   540→   540→        {view === 'studio' && (
+   541→   541→   541→          <RetryableErrorBoundary key="studio">
+   542→   542→   542→            {/* v16.8 production lockdown: Studio is ADMIN ONLY.
+   543→   543→   543→                Non-admin users who reach /?view=studio via direct URL are
+   544→   544→   544→                redirected to home. The iframe inside StudioView will also
+   545→   545→   545→                enforce auth (Studio's auth-init checks admin role + the
+   546→   546→   546→                backend rejects non-admin tokens on every /api/* admin route
+   547→   547→   547→                via requireAdmin middleware). Defense in depth. */}
+   548→   548→   548→            {user?.role === 'admin' ? (
+   549→   549→   549→              <StudioView key="studio-children" onBack={() => navigate('home')} />
+   550→   550→   550→            ) : (
+   551→   551→   551→              <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+   552→   552→   552→                <div className="text-4xl mb-3">🔒</div>
+   553→   553→   553→                <h2 className="text-lg font-bold mb-1">Доступ запрещён</h2>
+   554→   554→   554→                <p className="text-sm text-muted-foreground">Раздел доступен только администраторам.</p>
+   555→   555→   555→              </div>
+   556→   556→   556→            )}
+   557→   557→   557→          </RetryableErrorBoundary>
+   558→   558→   558→        )}
+   559→   559→   559→        {view === 'search' && (
+   560→   560→   560→          <RetryableErrorBoundary key="search">
+   561→   561→   561→            <SearchPage
+   562→   562→   562→              key="search-children"
+   563→   563→   563→              onBack={() => navigate('home')}
+   564→   564→   564→              onOpenProduct={openProduct}
+   565→   565→   565→              onStartConversation={handleStartConversation}
+   566→   566→   566→              initialQuery={searchQuery}
+   567→   567→   567→            />
+   568→   568→   568→          </RetryableErrorBoundary>
+   569→   569→   569→        )}
+   570→   570→   570→        {view === 'orders' && (
+   571→   571→   571→          <RetryableErrorBoundary key="orders">
+   572→   572→   572→            <OrdersView key="orders-children" onNavigate={navigate} onOpenProduct={openProduct} />
+   573→   573→   573→          </RetryableErrorBoundary>
+   574→   574→   574→        )}
+   575→   575→   575→        {view === 'reviews' && (
+   576→   576→   576→          <RetryableErrorBoundary key="reviews">
+   577→   577→   577→            <ReviewsView key="reviews-children" onNavigate={navigate} />
+   578→   578→   578→          </RetryableErrorBoundary>
+   579→   579→   579→        )}
+   580→   580→   580→        {/* v25.6 (Task #2 + #7): 'support' view now resolves to ContactsView.
+   581→   581→   581→            Old SupportView (chat with support) is fully removed from the UI —
+   582→   582→   582→            user-facing entries route to 'contacts' instead. The 'support'
+   583→   583→   583→            branch is kept only so that old deep links (/?view=support from
+   584→   584→   584→            notifications, AI assistant actions, etc.) still land somewhere
+   585→   585→   585→            useful instead of showing a blank screen. */}
+   586→   586→   586→        {(view === 'support' || view === 'contacts') && (
+   587→   587→   587→          <RetryableErrorBoundary key="contacts">
+   588→   588→   588→            <ContactsView key="contacts-children" onNavigate={navigate} />
+   589→   589→   589→          </RetryableErrorBoundary>
+   590→   590→   590→        )}
+   591→   591→   591→        {view === 'settings' && (
+   592→   592→   592→          <RetryableErrorBoundary key="settings">
+   593→   593→   593→            <SettingsView key="settings-children" onNavigate={navigate} />
+   594→   594→   594→          </RetryableErrorBoundary>
+   595→   595→   595→        )}
+   596→   596→   596→        {view === 'privacy' && (
+   597→   597→   597→          <RetryableErrorBoundary key="privacy">
+   598→   598→   598→            <PrivacyView key="privacy-children" onNavigate={navigate} />
+   599→   599→   599→          </RetryableErrorBoundary>
+   600→   600→   600→        )}
+   601→   601→   601→        {view === 'about' && (
+   602→   602→   602→          <RetryableErrorBoundary key="about">
+   603→   603→   603→            <AboutView key="about-children" onNavigate={navigate} />
+   604→   604→   604→          </RetryableErrorBoundary>
+   605→   605→   605→        )}
+   606→   606→   606→        {view === 'info' && activeInfoSlug && (
+   607→   607→   607→          <RetryableErrorBoundary key="info">
+   608→   608→   608→            <InfoPageView key={`info-${activeInfoSlug}`} slug={activeInfoSlug} onNavigate={navigate} />
+   609→   609→   609→          </RetryableErrorBoundary>
+   610→   610→   610→        )}
+   611→   611→   611→        {view === 'admin-login' && (
+   612→   612→   612→          <RetryableErrorBoundary key="admin-login">
+   613→   613→   613→            <AdminLoginView key="admin-login-children" onBack={() => navigate('home')} onNavigate={navigate} />
+   614→   614→   614→          </RetryableErrorBoundary>
+   615→   615→   615→        )}
+   616→   616→   616→        {view === 'analytics' && (
+   617→   617→   617→          <RetryableErrorBoundary key="analytics">
+   618→   618→   618→            <AnalyticsView key="analytics-children" onNavigate={navigate} />
+   619→   619→   619→          </RetryableErrorBoundary>
+   620→   620→   620→        )}
+   621→   621→   621→      </AnimatePresence>
+   622→   622→   622→
+   623→   623→   623→      <RetryableErrorBoundary key="auth-dialog">
+   624→   624→   624→        <AuthDialog open={authOpen} onOpenChange={setAuthOpen} />
+   625→   625→   625→      </RetryableErrorBoundary>
+   626→   626→   626→      <RetryableErrorBoundary key="more-sheet">
+   627→   627→   627→        <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} onNavigate={navigate} onNavigateToInfoPage={navigateToInfoPage} />
+   628→   628→   628→      </RetryableErrorBoundary>
+   629→   629→   629→      <RetryableErrorBoundary key="product-page">
+   630→   630→   630→        <ProductPage productId={activeProductId} onClose={closeProduct} initialProduct={activeInitialProduct} />
+   631→   631→   631→      </RetryableErrorBoundary>
+   632→   632→   632→      <RetryableErrorBoundary key="film-bottom-sheet">
+   633→   633→   633→        <FilmBottomSheet payload={activeFilmPayload} onClose={() => setActiveFilmPayload(null)} />
+   634→   634→   634→      </RetryableErrorBoundary>
+   635→   635→   635→    </AppShell>
+   636→   636→   636→  )
+   637→   637→   637→}
+   638→   638→   638→
+   639→   639→   639→function HomeView({
+   640→   640→   640→  onNavigate,
+   641→   641→   641→  onAuth,
+   642→   642→   642→  onOpenProduct,
+   643→   643→   643→  onStartConversation,
+   644→   644→   644→}: {
+   645→   645→   645→  onNavigate: (v: string) => void
+   646→   646→   646→  onAuth: () => void
+   647→   647→   647→  onOpenProduct: (id: string) => void
+   648→   648→   648→  onStartConversation?: (userId: string) => void
+   649→   649→   649→}) {
+   650→   650→   650→  // v12.6.3: inline search state. When the user types a query, we hide
+   651→   651→   651→  // Stories / Banners / SmartBlocks and show only the search results
+   652→   652→   652→  // (which InlineSearch renders below itself, in normal flow). This
+   653→   653→   653→  // matches the catalog UX exactly: type → results filter in place.
+   654→   654→   654→  const [searchActive, setSearchActive] = useState(false)
+   655→   655→   655→
+   656→   656→   656→  // v16.5: Home page layout config — admin controls block order/visibility
+   657→   657→   657→  // via Studio → "Главная". We only use isVisible() here; SmartBlocks already
+   658→   658→   658→  // renders all 10 blocks internally, so we only gate the top-level sections.
+   659→   659→   659→  const { isVisible } = useHomeLayout()
+   660→   660→   660→
+   661→   661→   661→  const handleQueryChange = useCallback((query: string, _hasResults: boolean) => {
+   662→   662→   662→    // Search is "active" when there's a query with ≥2 chars (regardless of
+   663→   663→   663→    // whether results have loaded yet). InlineSearch only shows results when
+   664→   664→   664→    // hasQuery is true, so we mirror that here.
+   665→   665→   665→    setSearchActive(query.trim().length >= 2)
+   666→   666→   666→  }, [])
+   667→   667→   667→
+   668→   668→   668→  return (
+   669→   669→   669→    <div className="pb-28 md:pb-0 page-top-padding">
+   670→   670→   670→      {/* v18.4: Floating Live Info — "живая" информационная строка между
+   671→   671→   671→          Header и Search. Текст парит в пространстве (без карточек/рамок),
+   672→   672→   672→          ротация: погода → финансы → категории магазина → персональные.
+   673→   673→   673→          Показывается только на главной странице. */}
+   674→   674→   674→      <FloatingLiveInfo />
+   675→   675→   675→
+   676→   676→   676→      {/* v12.6.3: InlineSearch — reusable inline search, identical UX to the
+   677→   677→   677→          catalog ("999 Store"). An inline <input> in normal flow; typing
+   678→   678→   678→          filters results in place below the bar. NO overlay, NO modal, NO
+   679→   679→   679→          page navigation. When active, the surrounding content (Stories,
+   680→   680→   680→          Banners, SmartBlocks) is hidden so only results show — same as the
+   681→   681→   681→          catalog. Sits directly below the Header, scrolls with the page. */}
+   682→   682→   682→      <InlineSearch
+   683→   683→   683→        onOpenProduct={onOpenProduct}
+   684→   684→   684→        onStartConversation={onStartConversation}
+   685→   685→   685→        onQueryChange={handleQueryChange}
+   686→   686→   686→      />
+   687→   687→   687→
+   688→   688→   688→      {/* When search is NOT active, show the normal Home content.
+   689→   689→   689→          When search IS active (query ≥ 2 chars), hide everything except
+   690→   690→   690→          the search results (which InlineSearch renders itself). */}
+   691→   691→   691→      {!searchActive && (
+   692→   692→   692→        <>
+   693→   693→   693→          {/* Hero header (desktop) — managed via Studio → "Hero блок" */}
+   694→   694→   694→          {isVisible('hero') && <Hero onNavigate={onNavigate} />}
+   695→   695→   695→
+   696→   696→   696→          {/* v12.3.1: Stories component RESTORED (standalone module — not Feed). */}
+   697→   697→   697→          {isVisible('stories') && <Stories />}
+   698→   698→   698→
+   699→   699→   699→          {/* Promo banner */}
+   700→   700→   700→          {isVisible('banner') && <PromoBannerCarousel />}
+   701→   701→   701→
+   702→   702→   702→          {/* Smart blocks — single API call returns 10 personalized blocks.
+   703→   703→   703→              v16.5: individual smart-block visibility is controlled inside
+   704→   704→   704→              SmartBlocks via the homeLayout config (passed through). The
+   705→   705→   705→              top-level isVisible('trending') etc. gates are handled by
+   706→   706→   706→              SmartBlocks filtering its own blocks based on the same config. */}
+   707→   707→   707→          <SmartBlocks onOpenProduct={onOpenProduct} limit={12} />
+   708→   708→   708→
+   709→   709→   709→          {/* Catalog CTA */}
+   710→   710→   710→          <div className="px-4 md:px-6 py-3">
+   711→   711→   711→            <div className="rounded-3xl gradient-soft p-6 md:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+   712→   712→   712→              <div className="flex-1">
+   713→   713→   713→                <h3 className="text-xl font-bold mb-1">Полный каталог</h3>
+   714→   714→   714→                <p className="text-sm text-muted-foreground">
+   715→   715→   715→                  Сотни товаров с большими фото, ценами и быстрой покупкой в один клик.
+   716→   716→   716→                </p>
+   717→   717→   717→              </div>
+   718→   718→   718→              <Button
+   719→   719→   719→                onClick={() => onNavigate('catalog')}
+   720→   720→   720→                className="rounded-full gradient-brand text-white font-semibold shadow-glow h-11 px-6"
+   721→   721→   721→              >
+   722→   722→   722→                Открыть каталог
+   723→   723→   723→              </Button>
+   724→   724→   724→            </div>
+   725→   725→   725→          </div>
+   726→   726→   726→        </>
+   727→   727→   727→      )}
+   728→   728→   728→
+   729→   729→   729→      {/* v12.3: Feed preview block removed. The 999 CLUB module replaces
+   730→   730→   730→          the old feed — the bottom nav now has a 💎 CLUB button. */}
+   731→   731→   731→    </div>
+   732→   732→   732→  )
+   733→   733→   733→}
+   734→   734→   734→
+   735→   735→   735→function CatalogView({ onOpenProduct }: { onOpenProduct: (id: string) => void }) {
+   736→   736→   736→  return (
+   737→   737→   737→    <div className="pb-28 md:pb-12 page-top-padding">
+   738→   738→   738→      {/* v12.6: clean catalog header — only "999 Store" title, no badge,
+   739→   739→   739→          no subtitle, no category list. Categories live in the filter bar
+   740→   740→   740→          below (kept intact). The previous "Реклама · Подарки · Мебель ·
+   741→   741→   741→          Печать · Дизайн · Интерьер · Наружная реклама · Полиграфия" subtitle
+   742→   742→   742→          duplicated info already visible in the category chips. */}
+   743→   743→   743→      <div className="hidden md:block max-w-[1440px] mx-auto px-8 lg:px-12 xl:px-16 pt-8 lg:pt-10 pb-2">
+   744→   744→   744→        <h1 className="text-3xl lg:text-4xl font-bold tracking-tight">999 Store</h1>
+   745→   745→   745→      </div>
+   746→   746→   746→      <div className="hidden md:block max-w-[1440px] mx-auto px-8 lg:px-12 xl:px-16">
+   747→   747→   747→        <ProductsGrid
+   748→   748→   748→          endpoint="/api/products"
+   749→   749→   749→          title=""
+   750→   750→   750→          limit={48}
+   751→   751→   751→          showCategories
+   752→   752→   752→          limitToProjectCategories
+   753→   753→   753→          onOpenProduct={onOpenProduct}
+   754→   754→   754→          live
+   755→   755→   755→          seedOffset={5000}
+   756→   756→   756→        />
+   757→   757→   757→      </div>
+   758→   758→   758→      {/* Mobile: original layout */}
+   759→   759→   759→      <div className="md:hidden">
+   760→   760→   760→        <ProductsGrid
+   761→   761→   761→          endpoint="/api/products"
+   762→   762→   762→          title="999 Store"
+   763→   763→   763→          limit={48}
+   764→   764→   764→          showCategories
+   765→   765→   765→          limitToProjectCategories
+   766→   766→   766→          onOpenProduct={onOpenProduct}
+   767→   767→   767→          live
+   768→   768→   768→          seedOffset={5000}
+   769→   769→   769→        />
+   770→   770→   770→      </div>
+   771→   771→   771→    </div>
+   772→   772→   772→  )
+   773→   773→   773→}
+   774→   774→   774→
+   775→   775→   775→
+   776→   776→   776→

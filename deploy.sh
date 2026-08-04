@@ -392,19 +392,29 @@ echo "${BOLD}${GREEN}╔══════════════════�
 echo "${BOLD}${GREEN}║  ✅  DEPLOYMENT COMPLETE                                                  ║${RESET}"
 echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-echo "  ${BOLD}Endpoints:${RESET}"
-echo "    Frontend:  ${CYAN}http://localhost:3000${RESET}"
-echo "    Studio:    ${CYAN}http://localhost:3001/studio${RESET}"
-echo "    Backend:   ${CYAN}http://localhost:4000/api/health${RESET}"
-echo ""
+# v25.5: print production URL if APP_PUBLIC_URL is set, otherwise localhost.
+DEPLOY_URL="${APP_PUBLIC_URL:-http://localhost:3000}"
+if [ "$DEPLOY_URL" != "http://localhost:3000" ]; then
+  echo "  ${BOLD}Endpoints:${RESET}"
+  echo "    Public:    ${CYAN}${DEPLOY_URL}${RESET}"
+  echo "    Studio:    ${CYAN}${DEPLOY_URL}/studio${RESET}"
+  echo "    Health:    ${CYAN}${DEPLOY_URL}/api/health${RESET}"
+  echo ""
+else
+  echo "  ${BOLD}Endpoints (local):${RESET}"
+  echo "    Frontend:  ${CYAN}http://localhost:3000${RESET}"
+  echo "    Studio:    ${CYAN}http://localhost:3001/studio${RESET}"
+  echo "    Backend:   ${CYAN}http://localhost:4000/api/health${RESET}"
+  echo ""
+fi
 if echo "$ADMIN_EXISTS" | grep -q '"hasAdmin":false'; then
   echo "  ${BOLD}${YELLOW}First-run setup required${RESET}"
-  echo "  Open ${CYAN}http://localhost:3001/studio${RESET} in your browser."
+  echo "  Open ${CYAN}${DEPLOY_URL}/studio${RESET} in your browser."
   echo "  The setup wizard opens automatically — fill in the form to create"
   echo "  the first admin. No curl, no tokens, no terminal commands."
   echo ""
 else
-  echo "  ${BOLD}Admin already exists${RESET} — login at ${CYAN}http://localhost:3001/studio${RESET}"
+  echo "  ${BOLD}Admin already exists${RESET} — login at ${CYAN}${DEPLOY_URL}/studio${RESET}"
   echo ""
 fi
 echo "  ${DIM}Deploy log: $LOG_FILE${RESET}"

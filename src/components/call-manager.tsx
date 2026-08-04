@@ -260,7 +260,21 @@ export function CallManager() {
       if (call?.callId === payload.callId) {
         webrtc.hangup()
         setCall(null)
-        if (payload.duration) {
+        // v25.4 (calls audit GAP-4): differentiate the end reason so the user
+        // gets meaningful feedback for missed/cancelled/disconnected calls
+        // instead of a generic "Звонок завершён" for everything.
+        const reason = payload.reason
+        if (reason === 'missed') {
+          toast.error('Пропущенный звонок')
+        } else if (reason === 'cancelled') {
+          toast.info('Звонок отменён')
+        } else if (reason === 'peer-disconnected') {
+          toast.error('Собеседник недоступен')
+        } else if (reason === 'webrtc-failed') {
+          toast.error('Не удалось установить соединение')
+        } else if (reason === 'media-error') {
+          toast.error('Ошибка доступа к камере/микрофону')
+        } else if (payload.duration) {
           toast.info(`Звонок завершён · ${formatDuration(payload.duration)}`)
         } else {
           toast.info('Звонок завершён')
@@ -409,7 +423,15 @@ export function CallManager() {
 
   const handleEnd = () => {
     if (!call) return
-    endCall(call.callId, 'user-ended')
+    // v25.4 (calls audit GAP-5): if the caller hangs up while the call is
+    // still ringing (not yet accepted), send `call:cancel` instead of
+    // `call:end` so the recipient sees "Звонок отменён" and the Call record
+    // gets status `cancelled` (not `ended` with null duration).
+    if (call.status === 'ringing' && call.direction === 'outgoing') {
+      cancelCall(call.callId)
+    } else {
+      endCall(call.callId, 'user-ended')
+    }
     webrtc.hangup()
     setCall(null)
   }
@@ -430,6 +452,7 @@ export function CallManager() {
       remoteVideoRef={remoteVideoRef}
       iceState={webrtc.iceState}
       isPip={isPip}
+      isScreenSharing={webrtc.isScreenSharing}
       onMinimize={() => setPip(true)}
       onExpand={() => setPip(false)}
       onAccept={handleAccept}
@@ -439,6 +462,14 @@ export function CallManager() {
       onToggleCamera={webrtc.toggleCamera}
       onSwitchCamera={webrtc.switchCamera}
       onToggleSpeaker={webrtc.toggleSpeaker}
+      onToggleScreenShare={() => {
+        // v25.4 (calls audit GAP-1): toggle screen share
+        if (webrtc.isScreenSharing) {
+          void webrtc.stopScreenShare()
+        } else {
+          void webrtc.startScreenShare()
+        }
+      }}
     />
   )
 }

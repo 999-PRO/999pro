@@ -55,11 +55,23 @@ export function EmailVerificationModal({ open, email, onClose, onVerified }: Ema
 
   // Poll /api/auth/me every 4s while the modal is open — detects when the
   // user has clicked the email link in another tab/device.
+  // v25.4 (UX-1 critical fix): use the stashed `pendingVerificationToken` as
+  // the Authorization header instead of `auth: true` (which reads `token` —
+  // null during verification). Previously the poll sent no auth header, got
+  // 401 every 4s, and looped forever — the user had to paste the link
+  // manually. Now the poll actually works.
   useEffect(() => {
     if (!open || verified) return
     const poll = async () => {
+      // Skip when tab is hidden — saves battery + mobile data.
+      if (typeof document !== 'undefined' && document.hidden) return
+      const pending = useAuthStore.getState().pendingVerificationToken
+      if (!pending) return
       try {
-        const data = await api.get<{ user: { emailVerified?: string | null } }>('/api/auth/me', { auth: true })
+        const data = await api.get<{ user: { emailVerified?: string | null } }>(
+          '/api/auth/me',
+          { headers: { Authorization: `Bearer ${pending}` } },
+        )
         if (data.user?.emailVerified) {
           setVerified(true)
           completeEmailVerification()
@@ -72,6 +84,7 @@ export function EmailVerificationModal({ open, email, onClose, onVerified }: Ema
         // 401 expected if the stashed token isn't set yet — ignore
       }
     }
+    poll()
     pollRef.current = setInterval(poll, 4000)
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
@@ -82,7 +95,13 @@ export function EmailVerificationModal({ open, email, onClose, onVerified }: Ema
     if (resendIn > 0 || resending) return
     setResending(true)
     try {
-      await api.post('/api/auth/send-verification', { json: {}, auth: true })
+      // v25.4 (UX-1): use pendingVerificationToken — `auth: true` reads
+      // `token` which is null during the verification flow.
+      const pending = useAuthStore.getState().pendingVerificationToken
+      await api.post('/api/auth/send-verification', {
+        json: {},
+        headers: pending ? { Authorization: `Bearer ${pending}` } : undefined,
+      })
       toast.success('Письмо отправлено повторно')
       setResendIn(60)
     } catch (e: any) {

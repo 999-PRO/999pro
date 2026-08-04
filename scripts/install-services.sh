@@ -391,13 +391,15 @@ fi
 
 # Check if first admin exists
 ADMIN_EXISTS=$(curl -s http://localhost:4000/api/auth/admin-exists 2>/dev/null || echo '{"hasAdmin":true}')
+# v25.5: use APP_PUBLIC_URL if set (production), otherwise localhost.
+DEPLOY_URL="${APP_PUBLIC_URL:-http://localhost:3000}"
 if echo "$ADMIN_EXISTS" | grep -q '"hasAdmin":false'; then
   echo "  ${BOLD}${YELLOW}First-run setup required${RESET}"
-  echo "  Open ${CYAN}http://localhost:3001/studio${RESET} in your browser."
+  echo "  Open ${CYAN}${DEPLOY_URL}/studio${RESET} in your browser."
   echo "  The setup wizard opens automatically — fill in the form to create"
   echo "  the first admin. No curl, no tokens, no terminal commands."
 else
-  echo "  ${BOLD}Admin already exists${RESET} — login at ${CYAN}http://localhost:3001/studio${RESET}"
+  echo "  ${BOLD}Admin already exists${RESET} — login at ${CYAN}${DEPLOY_URL}/studio${RESET}"
 fi
 echo ""
 

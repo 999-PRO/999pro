@@ -80,6 +80,78 @@ const isProd = NODE_ENV === 'production'
 const CLIENT_ORIGIN_RAW = process.env.CLIENT_ORIGIN || 'http://localhost:3000,http://localhost:3001'
 const CLIENT_ORIGIN = CLIENT_ORIGIN_RAW.split(',').map((s) => s.trim()).filter(Boolean)
 
+// v25.5 (config audit): validate production configuration at startup.
+// If the operator forgot to override the localhost defaults, the app would
+// silently break (CORS rejects real domain, VAPID subject invalid for iOS,
+// etc.). Now we fail-fast with a clear error message so the operator knows
+// exactly what to fix.
+if (isProd) {
+  const configErrors: string[] = []
+
+  // CLIENT_ORIGIN must NOT contain localhost in production
+  if (CLIENT_ORIGIN.some((o) => o.includes('localhost') || o.includes('127.0.0.1'))) {
+    configErrors.push(
+      `CLIENT_ORIGIN contains localhost in production: ${CLIENT_ORIGIN.join(', ')}. ` +
+      `Set CLIENT_ORIGIN=https://YOUR_DOMAIN,https://studio.YOUR_DOMAIN in mini-services/backend/.env`,
+    )
+  }
+
+  // APP_PUBLIC_URL must be set to a real HTTPS URL in production
+  const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL || ''
+  if (!APP_PUBLIC_URL || !APP_PUBLIC_URL.startsWith('https://') || APP_PUBLIC_URL.includes('localhost')) {
+    configErrors.push(
+      `APP_PUBLIC_URL is "${APP_PUBLIC_URL}" — must be a real HTTPS URL (e.g. https://tri-999.online) in production. ` +
+      `Set APP_PUBLIC_URL=https://YOUR_DOMAIN in mini-services/backend/.env`,
+    )
+  }
+
+  // VAPID_SUBJECT must be mailto: or https: with a real domain
+  const VAPID_SUBJECT = process.env.VAPID_SUBJECT || ''
+  if (VAPID_SUBJECT) {
+    if (!VAPID_SUBJECT.startsWith('mailto:') && !VAPID_SUBJECT.startsWith('https://')) {
+      configErrors.push(
+        `VAPID_SUBJECT "${VAPID_SUBJECT}" is invalid — must start with "mailto:" or "https://". ` +
+        `iOS Safari 16.4+ PWA push will silently fail. Set VAPID_SUBJECT=mailto:admin@YOUR_DOMAIN`,
+      )
+    } else if (VAPID_SUBJECT.includes('localhost') || VAPID_SUBJECT.includes('noreply@localhost')) {
+      configErrors.push(
+        `VAPID_SUBJECT "${VAPID_SUBJECT}" still points to localhost — iOS PWA push will silently fail. ` +
+        `Set VAPID_SUBJECT=mailto:admin@YOUR_DOMAIN`,
+      )
+    }
+  }
+
+  // VAPID keys must be present
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    configErrors.push(
+      `VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are missing — Web Push will not work. ` +
+      `Run "npm run setup -- --force" to regenerate, or set them manually in mini-services/backend/.env`,
+    )
+  }
+
+  // TRUST_PROXY should be true in production (behind Nginx/Caddy)
+  if (process.env.TRUST_PROXY !== 'true') {
+    logger.warn(
+      'TRUST_PROXY is not "true" — behind a reverse proxy (Nginx/Caddy), req.ip will be the proxy IP ' +
+      'and rate limiters will collapse all clients into one bucket. Set TRUST_PROXY=true in production.',
+      { module: 'config' },
+    )
+  }
+
+  if (configErrors.length > 0) {
+    console.error('\n' + '='.repeat(80))
+    console.error('PRODUCTION CONFIGURATION ERRORS DETECTED:')
+    console.error('='.repeat(80))
+    for (const err of configErrors) {
+      console.error('\n  ✗ ' + err)
+    }
+    console.error('\n' + '='.repeat(80))
+    console.error('Fix these in mini-services/backend/.env and restart the service.')
+    console.error('='.repeat(80) + '\n')
+    process.exit(1)
+  }
+}
+
 /**
  * CORS origin checker.
  *

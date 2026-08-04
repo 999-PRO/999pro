@@ -38,9 +38,11 @@
   "exclude": [
     "node_modules",
     "scripts",
-    "mini-services/backend/scripts",
-    "mini-services/backend/src",
-    "mini-services/studio",
-    "packages/shared"
+    "mini-services",
+    "packages/shared",
+    "skills",
+    "upload",
+    "project",
+    "tests"
   ]
 }

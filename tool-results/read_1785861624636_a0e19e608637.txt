@@ -1,0 +1,1050 @@
+     1→// 999 — Три девятки — AI Assistant chat endpoint v2
+     2→// ----------------------------------------------------------------------------
+     3→// Full digital manager: context-aware, action-capable, voice-ready.
+     4→// ----------------------------------------------------------------------------
+     5→import { Router } from 'express'
+     6→import rateLimit from 'express-rate-limit'
+     7→import { z } from 'zod'
+     8→import { prisma } from '../lib/prisma.js'
+     9→import { requireAuth, requireAdmin, optionalAuth, type AuthedRequest } from '../lib/auth.js'
+    10→import { asyncHandler } from '../lib/asyncHandler.js'
+    11→import { auditLog } from '../lib/audit.js'
+    12→// P1-3 + P1-8 fix: broadcast AI KB changes so the main app refetches
+    13→import { broadcastChanged } from '../lib/broadcast.js'
+    14→import {
+    15→  listKBProducts,
+    16→  getKBProductById,
+    17→  getKBProductBySlug,
+    18→  listKBCategories,
+    19→  listGlobalFAQs,
+    20→  listAllFAQs,
+    21→  getKBSettings,
+    22→  updateKBSettings,
+    23→  logConversation,
+    24→} from '../lib/ai-kb.js'
+    25→import { calculatePrice } from '../lib/ai-calc.js'
+    26→import { callDeepSeek, isDeepSeekConfigured, isAIConfiguredAsync } from '../lib/ai-deepseek.js'
+    27→import { tryLocalCommand } from '../lib/ai-local.js'
+    28→import { buildAIContext, extractActions, findSimilarProducts, getContactsArray } from '../lib/ai-context.js'
+    29→import { listTools, executeToolCall, type ToolContext, type AgentMessage } from '../lib/ai-tools.js'
+    30→import { logger } from '../lib/logger.js'
+    31→
+    32→const router = Router()
+    33→
+    34→// P0-2 fix: dedicated rate limiter for AI chat / order endpoints to prevent
+    35→// DeepSeek token-burn DoS. Without this, anonymous users could rotate IPs
+    36→// and burn ~$260/day of DeepSeek tokens at the global 120/min/IP API limit.
+    37→// Authenticated users get a higher limit because their identity is known.
+    38→const aiChatLimiter = rateLimit({
+    39→  windowMs: 60 * 1000,
+    40→  // 10/min for anonymous, 30/min for authenticated (keyed on req.user?.id if present)
+    41→  keyGenerator: (req: any) => req.user?.id || req.ip || 'unknown',
+    42→  limit: (req: any) => (req.user ? 30 : 10),
+    43→  standardHeaders: 'draft-7',
+    44→  legacyHeaders: false,
+    45→  message: { error: 'Слишком много запросов к AI. Попробуйте позже.' },
+    46→})
+    47→
+    48→// ============================================================================
+    49→//  PUBLIC: /api/ai/status
+    50→// ============================================================================
+    51→router.get('/status', asyncHandler(async (_req, res) => {
+    52→  const settings = await getKBSettings()
+    53→  // v8 audit: ZAI/SDK fallback removed — `configured` is true ONLY when an
+    54→  // admin-configured DB provider OR DEEPSEEK_API_KEY env var exists.
+    55→  // If neither is set, AI endpoints will return a clear "not configured" error.
+    56→  const configured = isDeepSeekConfigured() || (await isAIConfiguredAsync())
+    57→  res.json({
+    58→    configured,
+    59→    assistantName: settings.assistantName,
+    60→    greeting: settings.greeting,
+    61→    voiceEnabled: true,  // client-side Web Speech API
+    62→  })
+    63→}))
+    64→
+    65→// ============================================================================
+    66→//  CHAT ENDPOINT v2 — with actions, rich context, conversation memory
+    67→// ============================================================================
+    68→const ChatSchema = z.object({
+    69→  message: z.string().min(1).max(2000),
+    70→  context: z.string().max(100).optional(),
+    71→  history: z.array(z.object({
+    72→    role: z.enum(['user', 'assistant']),
+    73→    content: z.string().max(4000),
+    74→  })).max(20).optional(),
+    75→})
+    76→
+    77→interface ChatResponse {
+    78→  reply: string
+    79→  // v22: expanded action type to support voice commands (navigate, open_cart, play_music, etc.)
+    80→  action: { type: string; view?: string; query?: string } | null
+    81→  actions: Array<{ type: string; param?: string; label: string }>
+    82→  calculation: any
+    83→  local: boolean
+    84→  usedDeepSeek: boolean
+    85→  voiceHint?: string
+    86→  cards?: Array<{
+    87→    kind: 'product' | 'contacts' | 'order_wizard' | 'similar_products' | 'media'
+    88→    data: any
+    89→  }>
+    90→  /** v22: tool calls executed by the agent loop. Each entry includes
+    91→   *  the tool name, args, and (for action tools) a frontend action hint. */
+    92→  toolActions?: Array<{ type: string; param?: string }>
+    93→  /** v22: number of LLM round-trips in the agent loop (1 = single-shot, >1 = multi-turn). */
+    94→  agentSteps?: number
+    95→}
+    96→
+    97→router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: AuthedRequest, res) => {
+    98→  const parsed = ChatSchema.safeParse(req.body)
+    99→  if (!parsed.success) {
+   100→    return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   101→  }
+   102→  const { message, context, history } = parsed.data
+   103→
+   104→  // 1) Local command router — saves a DeepSeek call for nav / greetings.
+   105→  const localCmd = tryLocalCommand(message)
+   106→  if (localCmd) {
+   107→    await logConversation({
+   108→      userId: req.user?.id,
+   109→      context,
+   110→      userMessage: message,
+   111→      assistantReply: localCmd.reply,
+   112→      parameters: localCmd.action ? { action: localCmd.action } : null,
+   113→      localHandled: true,
+   114→    })
+   115→    const resp: ChatResponse = {
+   116→      reply: localCmd.reply,
+   117→      action: localCmd.action ?? null,
+   118→      // v22: build UI actions from local command result
+   119→      actions: localCmd.action
+   120→        ? localCmd.action.type === 'navigate'
+   121→          ? [{ type: 'navigate', param: localCmd.action.view, label: `Открыть ${localCmd.action.view}` }]
+   122→          : localCmd.action.type === 'search_product' || localCmd.action.type === 'search_query'
+   123→            ? [{ type: localCmd.action.type, param: localCmd.action.query, label: 'Найти' }]
+   124→            : [{ type: localCmd.action.type, label: 'Выполнить' }]
+   125→        : [],
+   126→      calculation: null,
+   127→      local: true,
+   128→      usedDeepSeek: false,
+   129→    }
+   130→    return res.json(resp)
+   131→  }
+   132→
+   133→  // 2) v8 audit: explicit AI-configured check — return clear error if no provider.
+   134→  //    Previously the chat endpoint silently fell back to ZAI/GLM-4.6 (now removed),
+   135→  //    which produced off-topic answers. Now we fail fast with an actionable message.
+   136→  //    v24.7 (final-release audit): the user-facing reply MUST NOT mention technical
+   137→  //    internals (.env, API KEY, DeepSeek, Provider, Studio path). The admin-only
+   138→  //    diagnostic is logged separately so the operator can act on it.
+   139→  const aiReady = isDeepSeekConfigured() || (await isAIConfiguredAsync())
+   140→  if (!aiReady) {
+   141→    logger.warn('AI chat requested but no provider is configured — admin must add one in Studio → AI API or set DEEPSEEK_API_KEY in backend .env')
+   142→    const resp: ChatResponse = {
+   143→      reply: 'Извините, ассистент временно недоступен. Наши менеджеры помогут вам — напишите в чат или закажите обратный звонок.',
+   144→      action: null,
+   145→      actions: [],
+   146→      calculation: null,
+   147→      local: true,
+   148→      usedDeepSeek: false,
+   149→    }
+   150→    return res.json(resp)
+   151→  }
+   152→
+   153→  // 3) Match KB product (by name / root / slug).
+   154→  const allProducts = await listKBProducts({ includeInactive: false })
+   155→  const lower = message.toLowerCase()
+   156→  let matchedSlug: string | null = null
+   157→  let matchedScore = 0
+   158→  for (const p of allProducts) {
+   159→    const name = p.name.toLowerCase()
+   160→    if (lower.includes(name) && name.length > matchedScore) {
+   161→      matchedSlug = p.slug
+   162→      matchedScore = name.length
+   163→      continue
+   164→    }
+   165→    const firstWord = name.split(/\s+/)[0]
+   166→    if (firstWord.length >= 4) {
+   167→      for (let len = firstWord.length; len >= 4; len--) {
+   168→        const root = firstWord.slice(0, len)
+   169→        if (lower.includes(root) && len > matchedScore) {
+   170→          matchedSlug = p.slug
+   171→          matchedScore = len
+   172→          break
+   173→        }
+   174→      }
+   175→    }
+   176→  }
+   177→
+   178→  // 4) Extract parameters (dimensions, quantity, services).
+   179→  const dimMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:x|х|\*|на|×)\s*(\d+(?:[.,]\d+)?)/)
+   180→  let width: number | undefined
+   181→  let height: number | undefined
+   182→  if (dimMatch) {
+   183→    width = parseFloat(dimMatch[1].replace(',', '.'))
+   184→    height = parseFloat(dimMatch[2].replace(',', '.'))
+   185→  }
+   186→  const serviceHints = ['дизайн', 'монтаж', 'доставка', 'установк', 'срочн', 'макет', 'печать', 'ламин', 'упаков']
+   187→  const services: string[] = []
+   188→  for (const hint of serviceHints) {
+   189→    if (lower.includes(hint)) services.push(hint)
+   190→  }
+   191→  const qtyMatch = lower.match(/(\d+)\s*(?:шт|штуки|штук|штуку|кружек|баннер|фотокам|вывеск)/)
+   192→  const quantity = qtyMatch ? parseInt(qtyMatch[1], 10) : undefined
+   193→
+   194→  // 5) Run calculation engine if product matched.
+   195→  let calculation: any = null
+   196→  let kbProduct: any = null
+   197→  if (matchedSlug) {
+   198→    kbProduct = await getKBProductBySlug(matchedSlug)
+   199→    if (kbProduct) {
+   200→      calculation = await calculatePrice({
+   201→        productSlug: matchedSlug,
+   202→        width, height, quantity, services,
+   203→      })
+   204→    }
+   205→  }
+   206→
+   207→  // 6) Build rich system prompt with full app context.
+   208→  const userRole: 'guest' | 'user' | 'admin' = (req.user?.role === 'admin' || req.user?.role === 'manager') ? 'admin' : req.user ? 'user' : 'guest'
+   209→  const ctx = await buildAIContext({
+   210→    message,
+   211→    context,
+   212→    matchedKbSlug: matchedSlug,
+   213→    kbProduct,
+   214→    calculation,
+   215→    userRole,
+   216→  })
+   217→
+   218→  // 7) v8 audit: dead `messages` array REMOVED — only `agentMessages` below is sent to LLM.
+   219→  //    Previously this array was built but never used, which caused confusion about
+   220→  //    whether the system prompt was injected twice.
+   221→  //    The LLM is given a tool registry (DB-backed functions). If it emits
+   222→  //    tool_calls, we execute them, feed results back as `tool` role messages,
+   223→  //    and re-query the LLM. Capped at 4 iterations to prevent infinite loops.
+   224→  let reply = ''
+   225→  let localHandled = false
+   226→  let usedDeepSeek = false
+   227→  let agentSteps = 0
+   228→  const toolActions: Array<{ type: string; param?: string }> = []
+   229→  // v15: продукты собранные из search_products tool — для карточек в чат
+   230→  const toolProducts: any[] = []
+   231→
+   232→  // Build the agent context: tool registry (admin-only tools filtered out for non-admins).
+   233→  const toolCtx: ToolContext = {
+   234→    userId: req.user?.id,
+   235→    role: userRole,
+   236→  }
+   237→  const tools = listTools(toolCtx)
+   238→
+   239→  // Convert history + new message to AgentMessage format (with tool role support).
+   240→  // v8 audit: reduced history window from slice(-10) to slice(-4) — long histories
+   241→  // cause the LLM to recap previous answers, producing duplicated text in replies.
+   242→  const agentMessages: AgentMessage[] = [
+   243→    { role: 'system', content: ctx.systemPrompt },
+   244→    ...(history || []).slice(-4).map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+   245→    { role: 'user', content: message },
+   246→  ]
+   247→
+   248→  // Agent loop — up to 4 round-trips.
+   249→  const MAX_STEPS = 4
+   250→  for (let step = 0; step < MAX_STEPS; step++) {
+   251→    agentSteps++
+   252→    const ds = await callDeepSeek({
+   253→      messages: agentMessages,
+   254→      temperature: 0.6,
+   255→      maxTokens: 1000,
+   256→      tools: tools.length > 0 ? tools : undefined,
+   257→    })
+   258→
+   259→    if (!ds.ok) {
+   260→      // LLM failed — fall back to local template (only on first step).
+   261→      if (step === 0) {
+   262→        localHandled = true
+   263→        if (calculation && calculation.product) {
+   264→          if (calculation.missing.length) {
+   265→            const missingLabels = calculation.missing.map((m: string) => {
+   266→              if (m === 'width' || m === 'height') return 'укажите ширину и высоту в метрах'
+   267→              if (m === 'length') return 'укажите длину в метрах'
+   268→              if (m === 'quantity') return 'укажите количество'
+   269→              return m
+   270→            })
+   271→            reply = `Я нашёл товар «${calculation.product.name}» в базе знаний. Для точного расчёта ${missingLabels.join(', ')}, и я сразу посчитаю полную стоимость с учётом всех услуг. [ACTION:start_order_wizard:${calculation.product.slug}]`
+   272→          } else if (calculation.range) {
+   273→            reply = `Стоимость «${calculation.product.name}» составит от ${calculation.range[0]} до ${calculation.range[1]} ₽. В расчёт включено: ${calculation.breakdown.slice(0, -1).join('; ')}. Подскажите детали — и я подготовлю точный расчёт. [ACTION:start_order_wizard:${calculation.product.slug}]`
+   274→          } else if (calculation.total > 0) {
+   275→            reply = `Стоимость «${calculation.product.name}» составит ${calculation.total} ₽. В расчёт включено: ${calculation.breakdown.slice(0, -1).join('; ')}. Оформить заказ? [ACTION:start_order_wizard:${calculation.product.slug}]`
+   276→          } else if (calculation.note) {
+   277→            reply = `Стоимость «${calculation.product.name}» рассчитывается индивидуально. ${calculation.note} Подскажите детали — и я подготовлю расчёт. [ACTION:start_order_wizard:${calculation.product.slug}]`
+   278→          } else {
+   279→            reply = `Я нашёл товар «${calculation.product.name}» в базе знаний. Уточните детали заказа — и я помогу с расчётом. [ACTION:start_order_wizard:${calculation.product.slug}]`
+   280→          }
+   281→        } else {
+   282→          const settings = await getKBSettings()
+   283→          reply = `${settings.fallbackMessage} Подскажите, какой товар или услуга вас интересует — я подберу подходящий вариант из каталога. [ACTION:open_catalog]`
+   284→        }
+   285→        logger.info('DeepSeek fallback used', { reason: ds.error, hasCalc: !!calculation })
+   286→      } else {
+   287→        // Mid-loop LLM failure — use whatever reply we have so far.
+   288→        if (!reply) reply = 'Произошла ошибка при обработке запроса. Попробуйте ещё раз.'
+   289→      }
+   290→      break
+   291→    }
+   292→
+   293→    usedDeepSeek = true
+   294→
+   295→    // No tool_calls → final natural-language reply. End the loop.
+   296→    if (!ds.tool_calls || ds.tool_calls.length === 0) {
+   297→      reply = ds.content.trim()
+   298→      break
+   299→    }
+   300→
+   301→    // Tool calls present → execute them, append results, re-query LLM.
+   302→    // First, append the assistant's tool_call message to the conversation.
+   303→    agentMessages.push({
+   304→      role: 'assistant',
+   305→      content: ds.content || '',
+   306→      tool_calls: ds.tool_calls,
+   307→    })
+   308→
+   309→    for (const call of ds.tool_calls) {
+   310→      const { result, action } = await executeToolCall(call, toolCtx)
+   311→      // Collect frontend action hints (open_cart, open_checkout, etc.) —
+   312→      // these will be sent to the client alongside the final reply.
+   313→      if (action) {
+   314→        toolActions.push(action)
+   315→      }
+   316→      // v15: если tool был search_products — собираем products для карточек в чат
+   317→      if (call.function.name === 'search_products') {
+   318→        try {
+   319→          const parsed = JSON.parse(result)
+   320→          if (parsed.products && Array.isArray(parsed.products) && parsed.products.length > 0) {
+   321→            toolProducts.push(...parsed.products)
+   322→          }
+   323→        } catch {}
+   324→      }
+   325→      // Append the tool result as a `tool` role message.
+   326→      agentMessages.push({
+   327→        role: 'tool',
+   328→        content: result,
+   329→        tool_call_id: call.id,
+   330→        name: call.function.name,
+   331→      })
+   332→    }
+   333→
+   334→    // Loop continues → next iteration will re-query the LLM with tool results.
+   335→    // On the last allowed step, force a final reply (no more tool_calls).
+   336→    if (step === MAX_STEPS - 1) {
+   337→      // Force a text-only reply by re-querying without tools.
+   338→      const finalDs = await callDeepSeek({
+   339→        messages: agentMessages,
+   340→        temperature: 0.6,
+   341→        maxTokens: 1000,
+   342→        // No tools — forces text reply.
+   343→      })
+   344→      reply = finalDs.ok ? finalDs.content.trim() : 'Я выполнил все необходимые действия. Чем ещё могу помочь?'
+   345→      break
+   346→    }
+   347→  }
+   348→
+   349→  if (!reply) {
+   350→    reply = 'Я не смог обработать запрос. Попробуйте переформулировать.'
+   351→    localHandled = true
+   352→  }
+   353→
+   354→  // v8 audit: anti-duplication guard.
+   355→  // If the new reply starts with the last assistant message in history (≥40 chars overlap),
+   356→  // strip that prefix — the LLM is recapping the previous answer before answering the new question.
+   357→  if (history && history.length > 0) {
+   358→    const lastAssistant = [...history].reverse().find(h => h.role === 'assistant')
+   359→    if (lastAssistant && lastAssistant.content && lastAssistant.content.length >= 40) {
+   360→      const prev = lastAssistant.content.trim()
+   361→      // Check if reply starts with the previous answer (first 80 chars)
+   362→      const prefixLen = Math.min(80, prev.length)
+   363→      const prevPrefix = prev.slice(0, prefixLen).toLowerCase()
+   364→      const replyPrefix = reply.slice(0, prefixLen).toLowerCase()
+   365→      if (prevPrefix === replyPrefix && reply.length > prev.length) {
+   366→        // Strip the recapped previous answer from the new reply
+   367→        const stripped = reply.slice(prev.length).trim()
+   368→        if (stripped.length > 0) {
+   369→          reply = stripped
+   370→        }
+   371→      }
+   372→      // Also strip common recap phrases at the start
+   373→      const recapPhrases = [
+   374→        /^(по вашему предыдущему вопросу|как я уже говорил|ранее я упоминал|как упоминалось ранее|как было сказано)[,:]?\s*/i,
+   375→        /^(по предыдущему вопросу|в предыдущем ответе)[,:]?\s*/i,
+   376→      ]
+   377→      for (const re of recapPhrases) {
+   378→        reply = reply.replace(re, '')
+   379→      }
+   380→    }
+   381→  }
+   382→
+   383→  // 8) Extract [ACTION:...] markers from reply.
+   384→  const { cleaned, actions: extractedActions } = extractActions(reply)
+   385→  reply = cleaned
+   386→
+   387→  // 9) Convert actions to UI-friendly format with labels.
+   388→  const uiActions = extractedActions.map((a) => ({
+   389→    type: a.type,
+   390→    param: a.param,
+   391→    label: actionLabel(a.type, a.param),
+   392→  }))
+   393→
+   394→  // 10) Build rich cards based on intent.
+   395→  const cards: ChatResponse['cards'] = []
+   396→
+   397→  // v18.6: ALWAYS show product cards when the user asks about a product —
+   398→  // not just when an explicit "покажи/найди" verb is used. The previous
+   399→  // logic only showed cards for /(покаж|найд|ищу|хочу|нужен|есть ли)/ which
+   400→  // missed queries like "сколько стоит баннер?", "какие у вас есть футболки?",
+   401→  // "есть в наличии вывеска?". Now we show cards if EITHER:
+   402→  //   (a) the user used a product-related verb (покажи, найди, ищу, хочу, нужен,
+   403→  //       есть ли, сколько стоит, какие, что есть, посоветуй, выбрать, подбери,
+   404→  //       заказать, купить, оформить), OR
+   405→  //   (b) we matched a marketplace product by keyword (matchedSlug set or
+   406→  //       ctx.matchedMarketplaceProducts non-empty) — meaning the message
+   407→  //       actually names or describes a product we sell.
+   408→  const productIntentRegex = /(покаж|найд|ищу|хочу|нужен|есть ли|сколько стоит|какие|что есть|посоветуй|выбрать|подбери|заказать|купить|оформить|сколько|стоит|цен|прайс|каталог|ассортимент)/i
+   409→  const hasProductMatch = ctx.matchedMarketplaceProducts.length > 0
+   410→  const isProductIntent = productIntentRegex.test(message) || hasProductMatch
+   411→
+   412→  if (isProductIntent && hasProductMatch) {
+   413→    cards.push({
+   414→      kind: 'product',
+   415→      // v8: увеличен лимит с 4 до 8 — чтобы при запросе нескольких категорий
+   416→      // ("покажи подарки и баннеры") пользователь видел достаточно товаров
+   417→      // в каждой категории. Frontend сгруппирует их по полю `category`.
+   418→      data: ctx.matchedMarketplaceProducts.slice(0, 8).map((p) => ({
+   419→        id: p.id,
+   420→        title: p.title,
+   421→        price: Number(p.price),
+   422→        oldPrice: p.oldPrice ? Number(p.oldPrice) : null,
+   423→        currency: p.currency || 'RUB',
+   424→        image: (() => { try { return JSON.parse(p.images || '[]')[0] || null } catch { return null } })(),
+   425→        category: p.category,
+   426→        rating: p.rating,
+   427→        inStock: p.inStock,
+   428→        quantity: p.quantity,
+   429→        isAction: p.isAction,
+   430→        isNew: p.isNew,
+   431→        isPopular: p.isPopular,
+   432→      })),
+   433→    })
+   434→  }
+   435→
+   436→  // v15: если AI вызвал search_products и получил результаты — добавляем cards
+   437→  // Это для интента "покажи товар / пришли товар / отправь мне товар"
+   438→  if (toolProducts.length > 0 && cards.length === 0) {
+   439→    cards.push({
+   440→      kind: 'product',
+   441→      data: toolProducts.slice(0, 8),
+   442→    })
+   443→  }
+   444→  // v18.7: NO automatic "similar products" suggestion.
+   445→  // User feedback: "if I ask for banners, show banners — not random similar stuff".
+   446→  // Similar products are now ONLY shown when the user explicitly asks
+   447→  // ("покажи похожие", "есть альтернативы?") — see the similar_products block below.
+   448→  // v18.7: similar_products card is shown ONLY when the user EXPLICITLY asks
+   449→  // for alternatives ("покажи похожие", "есть альтернативы", "другие варианты").
+   450→  // This respects the user's intent — don't suggest things they didn't ask for.
+   451→  if (/(похож|альтернатив|другие варианты|ещё варианты|еще варианты)/i.test(message) && ctx.matchedMarketplaceProducts[0]?.id) {
+   452→    try {
+   453→      const similar = await findSimilarProducts(ctx.matchedMarketplaceProducts[0].id, 8)
+   454→      const shownIds = new Set(ctx.matchedMarketplaceProducts.slice(0, 8).map((p: any) => p.id))
+   455→      const filteredSimilar = similar.filter((p) => !shownIds.has(p.id))
+   456→      if (filteredSimilar.length > 0) {
+   457→        cards.push({
+   458→          kind: 'similar_products',
+   459→          data: filteredSimilar.map((p) => ({
+   460→            id: p.id,
+   461→            title: p.title,
+   462→            price: Number(p.price),
+   463→            currency: p.currency || 'RUB',
+   464→            image: (() => { try { return JSON.parse(p.images || '[]')[0] || null } catch { return null } })(),
+   465→            // v8: добавлен category — для корректной группировки на frontend
+   466→            category: 'Похожие товары',
+   467→            rating: p.rating,
+   468→            inStock: p.inStock,
+   469→          })),
+   470→        })
+   471→      }
+   472→    } catch {
+   473→      // findSimilarProducts failed — non-critical, just skip.
+   474→    }
+   475→  }
+   476→  // If user asked for contacts — load from Studio (single source of truth).
+   477→  // v21: NO hardcoded fallbacks. If Studio contacts are empty, cards is empty.
+   478→  if (/(контакт|телефон|email|почт|адрес|связаться|whatsapp|вацап|вотсап|telegram|телеграм)/i.test(message)) {
+   479→    const contacts = await getContactsArray()
+   480→    if (contacts.length > 0) {
+   481→      cards.push({ kind: 'contacts', data: contacts })
+   482→    }
+   483→  }
+   484→  // If user wants to order — start the wizard.
+   485→  if (/(оформить|заказать|хочу заказать|оформи|купить)/i.test(message) && matchedSlug) {
+   486→    cards.push({
+   487→      kind: 'order_wizard',
+   488→      data: {
+   489→        productSlug: matchedSlug,
+   490→        productName: kbProduct?.name || '',
+   491→        step: 'confirm',
+   492→        calculation: calculation ? {
+   493→          total: calculation.total,
+   494→          range: calculation.range,
+   495→          breakdown: calculation.breakdown,
+   496→          matchedServices: calculation.matchedServices,
+   497→        } : null,
+   498→      },
+   499→    })
+   500→  }
+   501→  // NOTE: We intentionally do NOT auto-open Audio/Video/Media Hub.
+   502→  // The AI instructs the user where to find them (bottom panel → Media icon).
+   503→  // This respects the user's explicit-action requirement.
+   504→
+   505→  // 11) Log the conversation.
+   506→  await logConversation({
+   507→    userId: req.user?.id,
+   508→    context,
+   509→    userMessage: message,
+   510→    assistantReply: reply,
+   511→    parameters: {
+   512→      matchedSlug,
+   513→      width, height, quantity, services,
+   514→      actions: uiActions,
+   515→      cards: cards?.length || 0,
+   516→      calculation: calculation ? {
+   517→        product: calculation.product?.name,
+   518→        total: calculation.total,
+   519→        range: calculation.range,
+   520→        missing: calculation.missing,
+   521→      } : null,
+   522→    },
+   523→    totalPrice: calculation?.total ?? null,
+   524→    localHandled,
+   525→  })
+   526→
+   527→  // 12) v22: If the agent emitted frontend action hints via tool calls
+   528→  //     (open_cart, open_checkout, open_analytics, open_orders, etc.),
+   529→  //     surface them to the client as auto-executable actions.
+   530→  //     - If only ONE tool action and no [ACTION:] markers in reply → set as
+   531→  //       the primary `action` so the client auto-triggers it.
+   532→  //     - Otherwise append to `actions` array as clickable buttons.
+   533→  let primaryAction: ChatResponse['action'] = null
+   534→  const toolUiActions: ChatResponse['actions'] = []
+   535→  for (const ta of toolActions) {
+   536→    const label = actionLabel(ta.type, ta.param)
+   537→    toolUiActions.push({ type: ta.type, param: ta.param, label })
+   538→  }
+   539→  // Auto-execute the first tool action if there are no text-extracted actions.
+   540→  if (toolActions.length > 0 && uiActions.length === 0) {
+   541→    const first = toolActions[0]
+   542→    primaryAction = {
+   543→      type: first.type,
+   544→      view: first.type === 'navigate' ? first.param : first.type.replace('open_', ''),
+   545→      query: first.param,
+   546→    }
+   547→  }
+   548→
+   549→  const allActions = [...uiActions, ...toolUiActions]
+   550→
+   551→  return res.json({
+   552→    reply,
+   553→    action: primaryAction,
+   554→    actions: allActions,
+   555→    calculation: calculation && calculation.product ? {
+   556→      product: calculation.product,
+   557→      total: calculation.total,
+   558→      range: calculation.range,
+   559→      breakdown: calculation.breakdown,
+   560→      missing: calculation.missing,
+   561→      matchedServices: calculation.matchedServices,
+   562→      note: calculation.note,
+   563→    } : null,
+   564→    local: localHandled,
+   565→    usedDeepSeek,
+   566→    voiceHint: 'auto',
+   567→    cards: cards?.length ? cards : undefined,
+   568→    toolActions: toolActions.length > 0 ? toolActions : undefined,
+   569→    agentSteps,
+   570→  } satisfies ChatResponse)
+   571→}))
+   572→
+   573→function actionLabel(type: string, param?: string): string {
+   574→  const labels: Record<string, (p?: string) => string> = {
+   575→    open_catalog: (p) => p ? `Открыть: ${p}` : 'Открыть каталог',
+   576→    open_product: () => 'Открыть товар',
+   577→    open_cart: () => 'Открыть корзину',
+   578→    open_checkout: () => 'Оформить заказ',
+   579→    open_films: () => 'Открыть Video Hub',
+   580→    open_music: () => 'Открыть Audio Hub',
+   581→    open_media: () => 'Открыть Media Hub',
+   582→    open_chat: () => 'Открыть чат',
+   583→    open_support: () => 'Поддержка',
+   584→    open_orders: () => 'Мои заказы',
+   585→    show_contacts: () => 'Контакты',
+   586→    start_order_wizard: () => 'Оформить заказ',
+   587→    navigate: (p) => `Перейти: ${p || ''}`,
+   588→  }
+   589→  return (labels[type] || (() => 'Действие'))(param)
+   590→}
+   591→
+   592→// ============================================================================
+   593→//  PRODUCTS — admin CRUD (unchanged from v1)
+   594→// ============================================================================
+   595→const ProductSchema = z.object({
+   596→  name: z.string().min(1).max(200),
+   597→  slug: z.string().min(1).max(200).optional(),
+   598→  description: z.string().max(5000).optional().nullable(),
+   599→  shortSummary: z.string().max(500).optional().nullable(),
+   600→  materials: z.string().default('[]'),
+   601→  specs: z.string().default('{}'),
+   602→  leadTime: z.string().max(200).optional().nullable(),
+   603→  warranty: z.string().max(200).optional().nullable(),
+   604→  pricingType: z.enum(['fixed', 'per_unit', 'per_sq_meter', 'per_linear_meter', 'per_set', 'range', 'quote']).default('fixed'),
+   605→  basePrice: z.number().min(0).default(0),
+   606→  maxPrice: z.number().min(0).optional().nullable(),
+   607→  currency: z.string().default('RUB'),
+   608→  minOrderValue: z.number().min(0).optional().nullable(),
+   609→  formula: z.string().max(2000).optional().nullable(),
+   610→  formulaSpec: z.string().default('{}'),
+   611→  aiInstruction: z.string().max(5000).optional().nullable(),
+   612→  images: z.string().default('[]'),
+   613→  isActive: z.boolean().default(true),
+   614→  sortOrder: z.number().default(0),
+   615→  categoryId: z.string().optional().nullable(),
+   616→  marketplaceProductId: z.string().optional().nullable(),
+   617→})
+   618→
+   619→function slugify(s: string): string {
+   620→  return s.toLowerCase().trim()
+   621→    .replace(/[^a-z0-9а-яё]+/gi, '-')
+   622→    .replace(/^-+|-+$/g, '')
+   623→    .slice(0, 100) || `p-${Date.now().toString(36)}`
+   624→}
+   625→
+   626→router.get('/products', requireAuth, requireAdmin, asyncHandler(async (_req, res) => {
+   627→  const items = await prisma.aIKB_Product.findMany({
+   628→    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+   629→    include: {
+   630→      category: { select: { id: true, name: true } },
+   631→      _count: { select: { services: true, faqs: true } },
+   632→    },
+   633→  })
+   634→  res.json({ items })
+   635→}))
+   636→
+   637→router.get('/products/:id', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
+   638→  const item = await getKBProductById(req.params.id)
+   639→  if (!item) return res.status(404).json({ error: 'not_found' })
+   640→  res.json(item)
+   641→}))
+   642→
+   643→router.post('/products', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   644→  const parsed = ProductSchema.safeParse(req.body)
+   645→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   646→  const data = parsed.data
+   647→  const slug = data.slug ? slugify(data.slug) : slugify(data.name)
+   648→  const product = await prisma.aIKB_Product.create({
+   649→    data: {
+   650→      name: data.name, slug,
+   651→      description: data.description ?? null,
+   652→      shortSummary: data.shortSummary ?? null,
+   653→      materials: data.materials, specs: data.specs,
+   654→      leadTime: data.leadTime ?? null, warranty: data.warranty ?? null,
+   655→      pricingType: data.pricingType,
+   656→      basePrice: data.basePrice, maxPrice: data.maxPrice ?? null,
+   657→      currency: data.currency, minOrderValue: data.minOrderValue ?? null,
+   658→      formula: data.formula ?? null, formulaSpec: data.formulaSpec,
+   659→      aiInstruction: data.aiInstruction ?? null,
+   660→      images: data.images, isActive: data.isActive, sortOrder: data.sortOrder,
+   661→      categoryId: data.categoryId ?? null,
+   662→      marketplaceProductId: data.marketplaceProductId ?? null,
+   663→    },
+   664→  })
+   665→  await auditLog(req as AuthedRequest, 'ai_kb_product', product.id, 'create', { after: { name: product.name } })
+   666→  res.status(201).json(product)
+   667→}))
+   668→
+   669→router.put('/products/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   670→  const parsed = ProductSchema.partial().safeParse(req.body)
+   671→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   672→  const data: any = { ...parsed.data }
+   673→  if (data.slug) data.slug = slugify(data.slug)
+   674→  if (data.maxPrice === null) data.maxPrice = null
+   675→  if (data.minOrderValue === null) data.minOrderValue = null
+   676→  if (data.categoryId === null) data.categoryId = null
+   677→  if (data.marketplaceProductId === null) data.marketplaceProductId = null
+   678→  const product = await prisma.aIKB_Product.update({ where: { id: req.params.id }, data })
+   679→  await auditLog(req as AuthedRequest, 'ai_kb_product', product.id, 'update', { after: { name: product.name } })
+   680→  res.json(product)
+   681→}))
+   682→
+   683→router.delete('/products/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   684→  const product = await prisma.aIKB_Product.delete({ where: { id: req.params.id } })
+   685→  await auditLog(req as AuthedRequest, 'ai_kb_product', product.id, 'delete', { after: { name: product.name } })
+   686→  res.json({ ok: true })
+   687→}))
+   688→
+   689→// ============================================================================
+   690→//  PRODUCT SERVICES — admin CRUD
+   691→// ============================================================================
+   692→const ServiceSchema = z.object({
+   693→  name: z.string().min(1).max(200),
+   694→  description: z.string().max(2000).optional().nullable(),
+   695→  pricingType: z.enum(['fixed', 'percent', 'per_unit', 'per_sq_meter', 'per_linear_meter']).default('fixed'),
+   696→  price: z.number().min(0).default(0),
+   697→  isDefault: z.boolean().default(false),
+   698→  condition: z.string().max(1000).optional().nullable(),
+   699→  sortOrder: z.number().default(0),
+   700→})
+   701→
+   702→router.post('/products/:id/services', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   703→  const parsed = ServiceSchema.safeParse(req.body)
+   704→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   705→  const svc = await prisma.aIKB_Service.create({ data: { ...parsed.data, productId: req.params.id } })
+   706→  // P1-3 fix: audit log on AI KB Service mutations
+   707→  await auditLog(req, 'ai_kb_service', svc.id, 'create', { after: { name: svc.name, productId: svc.productId } })
+   708→  broadcastChanged('ai-kb:changed')
+   709→  res.status(201).json(svc)
+   710→}))
+   711→
+   712→router.put('/products/:id/services/:svcId', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   713→  const parsed = ServiceSchema.partial().safeParse(req.body)
+   714→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   715→  const before = await prisma.aIKB_Service.findUnique({ where: { id: req.params.svcId } }).catch(() => null)
+   716→  const svc = await prisma.aIKB_Service.update({ where: { id: req.params.svcId }, data: parsed.data as any })
+   717→  await auditLog(req, 'ai_kb_service', svc.id, 'update', { before: before ? { name: before.name } : null, after: { name: svc.name } })
+   718→  broadcastChanged('ai-kb:changed')
+   719→  res.json(svc)
+   720→}))
+   721→
+   722→router.delete('/products/:id/services/:svcId', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   723→  const before = await prisma.aIKB_Service.findUnique({ where: { id: req.params.svcId } }).catch(() => null)
+   724→  await prisma.aIKB_Service.delete({ where: { id: req.params.svcId } })
+   725→  await auditLog(req, 'ai_kb_service', req.params.svcId, 'delete', { before: before ? { name: before.name } : null })
+   726→  broadcastChanged('ai-kb:changed')
+   727→  res.json({ ok: true })
+   728→}))
+   729→
+   730→// ============================================================================
+   731→//  CATEGORIES — admin CRUD
+   732→// ============================================================================
+   733→const CategorySchema = z.object({
+   734→  name: z.string().min(1).max(200),
+   735→  slug: z.string().max(200).optional(),
+   736→  description: z.string().max(2000).optional().nullable(),
+   737→  sortOrder: z.number().default(0),
+   738→})
+   739→
+   740→router.get('/categories', asyncHandler(async (_req, res) => {
+   741→  res.json({ items: await listKBCategories() })
+   742→}))
+   743→
+   744→router.post('/categories', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   745→  const parsed = CategorySchema.safeParse(req.body)
+   746→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   747→  const data = parsed.data
+   748→  const slug = data.slug ? slugify(data.slug) : slugify(data.name)
+   749→  const cat = await prisma.aIKB_Category.create({ data: { name: data.name, slug, description: data.description ?? null, sortOrder: data.sortOrder } })
+   750→  await auditLog(req as AuthedRequest, 'ai_kb_category', cat.id, 'create', { after: { name: cat.name } })
+   751→  res.status(201).json(cat)
+   752→}))
+   753→
+   754→router.put('/categories/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   755→  const parsed = CategorySchema.partial().safeParse(req.body)
+   756→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   757→  const data: any = { ...parsed.data }
+   758→  if (data.slug) data.slug = slugify(data.slug)
+   759→  if (data.description === null) data.description = null
+   760→  const before = await prisma.aIKB_Category.findUnique({ where: { id: req.params.id } }).catch(() => null)
+   761→  const cat = await prisma.aIKB_Category.update({ where: { id: req.params.id }, data })
+   762→  await auditLog(req, 'ai_kb_category', cat.id, 'update', { before: before ? { name: before.name } : null, after: { name: cat.name } })
+   763→  broadcastChanged('ai-kb:changed')
+   764→  res.json(cat)
+   765→}))
+   766→
+   767→router.delete('/categories/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   768→  const before = await prisma.aIKB_Category.findUnique({ where: { id: req.params.id } }).catch(() => null)
+   769→  await prisma.aIKB_Category.delete({ where: { id: req.params.id } })
+   770→  await auditLog(req, 'ai_kb_category', req.params.id, 'delete', { before: before ? { name: before.name } : null })
+   771→  broadcastChanged('ai-kb:changed')
+   772→  res.json({ ok: true })
+   773→}))
+   774→
+   775→// ============================================================================
+   776→//  FAQ — admin CRUD
+   777→// ============================================================================
+   778→const FAQSchema = z.object({
+   779→  question: z.string().min(1).max(500),
+   780→  answer: z.string().min(1).max(5000),
+   781→  productId: z.string().optional().nullable(),
+   782→  sortOrder: z.number().default(0),
+   783→  isActive: z.boolean().default(true),
+   784→})
+   785→
+   786→router.get('/faqs', requireAuth, requireAdmin, asyncHandler(async (_req, res) => {
+   787→  res.json({ items: await listAllFAQs() })
+   788→}))
+   789→
+   790→router.post('/faqs', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   791→  const parsed = FAQSchema.safeParse(req.body)
+   792→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   793→  const faq = await prisma.aIKB_FAQ.create({ data: { ...parsed.data, productId: parsed.data.productId ?? null } as any })
+   794→  // P1-3 fix: audit log on AI KB FAQ mutations
+   795→  await auditLog(req, 'ai_kb_faq', faq.id, 'create', { after: { question: faq.question } })
+   796→  broadcastChanged('ai-kb:changed')
+   797→  res.status(201).json(faq)
+   798→}))
+   799→
+   800→router.put('/faqs/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   801→  const parsed = FAQSchema.partial().safeParse(req.body)
+   802→  if (!parsed.success) return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   803→  const data: any = { ...parsed.data }
+   804→  if (data.productId === null) data.productId = null
+   805→  const before = await prisma.aIKB_FAQ.findUnique({ where: { id: req.params.id } }).catch(() => null)
+   806→  const faq = await prisma.aIKB_FAQ.update({ where: { id: req.params.id }, data })
+   807→  await auditLog(req, 'ai_kb_faq', faq.id, 'update', { before: before ? { question: before.question } : null, after: { question: faq.question } })
+   808→  broadcastChanged('ai-kb:changed')
+   809→  res.json(faq)
+   810→}))
+   811→
+   812→router.delete('/faqs/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   813→  const before = await prisma.aIKB_FAQ.findUnique({ where: { id: req.params.id } }).catch(() => null)
+   814→  await prisma.aIKB_FAQ.delete({ where: { id: req.params.id } })
+   815→  await auditLog(req, 'ai_kb_faq', req.params.id, 'delete', { before: before ? { question: before.question } : null })
+   816→  broadcastChanged('ai-kb:changed')
+   817→  res.json({ ok: true })
+   818→}))
+   819→
+   820→// ============================================================================
+   821→//  SETTINGS
+   822→// ============================================================================
+   823→router.get('/settings', asyncHandler(async (_req, res) => {
+   824→  res.json(await getKBSettings())
+   825→}))
+   826→
+   827→router.put('/settings', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+   828→  const data = req.body || {}
+   829→  const allowed: any = {}
+   830→  for (const k of ['systemPrompt', 'fallbackMessage', 'greeting', 'assistantName']) {
+   831→    if (typeof data[k] === 'string') allowed[k] = data[k].slice(0, 10000)
+   832→  }
+   833→  const updated = await updateKBSettings(allowed)
+   834→  await auditLog(req as AuthedRequest, 'ai_kb_settings', 'default', 'update', { after: allowed as unknown })
+   835→  res.json(updated)
+   836→}))
+   837→
+   838→// ============================================================================
+   839→//  ORDER WIZARD — submit final order from the chat
+   840→// ============================================================================
+   841→const OrderWizardSchema = z.object({
+   842→  productSlug: z.string(),
+   843→  productName: z.string(),
+   844→  width: z.number().optional(),
+   845→  height: z.number().optional(),
+   846→  length: z.number().optional(),
+   847→  quantity: z.number().optional(),
+   848→  services: z.array(z.string()).default([]),
+   849→  deliveryAddress: z.string().optional(),
+   850→  customerName: z.string().min(1).max(200),
+   851→  customerPhone: z.string().min(1).max(50),
+   852→  customerEmail: z.string().email().optional().or(z.literal('')),
+   853→  customerComment: z.string().max(2000).optional(),
+   854→  totalQuote: z.number().optional(),
+   855→})
+   856→
+   857→router.post('/order', aiChatLimiter, optionalAuth, asyncHandler(async (req: AuthedRequest, res) => {
+   858→  const parsed = OrderWizardSchema.safeParse(req.body)
+   859→  if (!parsed.success) {
+   860→    return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+   861→  }
+   862→  const data = parsed.data
+   863→
+   864→  // Re-calculate to confirm price (don't trust client).
+   865→  const calc = await calculatePrice({
+   866→    productSlug: data.productSlug,
+   867→    width: data.width,
+   868→    height: data.height,
+   869→    length: data.length,
+   870→    quantity: data.quantity,
+   871→    services: data.services,
+   872→  })
+   873→
+   874→  const finalTotal = calc.total || data.totalQuote || 0
+   875→
+   876→  // Try to find the marketplace product to link the order item.
+   877→  let marketplaceProduct: any = null
+   878→  const kbProduct = await getKBProductBySlug(data.productSlug)
+   879→  if (kbProduct?.marketplaceProductId) {
+   880→    marketplaceProduct = await prisma.product.findUnique({
+   881→      where: { id: kbProduct.marketplaceProductId, deletedAt: null },
+   882→    })
+   883→  }
+   884→  if (!marketplaceProduct) {
+   885→    // Try by name match.
+   886→    marketplaceProduct = await prisma.product.findFirst({
+   887→      where: { title: { contains: data.productName }, deletedAt: null },
+   888→    })
+   889→  }
+   890→
+   891→  // If user is authenticated → create a REAL Order with OrderItem.
+   892→  if (req.user?.id && marketplaceProduct) {
+   893→    try {
+   894→      const requestedQty = data.quantity || 1
+   895→
+   896→      // v24.6-audit (C-AI-1 fix): Atomic stock check + decrement inside a transaction.
+   897→      // Previously this endpoint created the order WITHOUT checking stock — users could
+   898→      // order out-of-stock products via AI that regular checkout would refuse.
+   899→      // Now we mirror the same logic as POST /api/orders:
+   900→      //   - If product has `quantity` field and it's < requested → reject
+   901→      //   - If product has `quantity` field and `inStock` flag → atomically decrement,
+   902→      //     flipping `inStock=false` when stock hits 0.
+   903→      //   - Services (KB products without `quantity`) bypass stock check.
+   904→      const order = await prisma.$transaction(async (tx) => {
+   905→        const product = await tx.product.findUnique({
+   906→          where: { id: marketplaceProduct.id },
+   907→          select: { id: true, quantity: true, inStock: true, title: true, deletedAt: true },
+   908→        })
+   909→        if (!product || product.deletedAt) {
+   910→          throw new Error('product_not_found')
+   911→        }
+   912→
+   913→        // Stock check: only enforced when `quantity` field is a non-null finite number.
+   914→        // Products with `quantity: null` are made-to-order / digital / services — no stock.
+   915→        if (product.quantity !== null && product.quantity !== undefined) {
+   916→          if (product.quantity < requestedQty) {
+   917→            throw new Error('insufficient_stock')
+   918→          }
+   919→          // Atomic decrement; flip inStock when stock reaches 0.
+   920→          const updated = await tx.product.updateMany({
+   921→            where: { id: product.id, quantity: { gte: requestedQty } },
+   922→            data: {
+   923→              quantity: { decrement: requestedQty },
+   924→              inStock: product.quantity - requestedQty > 0,
+   925→            },
+   926→          })
+   927→          // If affected rows = 0, concurrent order depleted stock between our read and write.
+   928→          if (updated.count === 0) {
+   929→            throw new Error('insufficient_stock')
+   930→          }
+   931→        }
+   932→
+   933→        return tx.order.create({
+   934→          data: {
+   935→            userId: req.user!.id,
+   936→            total: finalTotal,
+   937→            status: 'new',
+   938→            name: data.customerName,
+   939→            phone: data.customerPhone,
+   940→            address: data.deliveryAddress || null,
+   941→            deliveryMethod: data.deliveryAddress ? 'delivery' : 'pickup',
+   942→            contactMethod: data.customerEmail ? 'email' : 'phone',
+   943→            comment: `AI Заказ: ${data.productName}${data.width ? `, ш=${data.width}м` : ''}${data.height ? `, в=${data.height}м` : ''}${data.quantity ? `, кол-во=${data.quantity}` : ''}${data.services.length ? `, услуги: ${data.services.join(', ')}` : ''}. ${data.customerComment || ''}`.slice(0, 2000),
+   944→            category: marketplaceProduct.category || null,
+   945→            items: {
+   946→              create: [{
+   947→                productId: marketplaceProduct.id,
+   948→                quantity: requestedQty,
+   949→                price: finalTotal,
+   950→              }],
+   951→            },
+   952→          },
+   953→          include: { items: true },
+   954→        })
+   955→      })
+   956→
+   957→      // Increment product purchases counter (outside tx — non-critical).
+   958→      await prisma.product.update({
+   959→        where: { id: marketplaceProduct.id },
+   960→        data: { purchases: { increment: 1 } },
+   961→      }).catch(() => {})
+   962→
+   963→      // Add initial status history entry.
+   964→      await prisma.orderStatusHistory.create({
+   965→        data: {
+   966→          orderId: order.id,
+   967→          fromStatus: 'new',
+   968→          toStatus: 'new',
+   969→          changedById: req.user.id,
+   970→          note: 'Заказ создан через AI-ассистента',
+   971→        },
+   972→      }).catch(() => {})
+   973→
+   974→      await auditLog(req as AuthedRequest, 'order', order.id, 'ai.order.created', { after: { product: data.productName, total: finalTotal, orderId: order.id } })
+   975→
+   976→      return res.status(201).json({
+   977→        ok: true,
+   978→        orderId: order.id,
+   979→        orderNumber: order.id.slice(-8).toUpperCase(),
+   980→        total: finalTotal,
+   981→        breakdown: calc.breakdown,
+   982→        status: order.status,
+   983→        message: `Заказ №${order.id.slice(-8).toUpperCase()} успешно создан и сохранён в базе. Сумма: ${finalTotal.toLocaleString('ru-RU')} ₽. Менеджер свяжется с вами в течение 30 минут для подтверждения.`,
+   984→      })
+   985→    } catch (e: any) {
+   986→      const errMsg = String(e?.message || e)
+   987→      // v24.6-audit: surface stock errors to the client with a 409 (not 500)
+   988→      if (errMsg === 'insufficient_stock') {
+   989→        return res.status(409).json({
+   990→          ok: false,
+   991→          error: 'insufficient_stock',
+   992→          message: 'Недостаточно товара на складе. Уменьшите количество или выберите другой товар.',
+   993→        })
+   994→      }
+   995→      if (errMsg === 'product_not_found') {
+   996→        return res.status(404).json({
+   997→          ok: false,
+   998→          error: 'product_not_found',
+   999→          message: 'Товар больше недоступен. Попробуйте обновить каталог.',
+  1000→        })
+  1001→      }
+  1002→      logger.error('AI order creation failed', { error: errMsg })
+  1003→      return res.status(500).json({
+  1004→        ok: false,
+  1005→        error: 'order_creation_failed',
+  1006→        message: 'Не удалось создать заказ. Попробуйте ещё раз или свяжитесь с поддержкой.',
+  1007→      })
+  1008→    }
+  1009→  }
+  1010→
+  1011→  // Fallback for guests (no account) — create a Lead.
+  1012→  try {
+  1013→    const lead = await prisma.lead.create({
+  1014→      data: {
+  1015→        name: data.customerName,
+  1016→        phone: data.customerPhone,
+  1017→        comment: `AI Заявка: ${data.productName}${data.width ? `, ш=${data.width}м` : ''}${data.height ? `, в=${data.height}м` : ''}${data.quantity ? `, кол-во=${data.quantity}` : ''}${data.services.length ? `, услуги: ${data.services.join(', ')}` : ''}. Расчётная стоимость: ${finalTotal} ₽. Email: ${data.customerEmail || '—'}. Адрес: ${data.deliveryAddress || '—'}. Комментарий: ${data.customerComment || '—'}`.slice(0, 2000),
+  1018→        productTitle: data.productName,
+  1019→        productPrice: finalTotal,
+  1020→        quantity: data.quantity || 1,
+  1021→        deliveryMethod: data.deliveryAddress ? 'delivery' : 'pickup',
+  1022→        address: data.deliveryAddress || null,
+  1023→        contactMethod: data.customerEmail ? 'email' : 'phone',
+  1024→        status: 'new',
+  1025→        userId: req.user?.id || null,
+  1026→      },
+  1027→    })
+  1028→
+  1029→    await auditLog(req as AuthedRequest, 'lead', lead.id, 'ai.lead.created', { after: { product: data.productName, total: finalTotal } })
+  1030→
+  1031→    return res.status(201).json({
+  1032→      ok: true,
+  1033→      leadId: lead.id,
+  1034→      orderNumber: lead.id.slice(-8).toUpperCase(),
+  1035→      total: finalTotal,
+  1036→      breakdown: calc.breakdown,
+  1037→      message: `Заявка №${lead.id.slice(-8).toUpperCase()} успешно создана и сохранена в базе. Менеджер перезвонит вам в течение 30 минут для подтверждения заказа на сумму ${finalTotal.toLocaleString('ru-RU')} ₽.`,
+  1038→    })
+  1039→  } catch (e: any) {
+  1040→    logger.error('AI lead creation failed', { error: String(e?.message || e) })
+  1041→    return res.status(500).json({
+  1042→      ok: false,
+  1043→      error: 'lead_creation_failed',
+  1044→      message: 'Не удалось создать заявку. Попробуйте ещё раз.',
+  1045→    })
+  1046→  }
+  1047→}))
+  1048→
+  1049→export default router
+  1050→

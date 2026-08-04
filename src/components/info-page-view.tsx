@@ -9,6 +9,10 @@ import {
   ExternalLink, RefreshCw,
 } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
+// v25.4 (perf audit P-9): DOMPurify is ~80 KB but only used here + in
+// privacy-view.tsx. Both are route-level code-split by Next.js (the
+// components are dynamically imported when the user navigates to an info
+// page), so the cost is NOT paid on initial bundle. Static import is correct.
 
 // ============================================================================
 // InfoPageView — universal renderer for any DB-backed info page.

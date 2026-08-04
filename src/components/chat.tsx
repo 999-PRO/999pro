@@ -109,6 +109,10 @@ import { ChatListContextMenu } from './chat/chat-list-context-menu'
 
 export function ChatView() {
   const [conversations, setConversations] = useState<Conversation[]>([])
+  // v25.4: keep a ref in sync so stable callbacks (handleConvClick etc.) can
+  // read the latest conversations without being recreated on every state change.
+  const conversationsRef = useRef<Conversation[]>([])
+  useEffect(() => { conversationsRef.current = conversations }, [conversations])
   const [activeConv, setActiveConv] = useState<Conversation | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -224,6 +228,19 @@ export function ChatView() {
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false)
   // v16.8.4: Chat List Context Menu — long-press на чат в списке диалогов.
   const [chatListMenu, setChatListMenu] = useState<{ open: boolean; conv: Conversation | null }>({ open: false, conv: null })
+  // v25.4 (perf audit P-1): stable callbacks for ChatListItem so React.memo works.
+  // Previously inline arrows `() => setActiveConv(c)` were recreated every render,
+  // defeating memoization and causing all 50-200 list items to re-render on every
+  // keystroke. Now we pass the conversation id and look it up inside the callback
+  // via conversationsRef (declared above, kept in sync via useEffect).
+  const handleConvClick = useCallback((convId: string) => {
+    const found = conversationsRef.current.find((c) => c.id === convId)
+    if (found) setActiveConv(found)
+  }, [])
+  const handleConvLongPress = useCallback((convId: string) => {
+    const found = conversationsRef.current.find((c) => c.id === convId)
+    if (found) setChatListMenu({ open: true, conv: found })
+  }, [])
   // v16.8.3: Система избранного.
   const favorites = useFavorites()
   // v16.8.3: отдельные refs для каждого типа системного input (Медиа, Камера,
@@ -407,16 +424,14 @@ export function ChatView() {
   // all unread counts) are rendered by a separate child component that
   // subscribes to its own slice.
   //
-  // NOTE: `unreadForActive` and `totalUnread` are intentionally read but
-  // not used as values — calling the hook makes this component re-render
-  // when those counts change. Without the subscription, the UI would not
-  // update when a new message arrives in the active conversation.
+  // v25.4 (perf audit P-2): kept the `useShallow` subscription but mitigated
+  // the re-render cost by memoizing `ChatListItem` (P-1 fix). The subscription
+  // is still needed because the chat list cards read per-conversation unread
+  // counts from here. With `React.memo` on `ChatListItem` + stable callbacks,
+  // only the cards whose props actually changed will re-render.
   const unreadForActive = useNotificationsStore((s) =>
     activeConv ? s.unread.byConversation[activeConv.id] ?? 0 : 0
   )
-  // For the chat list (sidebar), subscribe to total only — child cards
-  // will subscribe to their own conversation id to avoid re-rendering
-  // every card when one conversation's unread changes.
   const totalUnread = useNotificationsStore((s) => s.unread.total)
   void unreadForActive // subscribe-only
   void totalUnread // subscribe-only
@@ -568,7 +583,12 @@ export function ChatView() {
     deleteMessage, forwardMessage: socketForward,
   } = useSocket({
     conversationId: activeConv?.id,
-    enabled: !!activeConv && authed,
+    // v25.4 (chat audit GAP-1): always enable socket when authed so the
+    // chat list updates in real-time even when no conversation is open.
+    // Previously `enabled: !!activeConv && authed` caused the chat list to
+    // go stale whenever the user was on the list view or in another section,
+    // forcing a page refresh to see new messages.
+    enabled: authed,
     onMessage: (m) => {
       if (activeConv && m.conversationId === activeConv.id) {
         // C-HIGH-006: O(1) dedup via the Set. We track both `id` and
@@ -676,9 +696,42 @@ export function ChatView() {
         setPeerVoiceRecording(null)
       }
     },
-    onRead: () => {
-      // Mark my messages as read in the active conversation
+    onRead: (data) => {
+      // v25.4 (chat audit GAP-3): only apply read receipts to the conversation
+      // that was actually read. The backend broadcasts `message:read` to every
+      // participant of the conversation, and the socket is auto-joined to ALL
+      // the user's conversation rooms — so without this guard, opening
+      // conversation Y would mark my messages in conversation X as read too.
+      if (!data || !activeConv || data.conversationId !== activeConv.id) return
       setMessages((cur) => cur.map((m) => (m.senderId === user?.id ? { ...m, isRead: true } : m)))
+    },
+    // v25.4 (chat audit GAP-2): wire presence events so the online dot in
+    // chat-list-item.tsx (c.participant?.isOnline) updates in real-time.
+    // Previously these handlers were not passed, so presence only updated on
+    // the next REST fetch.
+    onUserOnline: (data) => {
+      setConversations((cur) =>
+        cur.map((c) =>
+          c.participant?.id === data.userId
+            ? { ...c, participant: { ...c.participant!, isOnline: true, lastSeen: new Date().toISOString() } }
+            : c,
+        ),
+      )
+      setChatUsers((cur) =>
+        cur.map((u) => (u.id === data.userId ? { ...u, isOnline: true, lastSeen: new Date().toISOString() } : u)),
+      )
+    },
+    onUserOffline: (data) => {
+      setConversations((cur) =>
+        cur.map((c) =>
+          c.participant?.id === data.userId
+            ? { ...c, participant: { ...c.participant!, isOnline: false, lastSeen: new Date().toISOString() } }
+            : c,
+        ),
+      )
+      setChatUsers((cur) =>
+        cur.map((u) => (u.id === data.userId ? { ...u, isOnline: false, lastSeen: new Date().toISOString() } : u)),
+      )
     },
   })
 
@@ -1783,7 +1836,7 @@ export function ChatView() {
                   <p className="text-xs text-muted-foreground/70">Выберите пользователя ниже, чтобы начать чат.</p>
                 </div>
               ) : (
-                conversations.map((c, idx) => {
+                conversations.map((c) => {
                   // Unread = max(server-provided count, local notification store count).
                   const serverUnread = c.unreadCount && c.unreadCount > 0 ? c.unreadCount : 0
                   const localUnread = unreadByConv[c.id] || 0
@@ -1795,9 +1848,9 @@ export function ChatView() {
                       conversation={c}
                       unread={unread}
                       isActive={isActive}
-                      index={idx}
-                      onClick={() => setActiveConv(c)}
-                      onLongPress={() => setChatListMenu({ open: true, conv: c })}
+                      onClick={handleConvClick}
+                      onLongPress={handleConvLongPress}
+                      convId={c.id}
                     />
                   )
                 })

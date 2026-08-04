@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Phone, PhoneOff, Mic, MicOff, Video, VideoOff,
   Camera, Volume2, VolumeX, ChevronRight,
-  Minimize2, Maximize2,
+  Minimize2, Maximize2, Monitor, MonitorOff,
 } from 'lucide-react'
 import type { CallState } from '@/lib/types'
 import { assetUrl } from '@/lib/api'
@@ -17,6 +17,7 @@ interface CallScreenProps {
   remoteVideoRef: React.RefObject<HTMLVideoElement | null>
   iceState: RTCIceConnectionState
   isPip?: boolean
+  isScreenSharing?: boolean
   onMinimize?: () => void
   onExpand?: () => void
   onAccept: () => void
@@ -26,6 +27,8 @@ interface CallScreenProps {
   onToggleCamera: (enabled: boolean) => void
   onSwitchCamera: () => void
   onToggleSpeaker: (enabled: boolean) => void
+  // v25.4 (calls audit GAP-1): screen share callbacks
+  onToggleScreenShare?: () => void
 }
 
 function formatDuration(seconds: number): string {
@@ -405,6 +408,20 @@ export function CallScreen(props: CallScreenProps) {
             inactiveIcon={<VolumeX className="h-6 w-6" />}
             label={speakerOn ? 'Динамик' : 'Выкл'}
           />
+
+          {/* v25.4 (calls audit GAP-1): Screen share toggle. Only shown for
+              video calls on desktop (getDisplayMedia is not available on
+              mobile browsers, especially iOS Safari). */}
+          {isVideo && props.onToggleScreenShare && (
+            <CallControlButton
+              active={!props.isScreenSharing}
+              onClick={() => props.onToggleScreenShare?.()}
+              activeIcon={<Monitor className="h-6 w-6" />}
+              inactiveIcon={<MonitorOff className="h-6 w-6" />}
+              label={props.isScreenSharing ? 'Экран' : 'Экран'}
+              compact
+            />
+          )}
         </div>
 
         {/* End call button */}

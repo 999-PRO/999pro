@@ -1,0 +1,759 @@
+     1→// ============================================================================
+     2→// «Три девятки» Service Worker — plain JavaScript (NO TypeScript annotations).
+     3→// Service Workers run in a separate JS-only context; TS syntax like
+     4→// `: Response | null` causes "ServiceWorker script evaluation failed" and
+     5→// breaks ALL PWA features (offline cache, push notifications, etc).
+     6→// ============================================================================
+     7→
+     8→const CACHE_VERSION = '999pro-v22-5-ai-auth-fix-2026-07-20'
+     9→const OFFLINE_URL = '/offline.html'
+    10→
+    11→// Core app shell — always precached. These files are small and stable.
+    12→const APP_SHELL = [
+    13→  '/',
+    14→  '/offline.html',
+    15→  '/manifest.webmanifest',
+    16→  '/icon-192.svg',
+    17→  '/icon-512.svg',
+    18→  '/icons/favicon-32.png',
+    19→  '/icons/icon-192.png',
+    20→  '/icons/icon-512.png',
+    21→  '/icons/icon-192-maskable.png',
+    22→  '/icons/icon-512-maskable.png',
+    23→  '/icons/apple-touch-icon.png',
+    24→]
+    25→
+    26→// ============================================================================
+    27→// Wave 2 (C-PWA-003): Notification preferences stored in IndexedDB
+    28→// ----------------------------------------------------------------------------
+    29→// localStorage is NOT available in Service Worker context (only Window).
+    30→// v12.9 attempted to read 999pro-notif-* keys from localStorage directly,
+    31→// which silently failed — all notifications were shown regardless of user
+    32→// preferences. Now we use IndexedDB + an in-memory cache populated by
+    33→// messages from the page.
+    34→// ============================================================================
+    35→
+    36→const NOTIF_PREFS_DB = '999pro-prefs'
+    37→const NOTIF_PREFS_STORE = 'notif'
+    38→const NOTIF_PREFS_KEYS = ['chat', 'orders', 'club', 'marketing']
+    39→const NOTIF_PREFS_TTL_MS = 60_000  // re-read from IDB every 60s max
+    40→
+    41→let prefsCache = { chat: true, orders: true, club: true, marketing: true }
+    42→let prefsCacheAt = 0
+    43→
+    44→function openPrefsDb() {
+    45→  return new Promise((resolve, reject) => {
+    46→    const req = indexedDB.open(NOTIF_PREFS_DB, 1)
+    47→    req.onupgradeneeded = () => {
+    48→      const db = req.result
+    49→      if (!db.objectStoreNames.contains(NOTIF_PREFS_STORE)) {
+    50→        db.createObjectStore(NOTIF_PREFS_STORE)
+    51→      }
+    52→    }
+    53→    req.onsuccess = () => resolve(req.result)
+    54→    req.onerror = () => reject(req.error)
+    55→  })
+    56→}
+    57→
+    58→async function refreshPrefsCache() {
+    59→  try {
+    60→    const db = await openPrefsDb()
+    61→    const tx = db.transaction(NOTIF_PREFS_STORE, 'readonly')
+    62→    const store = tx.objectStore(NOTIF_PREFS_STORE)
+    63→    const results = await Promise.all(
+    64→      NOTIF_PREFS_KEYS.map(
+    65→        (key) =>
+    66→          new Promise((resolve) => {
+    67→            const r = store.get(key)
+    68→            r.onsuccess = () => resolve([key, r.result === null ? true : r.result === 'true' || r.result === true])
+    69→            r.onerror = () => resolve([key, true])
+    70→          }),
+    71→      ),
+    72→    )
+    73→    db.close()
+    74→    const newCache = { ...prefsCache }
+    75→    for (const [k, v] of results) newCache[k] = v
+    76→    prefsCache = newCache
+    77→    prefsCacheAt = Date.now()
+    78→  } catch (e) {
+    79→    // IDB failed — keep showing all notifications (safe default)
+    80→  }
+    81→}
+    82→
+    83→async function getNotifPref(category) {
+    84→  if (Date.now() - prefsCacheAt > NOTIF_PREFS_TTL_MS) {
+    85→    await refreshPrefsCache()
+    86→  }
+    87→  return prefsCache[category] !== false
+    88→}
+    89→
+    90→async function setNotifPref(category, enabled) {
+    91→  prefsCache[category] = enabled
+    92→  prefsCacheAt = Date.now()
+    93→  try {
+    94→    const db = await openPrefsDb()
+    95→    const tx = db.transaction(NOTIF_PREFS_STORE, 'readwrite')
+    96→    tx.objectStore(NOTIF_PREFS_STORE).put(enabled ? 'true' : 'false', category)
+    97→    await new Promise((resolve, reject) => {
+    98→      tx.oncomplete = resolve
+    99→      tx.onerror = () => reject(tx.error)
+   100→    })
+   101→    db.close()
+   102→  } catch (e) {
+   103→    // ignore — in-memory cache is still updated
+   104→  }
+   105→}
+   106→
+   107→self.addEventListener('install', (event) => {
+   108→  // v9-audit-fix (H-3): cache.addAll is atomic — if ANY file fails, NONE
+   109→  // are cached. The previous `.catch(() => {})` swallowed the failure
+   110→  // silently, so install "succeeded" but offline support was broken with
+   111→  // no log. Now we use Promise.allSettled so partial precache works, and
+   112→  // log any failures for debugging.
+   113→  event.waitUntil(
+   114→    caches
+   115→      .open(CACHE_VERSION)
+   116→      .then((cache) =>
+   117→        Promise.allSettled(APP_SHELL.map((url) => cache.add(url))),
+   118→      )
+   119→      .then((results) => {
+   120→        const failed = results.filter((r) => r.status === 'rejected')
+   121→        if (failed.length > 0) {
+   122→          console.warn(
+   123→            '[SW] Precache partial failure:',
+   124→            failed.length,
+   125→            'of',
+   126→            results.length,
+   127→            'files failed. Offline support may be degraded.',
+   128→          )
+   129→        }
+   130→      })
+   131→      .then(() => {
+   132→        // v22 final: aggressively take over from the old SW so users on the
+   133→        // installed PWA see the new version immediately on next navigation,
+   134→        // without waiting for all tabs to close. Safe because the activate
+   135→        // handler cleans up old caches atomically.
+   136→        self.skipWaiting()
+   137→      }),
+   138→  )
+   139→})
+   140→
+   141→self.addEventListener('message', (event) => {
+   142→  if (event.data && event.data.type === 'SKIP_WAITING') {
+   143→    self.skipWaiting()
+   144→  }
+   145→  // SHOW_NOTIFICATION — used by the page to ask the SW to display a
+   146→  // notification. SW-displayed notifications are more reliable than
+   147→  // page-side `new Notification()` when the tab is backgrounded.
+   148→  if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
+   149→    const { title, body, icon, tag, data, renotify, requireInteraction, actions } = event.data
+   150→    self.registration.showNotification(title || '«Три девятки»', {
+   151→      body: body || '',
+   152→      icon: icon || '/icons/icon-192.png',
+   153→      badge: '/icons/icon-192-maskable.png',
+   154→      // Unique tag per message (caller supplies `msg-${convId}-${msgId}`)
+   155→      // so rapid messages don't replace each other. renotify:true makes
+   156→      // the device re-vibrate for each one.
+   157→      tag: tag || 'chat-message',
+   158→      data: data || {},
+   159→      vibrate: [200, 100, 200],
+   160→      requireInteraction: requireInteraction || false,
+   161→      renotify: renotify !== false, // default true
+   162→      actions: actions || [],
+   163→    })
+   164→  }
+   165→
+   166→  // Wave 2 (C-PWA-003): page-side settings-view.tsx pushes notif pref updates
+   167→  // via SET_NOTIF_PREF so the SW's in-memory cache + IndexedDB stays in sync.
+   168→  if (event.data && event.data.type === 'SET_NOTIF_PREF') {
+   169→    const { category, enabled } = event.data
+   170→    if (typeof category === 'string' && typeof enabled === 'boolean') {
+   171→      event.waitUntil(setNotifPref(category, enabled))
+   172→    }
+   173→  }
+   174→
+   175→  // Page requests initial prefs sync on load
+   176→  if (event.data && event.data.type === 'SYNC_NOTIF_PREFS') {
+   177→    event.waitUntil(refreshPrefsCache())
+   178→  }
+   179→})
+   180→
+   181→self.addEventListener('activate', (event) => {
+   182→  event.waitUntil(
+   183→    (async () => {
+   184→      // Clean up old caches.
+   185→      // v13.1 (audit P1-18 fix): previously only caches whose name !==
+   186→      // CACHE_VERSION were deleted. But the catalog cache is named
+   187→      // CACHE_VERSION + '-catalog' — so its name DOES match the prefix
+   188→      // but !== CACHE_VERSION, meaning it was deleted. Wait — that means
+   189→      // it WAS being deleted. Let me re-read... actually the filter is
+   190→      // `k !== CACHE_VERSION`, so `v1-catalog` would be deleted. Good.
+   191→      // But the bug was: the catalog cache was REGENERATED by the fetch
+   192→      // handler with the SAME version on the next request, retaining
+   193→      // stale entries from before the deploy. Now we explicitly delete
+   194→      // any cache starting with CACHE_VERSION + '-' (catalog, etc.) so
+   195→      // they're rebuilt fresh from the network after a deploy.
+   196→      const keys = await caches.keys()
+   197→      await Promise.all(
+   198→        keys
+   199→          .filter(
+   200→            (k) => k !== CACHE_VERSION && !k.startsWith(CACHE_VERSION + '-'),
+   201→          )
+   202→          .map((k) => caches.delete(k)),
+   203→      )
+   204→      // Also delete the catalog cache so users get fresh product data
+   205→      // after a deploy (admin may have added/removed products).
+   206→      await caches.delete(CACHE_VERSION + '-catalog')
+   207→
+   208→      // P-MED-010 fix: cache size limit + LRU eviction.
+   209→      // Keep max 200 entries per cache. Delete oldest by response Date header.
+   210→      try {
+   211→        const cache = await caches.open(CACHE_VERSION)
+   212→        const requests = await cache.keys()
+   213→        if (requests.length > 200) {
+   214→          // Sort by response Date header (oldest first)
+   215→          const dated = await Promise.all(
+   216→            requests.map(async (req) => {
+   217→              const res = await cache.match(req)
+   218→              const date = res?.headers.get('date')
+   219→              return { req, ts: date ? new Date(date).getTime() : 0 }
+   220→            }),
+   221→          )
+   222→          dated.sort((a, b) => a.ts - b.ts)
+   223→          // Delete oldest 50 entries
+   224→          const toDelete = dated.slice(0, 50)
+   225→          await Promise.all(toDelete.map((d) => cache.delete(d.req)))
+   226→        }
+   227→      } catch (e) {
+   228→        // ignore cache cleanup errors
+   229→      }
+   230→
+   231→      // Log storage usage for debugging (P-MED-010)
+   232→      if (navigator.storage && navigator.storage.estimate) {
+   233→        const est = await navigator.storage.estimate()
+   234→        console.log('[SW] Storage usage:', Math.round((est.usage || 0) / 1024 / 1024), 'MB /', Math.round((est.quota || 0) / 1024 / 1024), 'MB quota')
+   235→      }
+   236→
+   237→      // Enable navigation preload
+   238→      if (self.registration.navigationPreload) {
+   239→        try {
+   240→          await self.registration.navigationPreload.enable()
+   241→        } catch (e) {
+   242→          // ignore
+   243→        }
+   244→      }
+   245→
+   246→      // Claim clients so this SW controls the tab immediately
+   247→      await self.clients.claim()
+   248→    })(),
+   249→  )
+   250→})
+   251→
+   252→// P-MED-005 fix: Background Sync — retry failed sends when network is back.
+   253→// When the page sends a message offline, it registers a sync event. The SW
+   254→// wakes up when network is restored and dispatches the sync event.
+   255→self.addEventListener('sync', (event) => {
+   256→  if (event.tag === 'send-outbound-messages') {
+   257→    event.waitUntil(flushOutboundMessageQueue())
+   258→  } else if (event.tag === 'sync-share-events') {
+   259→    event.waitUntil(flushShareEventQueue())
+   260→  }
+   261→})
+   262→
+   263→// P-MED-006 fix: Periodic Background Sync — refresh catalog every 12h.
+   264→// Chrome/Edge only. Registration happens on page load if supported.
+   265→self.addEventListener('periodicsync', (event) => {
+   266→  if (event.tag === 'refresh-catalog') {
+   267→    event.waitUntil(refreshCatalogCache())
+   268→  }
+   269→})
+   270→
+   271→async function flushOutboundMessageQueue() {
+   272→  // Read queued messages from IndexedDB (or localStorage fallback)
+   273→  // and retry each via REST with clientMessageId idempotency.
+   274→  // The page-side message-queue.ts handles the actual queue; the SW just
+   275→  // notifies all clients that they should flush.
+   276→  const clients = await self.clients.matchAll({ includeUncontrolled: true })
+   277→  clients.forEach((client) => {
+   278→    client.postMessage({ type: 'FLUSH_MESSAGE_QUEUE' })
+   279→  })
+   280→}
+   281→
+   282→async function flushShareEventQueue() {
+   283→  // Similar to message queue — notify clients to retry failed share/track events
+   284→  const clients = await self.clients.matchAll({ includeUncontrolled: true })
+   285→  clients.forEach((client) => {
+   286→    client.postMessage({ type: 'FLUSH_SHARE_QUEUE' })
+   287→  })
+   288→}
+   289→
+   290→async function refreshCatalogCache() {
+   291→  // Refresh the catalog cache by fetching the products endpoint
+   292→  try {
+   293→    const cache = await caches.open(CACHE_VERSION)
+   294→    const res = await fetch('/api/products?limit=50&source=periodic-sync', {
+   295→      cache: 'no-store',
+   296→    })
+   297→    if (res.ok) {
+   298→      await cache.put('/api/products?limit=50', res.clone())
+   299→    }
+   300→  } catch (e) {
+   301→    // ignore — will retry on next periodic sync
+   302→  }
+   303→}
+   304→
+   305→self.addEventListener('fetch', (event) => {
+   306→  const req = event.request
+   307→  if (req.method !== 'GET') return
+   308→
+   309→  const url = new URL(req.url)
+   310→  if (url.origin !== self.location.origin) return
+   311→
+   312→  // v12.9: /api/products — network-first with cache fallback for offline catalog.
+   313→  // When online: fetch fresh, cache the response, return it.
+   314→  // When offline: return the last cached response so users can browse
+   315→  // the catalog without internet.
+   316→  if (url.pathname === '/api/products' || url.pathname.startsWith('/api/products?')) {
+   317→    event.respondWith(
+   318→      (async () => {
+   319→        const cache = await caches.open(CACHE_VERSION + '-catalog')
+   320→        try {
+   321→          const networkRes = await fetch(req)
+   322→          if (networkRes.ok) {
+   323→            cache.put(req, networkRes.clone()).catch(() => {})
+   324→          }
+   325→          return networkRes
+   326→        } catch (e) {
+   327→          // Network failed — try cache
+   328→          const cached = await cache.match(req)
+   329→          if (cached) return cached
+   330→          // No cache — try the generic products cache (populated by periodic sync)
+   331→          const genericCached = await cache.match('/api/products?limit=50')
+   332→          if (genericCached) return genericCached
+   333→          // Nothing cached — return offline error
+   334→          return new Response('{"error":"offline","items":[]}', {
+   335→            status: 503,
+   336→            headers: { 'Content-Type': 'application/json' },
+   337→          })
+   338→        }
+   339→      })(),
+   340→    )
+   341→    return
+   342→  }
+   343→
+   344→  // NEVER cache other API requests or sandbox-gateway-routed requests
+   345→  if (url.pathname.startsWith('/api/') || url.search.includes('XTransformPort')) {
+   346→    event.respondWith(
+   347→      fetch(req).catch(
+   348→        () =>
+   349→          new Response('{"error":"offline"}', {
+   350→            status: 503,
+   351→            headers: { 'Content-Type': 'application/json' },
+   352→          }),
+   353→      ),
+   354→    )
+   355→    return
+   356→  }
+   357→
+   358→  // v24.6-audit (PWA H-1 fix): NEVER cache Socket.IO polling / WebSocket upgrade
+   359→  // requests — caching them pollutes the cache with single-use long-poll responses
+   360→  // and evicts useful entries. Socket.IO must always go straight to the network.
+   361→  if (url.pathname.startsWith('/socket.io/') || url.pathname === '/socket.io') {
+   362→    event.respondWith(
+   363→      fetch(req).catch(() => Response.error()),
+   364→    )
+   365→    return
+   366→  }
+   367→
+   368→  // Never cache uploaded files
+   369→  if (url.pathname.startsWith('/uploads/')) {
+   370→    event.respondWith(
+   371→      fetch(req).catch(() =>
+   372→        caches.match(req).then((m) => m || Response.error()),
+   373→      ),
+   374→    )
+   375→    return
+   376→  }
+   377→
+   378→  // Static Next.js chunks — cache-first + stale-while-revalidate
+   379→  if (
+   380→    url.pathname.startsWith('/_next/static/') ||
+   381→    url.pathname.startsWith('/icons/') ||
+   382→    url.pathname.match(/\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$/i)
+   383→  ) {
+   384→    event.respondWith(
+   385→      caches.open(CACHE_VERSION).then(async (cache) => {
+   386→        const cached = await cache.match(req)
+   387→        const networkPromise = fetch(req)
+   388→          .then((res) => {
+   389→            if (res.ok && res.type === 'basic') {
+   390→              cache.put(req, res.clone()).catch(() => {})
+   391→            }
+   392→            return res
+   393→          })
+   394→          .catch(() => null)
+   395→        if (cached) return cached
+   396→        const network = await networkPromise
+   397→        if (network) return network
+   398→        return Response.error()
+   399→      }),
+   400→    )
+   401→    return
+   402→  }
+   403→
+   404→  // HTML navigations — network-first, fallback to cache, then offline
+   405→  if (req.mode === 'navigate') {
+   406→    event.respondWith(
+   407→      (async () => {
+   408→        const cache = await caches.open(CACHE_VERSION)
+   409→        try {
+   410→          const preload =
+   411→            event.preloadResponse &&
+   412→            (await event.preloadResponse.catch(() => null))
+   413→
+   414→          let networkRes = null
+   415→          if (preload && preload.ok) {
+   416→            networkRes = preload
+   417→          } else {
+   418→            networkRes = await fetch(req).catch(() => null)
+   419→          }
+   420→          if (!networkRes || !networkRes.ok) {
+   421→            // Network failed — try the EXACT request URL first (the page the
+   422→            // user was trying to reach). If that misses, fall back to the
+   423→            // offline page. Previously we fell back to `cache.match('/')`,
+   424→            // which silently rendered the home page for ANY navigation —
+   425→            // confusing UX (e.g. user was on /?view=chat, goes offline,
+   426→            // suddenly sees the home page).
+   427→            const cached = await cache.match(req)
+   428→            if (cached) return cached
+   429→            return (await cache.match(OFFLINE_URL)) || Response.error()
+   430→          }
+   431→
+   432→          // Compare with cached HTML to detect new deploys
+   433→          const networkText = await networkRes.clone().text()
+   434→          const cachedRes = await cache.match(req)
+   435→          let changed = true
+   436→          if (cachedRes) {
+   437→            const cachedText = await cachedRes.clone().text()
+   438→            changed = cachedText !== networkText
+   439→          }
+   440→
+   441→          await cache.put(req, networkRes.clone()).catch(() => {})
+   442→
+   443→          if (changed) {
+   444→            const clients = await self.clients.matchAll({
+   445→              type: 'window',
+   446→              includeUncontrolled: true,
+   447→            })
+   448→            for (const c of clients) {
+   449→              c.postMessage({ type: 'UPDATE_AVAILABLE', url: req.url })
+   450→            }
+   451→          }
+   452→
+   453→          return networkRes
+   454→        } catch (e) {
+   455→          // Last-resort fallback: try the exact URL, then offline page.
+   456→          const cached = await cache.match(req)
+   457→          if (cached) return cached
+   458→          return (await cache.match(OFFLINE_URL)) || Response.error()
+   459→        }
+   460→      })(),
+   461→    )
+   462→    return
+   463→  }
+   464→
+   465→  // Default: stale-while-revalidate
+   466→  event.respondWith(
+   467→    caches.open(CACHE_VERSION).then(async (cache) => {
+   468→      const cached = await cache.match(req)
+   469→      const network = fetch(req)
+   470→        .then((res) => {
+   471→          if (res.ok && res.type === 'basic') {
+   472→            cache.put(req, res.clone()).catch(() => {})
+   473→          }
+   474→          return res
+   475→        })
+   476→        .catch(() => cached)
+   477→      // CRITICAL: must return a Response, not undefined. Previously if both
+   478→      // cache and network missed, this returned `undefined` which throws
+   479→      // inside event.respondWith and shows a broken page.
+   480→      return cached || network || Response.error()
+   481→    }),
+   482→  )
+   483→})
+   484→
+   485→// ============================================================================
+   486→// Push notifications — fired by the browser when a Web Push message arrives
+   487→// from the push service. This works EVEN IF the app tab is closed (the SW
+   488→// runs in the background). This is the ONLY way to notify the user when the
+   489→// app is fully closed.
+   490→// ============================================================================
+   491→self.addEventListener('push', (event) => {
+   492→  let payload = {}
+   493→  try {
+   494→    payload = event.data ? event.data.json() : {}
+   495→  } catch (e) {
+   496→    payload = {
+   497→      title: '«Три девятки»',
+   498→      body: event.data ? event.data.text() : 'Новое сообщение',
+   499→    }
+   500→  }
+   501→
+   502→  // v12.8: Only suppress system push if the payload is a chat message
+   503→  // (which has an in-app toast handler). Orders, leads, calls, and CLUB
+   504→  // notifications ALWAYS show a system notification — even if the app is
+   505→  // open — because the in-app toast may not be visible (different view,
+   506→  // different tab, Studio app, etc.).
+   507→  //
+   508→  // We still postMessage the payload to visible clients so they can show
+   509→  // the in-app toast as a fallback.
+   510→  event.waitUntil(
+   511→    (async () => {
+   512→      // Check if this is a chat message (can be suppressed)
+   513→      // Backend tags chat pushes with `msg-${conversationId}-${messageId}`.
+   514→      // Keep `chat-` / `message-` prefixes for backwards compat with any
+   515→      // in-flight pushes from older code paths.
+   516→      const isChatMessage = payload.tag && (
+   517→        payload.tag.startsWith('msg-') ||
+   518→        payload.tag.startsWith('chat-') ||
+   519→        payload.tag.startsWith('message-')
+   520→      )
+   521→      if (isChatMessage) {
+   522→        try {
+   523→          const clientList = await self.clients.matchAll({
+   524→            type: 'window',
+   525→            includeUncontrolled: true,
+   526→          })
+   527→          const visibleClient = clientList.find((c) => c.visibilityState === 'visible')
+   528→          if (visibleClient) {
+   529→            // App is visible — forward to the page so it can show in-app toast
+   530→            visibleClient.postMessage({
+   531→              type: 'PUSH_SUPPRESSED_IN_APP',
+   532→              payload,
+   533→            })
+   534→            return // Do NOT show system notification for chat messages only
+   535→          }
+   536→        } catch (e) {
+   537→          // clients.matchAll failed — fall through to showNotification
+   538→        }
+   539→      }
+   540→
+   541→      // v12.9 / Wave 2 (C-PWA-003): granular notification preferences.
+   542→      // localStorage is NOT available in SW context — use IndexedDB-backed
+   543→      // prefs cache instead. Page-side settings-view.tsx pushes updates via
+   544→      // postMessage({type:'SET_NOTIF_PREF', category, enabled}).
+   545→      const tag = payload.tag || ''
+   546→      const isChatNotif = tag.startsWith('msg-') || tag.startsWith('chat-') || tag.startsWith('message-')
+   547→      const isOrderNotif = tag.startsWith('admin-order-') || tag.startsWith('order-') || tag.startsWith('admin-lead-')
+   548→      const isClubNotif = tag.startsWith('club-')
+   549→      const isMarketingNotif = tag.startsWith('promo-') || tag.startsWith('event-')
+   550→      const isLeadStatusNotif = tag.startsWith('lead-')
+   551→      const isCallNotif = tag.startsWith('call-')
+   552→
+   553→      try {
+   554→        if (isChatNotif && !(await getNotifPref('chat'))) return
+   555→        if (isOrderNotif && !(await getNotifPref('orders'))) return
+   556→        if (isClubNotif && !(await getNotifPref('club'))) return
+   557→        if (isMarketingNotif && !(await getNotifPref('marketing'))) return
+   558→      } catch (e) {
+   559→        // IDB read failed — show notification (safe default)
+   560→      }
+   561→
+   562→      // Show system notification (orders, leads, calls, CLUB, or chat when app is hidden)
+   563→      const title = payload.title || '«Три девятки»'
+   564→      const options = {
+   565→        body: payload.body || 'Новое сообщение',
+   566→        icon: payload.icon || '/icons/icon-192.png',
+   567→        badge: payload.badge || '/icons/icon-192-maskable.png',
+   568→        tag: payload.tag || 'chat-message',
+   569→        data: payload.data || { url: '/?view=chat' },
+   570→        vibrate: [120, 60, 120],
+   571→        requireInteraction: payload.requireInteraction || false,
+   572→        renotify: payload.renotify !== false,
+   573→        actions: payload.actions || [],
+   574→      }
+   575→      await self.registration.showNotification(title, options)
+   576→    })(),
+   577→  )
+   578→})
+   579→
+   580→self.addEventListener('notificationclick', (event) => {
+   581→  event.notification.close()
+   582→  const targetUrl = event.notification.data?.url || '/?view=chat'
+   583→  const conversationId = event.notification.data?.conversationId
+   584→  const callId = event.notification.data?.callId
+   585→  const action = event.action // 'answer' | 'decline' | undefined (body click)
+   586→
+   587→  // For call notifications with action buttons:
+   588→  //   - 'answer'   → open the app + post CALL_ANSWER message so call-manager
+   589→  //                  accepts the incoming call automatically.
+   590→  //   - 'decline'  → post CALL_DECLINE message so call-manager rejects the
+   591→  //                  call. No need to open the app for decline.
+   592→  //   - body click → just open the app (default behaviour below).
+   593→  if (callId && action === 'decline') {
+   594→    // Send CALL_DECLINE to any open tab — the call-manager will emit
+   595→    // call:reject via the socket. Don't open a new tab.
+   596→    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+   597→      for (const c of clientList) {
+   598→        c.postMessage({
+   599→          type: 'CALL_DECLINE',
+   600→          callId,
+   601→          conversationId,
+   602→        })
+   603→      }
+   604→    })
+   605→    return
+   606→  }
+   607→
+   608→  event.waitUntil(
+   609→    self.clients
+   610→      .matchAll({ type: 'window', includeUncontrolled: true })
+   611→      .then((clientList) => {
+   612→        // Focus an existing tab if one is open
+   613→        for (const client of clientList) {
+   614→          if ('focus' in client) {
+   615→            client.focus()
+   616→            client.postMessage({
+   617→              type: action === 'answer' ? 'CALL_ANSWER' : 'NOTIFICATION_CLICK',
+   618→              conversationId,
+   619→              callId,
+   620→              url: targetUrl,
+   621→            })
+   622→            return
+   623→          }
+   624→        }
+   625→        // No existing tab — open a new one.
+   626→        // v10.3-fix: include conversationId in the URL so the app can
+   627→        // deep-link to the right conversation on cold start. Previously,
+   628→        // the URL was just '/?view=chat' (chat LIST), not the specific
+   629→        // conversation. Now it's '/?view=chat&conv=<id>' and page.tsx
+   630→        // checks for the 'conv' param on boot and dispatches
+   631→        // chat:open-conversation to open the right conversation.
+   632→        if (self.clients.openWindow) {
+   633→          let deepLinkUrl = targetUrl
+   634→          if (conversationId) {
+   635→            const u = new URL(targetUrl, self.location.origin)
+   636→            u.searchParams.set('conv', conversationId)
+   637→            deepLinkUrl = u.pathname + u.search
+   638→          }
+   639→          return self.clients.openWindow(deepLinkUrl)
+   640→        }
+   641→      }),
+   642→  )
+   643→})
+   644→
+   645→// ============================================================================
+   646→// v9-audit-fix (H-1): pushsubscriptionchange — fired by the browser when
+   647→// the push service rotates the subscription endpoint (FCM/AutoPush does
+   648→// this periodically). Without this handler, the backend keeps sending
+   649→// pushes to the OLD endpoint and the user silently stops receiving
+   650→// notifications. We re-subscribe and notify all open clients to POST the
+   651→// new endpoint to the backend (and unsubscribe the old one).
+   652→// ============================================================================
+   653→// v20: Fixed pushsubscriptionchange handler — fetches VAPID key from backend
+   654→// instead of relying on oldSub?.options?.applicationServerKey (which is usually
+   655→// undefined in most browsers). Also caches the key in IndexedDB for resilience.
+   656→self.addEventListener('pushsubscriptionchange', (event) => {
+   657→  event.waitUntil(
+   658→    (async () => {
+   659→      try {
+   660→        const oldSub = event.oldSubscription
+   661→        const reg = await self.registration
+   662→
+   663→        // Try to get the VAPID key from the backend
+   664→        let vapidKey = null
+   665→        try {
+   666→          // First try IndexedDB cache
+   667→          vapidKey = await getVapidKeyFromIDB()
+   668→          if (!vapidKey) {
+   669→            // Fetch from backend
+   670→            const resp = await fetch('/api/push/vapid-public')
+   671→            if (resp.ok) {
+   672→              const data = await resp.json()
+   673→              if (data.publicKey) {
+   674→                vapidKey = urlBase64ToUint8Array(data.publicKey)
+   675→                // Cache for future use
+   676→                await setVapidKeyInIDB(data.publicKey)
+   677→              }
+   678→            }
+   679→          }
+   680→        } catch (e) {
+   681→          console.warn('[SW] Failed to fetch VAPID key for rotation:', e)
+   682→        }
+   683→
+   684→        const newSub = await reg.pushManager.subscribe({
+   685→          userVisibleOnly: true,
+   686→          applicationServerKey: vapidKey || undefined,
+   687→        })
+   688→
+   689→        // Notify all open clients so they can sync the new endpoint to the backend
+   690→        const clients = await self.clients.matchAll({ includeUncontrolled: true })
+   691→        for (const c of clients) {
+   692→          c.postMessage({
+   693→            type: 'PUSH_SUBSCRIPTION_CHANGED',
+   694→            oldEndpoint: oldSub?.endpoint || null,
+   695→            newEndpoint: newSub.endpoint,
+   696→            keys: newSub.toJSON().keys,
+   697→          })
+   698→        }
+   699→      } catch (e) {
+   700→        console.warn('[SW] pushsubscriptionchange failed:', e)
+   701→      }
+   702→    })(),
+   703→  )
+   704→})
+   705→
+   706→// v24.6-audit (PWA C-1 fix): openNotifDB() was referenced but never defined —
+   707→// the `pushsubscriptionchange` handler silently threw ReferenceError, so endpoint
+   708→// rotation failed and users lost all push notifications ~60 days after install.
+   709→// This implementation opens (or creates) a small IndexedDB with a single
+   710→// 'settings' object store used to cache the VAPID key for SW-side resubscribe.
+   711→async function openNotifDB() {
+   712→  return new Promise((resolve, reject) => {
+   713→    const req = indexedDB.open('999pro-sw-notif', 1)
+   714→    req.onupgradeneeded = (event) => {
+   715→      const db = event.target.result
+   716→      if (!db.objectStoreNames.contains('settings')) {
+   717→        db.createObjectStore('settings')
+   718→      }
+   719→    }
+   720→    req.onsuccess = (event) => resolve(event.target.result)
+   721→    req.onerror = (event) => reject(event.target.error)
+   722→  })
+   723→}
+   724→
+   725→// v20: Helper — cache VAPID key in IndexedDB for SW use during rotation
+   726→async function getVapidKeyFromIDB() {
+   727→  try {
+   728→    const db = await openNotifDB()
+   729→    const tx = db.transaction('settings', 'readonly')
+   730→    const store = tx.objectStore('settings')
+   731→    const key = await store.get('vapid-key')
+   732→    return key ? urlBase64ToUint8Array(key) : null
+   733→  } catch {
+   734→    return null
+   735→  }
+   736→}
+   737→
+   738→async function setVapidKeyInIDB(key) {
+   739→  try {
+   740→    const db = await openNotifDB()
+   741→    const tx = db.transaction('settings', 'readwrite')
+   742→    tx.objectStore('settings').put(key, 'vapid-key')
+   743→    await tx.done
+   744→  } catch {
+   745→    // non-critical
+   746→  }
+   747→}
+   748→
+   749→function urlBase64ToUint8Array(base64String) {
+   750→  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+   751→  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+   752→  const rawData = atob(base64)
+   753→  const outputArray = new Uint8Array(rawData.length)
+   754→  for (let i = 0; i < rawData.length; ++i) {
+   755→    outputArray[i] = rawData.charCodeAt(i)
+   756→  }
+   757→  return outputArray
+   758→}
+   759→

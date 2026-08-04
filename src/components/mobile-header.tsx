@@ -68,7 +68,14 @@ export function MobileHeader({
     // than needed). 5min is still fast enough that PWA picks up Studio
     // changes within a reasonable window. visibilitychange handler above
     // covers the "user returns to the app" case with an immediate refresh.
-    const interval = setInterval(fetchSettings, 300000)
+    // v25.4 (perf audit P-6): skip the interval body when the tab is hidden —
+    // a backgrounded PWA on iOS burns battery + mobile data polling settings
+    // that almost never change. The visibilitychange handler already refetches
+    // on return.
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      fetchSettings()
+    }, 300000)
     return () => {
       cleanup()
       document.removeEventListener('visibilitychange', onVisible)

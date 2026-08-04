@@ -1165,7 +1165,19 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
   // когда AI открывает раздел (каталог, чат и т.д.). Пользователь видит
   // открытый раздел, а AI доступен одним тапом по плавающей кнопке.
   const [minimized, setMinimized] = useState(false)
-  const [inputMode, setInputMode] = useState<'voice' | 'keyboard'>('voice')
+  // v25.4: 3 input modes — Voice / Text / Combined.
+  //   'voice'    — voice-only (mic button, no text bar) — default on mobile
+  //   'text'     — text-only (keyboard button, no mic) — good for quiet env
+  //   'combined' — both voice + text bar — default on desktop
+  // Persisted to localStorage so the user's choice survives across sessions.
+  const [inputMode, setInputMode] = useState<'voice' | 'text' | 'combined'>(() => {
+    if (typeof window === 'undefined') return 'voice'
+    const saved = localStorage.getItem('999pro-ai-input-mode')
+    if (saved === 'voice' || saved === 'text' || saved === 'combined') return saved
+    // Default: 'combined' on desktop (wide screen + keyboard), 'voice' on mobile.
+    if (window.matchMedia('(min-width: 768px)').matches) return 'combined'
+    return 'voice'
+  })
   const [hasUserSentMessage, setHasUserSentMessage] = useState(false)
   const [status, setStatus] = useState<AIStatus | null>(null)
   const [interim, setInterim] = useState('')
@@ -1298,7 +1310,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       accumulatedTextRef.current = text
       setAccumulatedText(text)
       setInterim('')
-      setPhase('listening')
+      setPhaseSafe('listening')
       // Перезапускаем listening (browser SpeechRecognition мог остановиться)
       setTimeout(() => voiceInRef.current.start(), 200)
       return
@@ -1517,7 +1529,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
     const fullText = response.text
     setDisplayedText('')
     setIsTyping(true)
-    setPhase('responding')
+    setPhaseSafe('responding')
     responseShownRef.current = false
 
     if (typingTimerRef.current) clearInterval(typingTimerRef.current)
@@ -1550,7 +1562,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
             if (continuousVoiceRef.current) {
               setTimeout(() => {
                 if (continuousVoiceRef.current && !waitingForConfirmationRef.current) {
-                  setPhase('listening')
+                  setPhaseSafe('listening')
                   // v24.3: start listening for the next question.
                   // The recRef.current=null fix in onend (useVoiceInput)
                   // ensures start() can create a fresh SpeechRecognition
@@ -1561,15 +1573,15 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
                   // browser times out the new recognition instance.
                   voiceInRef.current.start()
                 } else {
-                  setPhase('idle')
+                  setPhaseSafe('idle')
                 }
               }, 600)
             } else {
-              setPhase('idle')
+              setPhaseSafe('idle')
             }
           })
         } else {
-          setPhase('idle')
+          setPhaseSafe('idle')
         }
       } else {
         let next = i
@@ -1653,7 +1665,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
           // v8: больше НЕ показываем showHistoryPrompt — история видна напрямую
           // в чат-режиме. Пользователь может прокрутить вверх или очистить.
           setShowHistoryPrompt(false)
-          setPhase('idle')
+          setPhaseSafe('idle')
           return
         }
       }
@@ -1662,7 +1674,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
     setUserQuery('')
     setResponse(null)
     setInput('')
-    setPhase('idle')
+    setPhaseSafe('idle')
     setInputMode('voice')
   }, [open])
 
@@ -1674,7 +1686,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       setDisplayedText(last.response.text)
       setIsTyping(false)
     }
-    setPhase('idle')
+    setPhaseSafe('idle')
     setInputMode('voice')
   }
 
@@ -1689,12 +1701,12 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       localStorage.removeItem('999pro-ai-conversation')
       localStorage.removeItem('999pro-ai-history')
     } catch {}
-    setPhase('idle')
+    setPhaseSafe('idle')
     setInputMode('voice')
     setTimeout(() => {
       continuousVoiceRef.current = true
       setContinuousVoice(true)
-      setPhase('listening')
+      setPhaseSafe('listening')
       voiceIn.start()
     }, 500)
   }
@@ -1712,7 +1724,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       localStorage.removeItem('999pro-ai-conversation')
       localStorage.removeItem('999pro-ai-history')
     } catch {}
-    setPhase('idle')
+    setPhaseSafe('idle')
   }, [])
 
   useEffect(() => {
@@ -1752,7 +1764,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       confirmTimerRef.current = null
     }
     setMinimized(true)
-    setPhase('idle')
+    setPhaseSafe('idle')
   }, [voiceIn])
 
   // v6: restore — восстановить AI из минимизированного состояния
@@ -1762,7 +1774,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
     setContinuousVoice(true)
     setTimeout(() => {
       setInputMode('voice')
-      setPhase('listening')
+      setPhaseSafe('listening')
       voiceIn.start()
     }, 300)
   }, [voiceIn])
@@ -1783,7 +1795,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
     setContinuousVoice(true)
     setTimeout(() => {
       setInputMode('voice')
-      setPhase('listening')
+      setPhaseSafe('listening')
       voiceIn.start()
     }, 500)
   }, [voiceIn, conversationLog.length])
@@ -1799,7 +1811,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       continuousVoiceRef.current = true
       setContinuousVoice(true)
       setTimeout(() => {
-        setPhase('listening')
+        setPhaseSafe('listening')
         voiceIn.start()
       }, 500)
     }
@@ -1856,7 +1868,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       voiceOutRef.current.stop()
       continuousVoiceRef.current = true
       setContinuousVoice(true)
-      setPhase('listening')
+      setPhaseSafe('listening')
       setTimeout(() => voiceIn.start(), 200)
       return
     }
@@ -1872,7 +1884,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
       accumulatedTextRef.current = ''
       setAccumulatedText('')
       setInterim('')
-      setPhase('idle')
+      setPhaseSafe('idle')
       return
     }
     // idle → начинаем слушать
@@ -1885,7 +1897,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
     // Прежний ответ уже сохранён в conversationLog, останется на экране
     // как часть чат-истории, пока не придёт новый.
     setDisplayedText('')
-    setPhase('listening')
+    setPhaseSafe('listening')
     voiceIn.start()
   }, [voiceIn, phase])
 
@@ -1907,31 +1919,48 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
     accumulatedTextRef.current = ''
     setAccumulatedText('')
     setInterim('')
-    setPhase('idle')
+    setPhaseSafe('idle')
   }, [voiceIn])
 
-  const switchToKeyboard = useCallback(() => {
-    voiceIn.stop()
-    voiceOut.stop()
-    setPhase('idle')
-    setInputMode('keyboard')
+  // v25.4: switchToMode — unified mode switcher (replaces switchToKeyboard/switchToVoice).
+  //   'voice'    — stop text input, start voice loop
+  //   'text'     — stop voice loop, focus text input
+  //   'combined' — keep voice loop available + show text input
+  const switchToMode = useCallback((mode: 'voice' | 'text' | 'combined') => {
+    setInputMode(mode)
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem('999pro-ai-input-mode', mode) } catch {}
+    }
+    if (mode === 'text') {
+      // Stop voice activities — text-only mode.
+      voiceIn.stop()
+      voiceOut.stop()
+      continuousVoiceRef.current = false
+      setContinuousVoice(false)
+      setPhaseSafe('idle')
+    } else {
+      // 'voice' or 'combined' — (re)start voice loop after a short delay
+      // so the input bar doesn't immediately grab focus back on mobile.
+      setTimeout(() => {
+        continuousVoiceRef.current = true
+        setContinuousVoice(true)
+        if (phaseRef.current === 'idle' || phaseRef.current === 'responding') {
+          setPhaseSafe('listening')
+          voiceIn.start()
+        }
+      }, 200)
+    }
   }, [voiceIn, voiceOut])
 
-  const switchToVoice = useCallback(() => {
-    setInputMode('voice')
-    setTimeout(() => {
-      continuousVoiceRef.current = true
-      setContinuousVoice(true)
-      setPhase('listening')
-      voiceIn.start()
-    }, 200)
-  }, [voiceIn])
+  // Backward-compat wrappers (in case any other code still calls these).
+  const switchToKeyboard = useCallback(() => switchToMode('text'), [switchToMode])
+  const switchToVoice = useCallback(() => switchToMode('voice'), [switchToMode])
 
   // v5: processMessage — отправляет запрос в LLM с правильной анимацией состояний
   const processMessage = useCallback(async (text: string) => {
     if (!text.trim() || sending) return
     setSending(true)
-    setPhase('thinking')
+    setPhaseSafe('thinking')
     // v9: запускаем умный индикатор состояния — динамические статусы
     startDynamicStatus(text)
     setUserQuery(text)
@@ -1964,7 +1993,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
 
       // v5: если есть toolActions — сначала показываем «Выполняю действия»
       if (res.toolActions && res.toolActions.length > 0 && !res.action) {
-        setPhase('acting')
+        setPhaseSafe('acting')
         // Короткая анимация выполнения
         await new Promise(resolve => setTimeout(resolve, 1200))
         // Выполняем action
@@ -2023,7 +2052,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
         ts: Date.now(),
       }
       setResponse(resp)
-      setPhase('idle')
+      setPhaseSafe('idle')
     } finally {
       setSending(false)
       // v9: останавливаем умный индикатор — ответ получен
@@ -2141,7 +2170,7 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 320, damping: 18 }}
             onClick={restore}
-            className="md:hidden fixed right-4 z-[290] grid place-items-center overflow-visible select-none cursor-pointer"
+            className="fixed right-4 z-[290] grid place-items-center overflow-visible select-none cursor-pointer"
             style={{
               bottom: 'calc(env(safe-area-inset-bottom) + 84px)',
               height: 56,
@@ -2269,10 +2298,43 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {/* v24.3: Voice-only mode — текстовый ввод полностью удалён.
-                    Главный AI Agent работает ТОЛЬКО голосом. Кнопка клавиатуры
-                    и переключатель режимов убраны. Остаются только:
-                    очистка истории (если есть) и закрыть. */}
+                {/* v25.4: 3-mode input switcher — Voice / Text / Combined.
+                    Replaces the v24.3 voice-only restriction. Each pill is a
+                    toggle; the active mode is highlighted with the indigo→violet
+                    gradient. Persists to localStorage via switchToMode. */}
+                <div className="flex items-center gap-0.5 p-0.5 rounded-full bg-white/10 backdrop-blur-sm">
+                  <button
+                    onClick={() => switchToMode('voice')}
+                    className={`p-1.5 rounded-full transition-colors ${
+                      inputMode === 'voice' ? 'bg-gradient-to-br from-indigo-500 to-violet-500 text-white' : 'text-white/60 hover:text-white'
+                    }`}
+                    aria-label="Голосовой режим"
+                    title="Голосовой режим"
+                  >
+                    <Mic className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => switchToMode('text')}
+                    className={`p-1.5 rounded-full transition-colors ${
+                      inputMode === 'text' ? 'bg-gradient-to-br from-indigo-500 to-violet-500 text-white' : 'text-white/60 hover:text-white'
+                    }`}
+                    aria-label="Текстовый режим"
+                    title="Текстовый режим"
+                  >
+                    <Keyboard className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => switchToMode('combined')}
+                    className={`flex items-center gap-1 px-2 py-1.5 rounded-full transition-colors ${
+                      inputMode === 'combined' ? 'bg-gradient-to-br from-indigo-500 to-violet-500 text-white' : 'text-white/60 hover:text-white'
+                    }`}
+                    aria-label="Комбинированный режим"
+                    title="Голос + текст"
+                  >
+                    <Mic className="h-3 w-3" />
+                    <Keyboard className="h-3 w-3" />
+                  </button>
+                </div>
                 {conversationLog.length > 0 && (
                   <button
                     onClick={clearHistory}
@@ -2460,12 +2522,47 @@ export function AIAssistant({ context, onNavigate, onOpenProduct, onOpenCart }: 
                 </div>
               )}
 
-              {/* v24.3: REMOVED keyboard-mode empty state and bottom input bar.
-                  Главный AI Agent теперь работает ТОЛЬКО голосом.
-                  Текстовое поле ввода, кнопка отправки, кнопка переключения
-                  на клавиатуру — всё удалено. Чат занимает всю высоту до
-                  низа экрана. Голосовой режим управляется через NeonCore
-                  (центральная кнопка микрофона) и кнопку "Завершить разговор". */}
+              {/* v25.4: Bottom text input bar — shown when inputMode is 'text' or 'combined'.
+                  Reverses the v24.3 voice-only restriction. Submissions go through
+                  handleKeyboardSubmit → processMessage (same pipeline as voice). */}
+              {(inputMode === 'text' || inputMode === 'combined') && (
+                <div
+                  className="shrink-0 px-3 pt-2 pb-3"
+                  style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
+                >
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      if (!sending && input.trim()) handleKeyboardSubmit()
+                    }}
+                    className="flex items-end gap-2 p-1.5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md"
+                  >
+                    <textarea
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Enter to send, Shift+Enter for newline.
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          if (!sending && input.trim()) handleKeyboardSubmit()
+                        }
+                      }}
+                      placeholder={inputMode === 'combined' ? 'Текст или голос…' : 'Введите сообщение…'}
+                      rows={1}
+                      className="flex-1 bg-transparent outline-none resize-none max-h-32 text-sm text-white placeholder:text-white/40 px-2 py-1.5"
+                      style={{ minHeight: 32 }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={sending || !input.trim()}
+                      className="shrink-0 grid place-items-center h-9 w-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105 transition-transform"
+                      aria-label="Отправить"
+                    >
+                      {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
 
           </motion.div>

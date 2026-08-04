@@ -23,7 +23,19 @@ interface AuthState {
   setupToken: string | null
   isAuthenticated: boolean
   isInitialized: boolean
-  login: (login: string, password: string) => Promise<User>
+  login: (
+    login: string,
+    password: string,
+    totpCode?: string,
+  ) => Promise<
+    | User
+    | {
+        user: User
+        totpRequired?: boolean
+        totpSetupRequired?: boolean
+        message?: string
+      }
+  >
   /**
    * v20: Register no longer auto-logs-in when email verification is required.
    * Returns a result object describing what to do next:
@@ -82,14 +94,17 @@ export const useAuthStore = create<AuthState>()(
       // the user confirms their email without requiring a second login.
       pendingVerificationToken: null,
 
-      async login(loginField, password) {
+      async login(loginField, password, totpCode) {
         // The backend may return several shapes from /api/auth/login:
         //   1. { token, user }                  → success, store regular JWT.
         //   2. { totpRequired, user }           → password OK, TOTP already
         //                                          enrolled; backend needs a
-        //                                          6-digit code. Main app does
-        //                                          NOT have a TOTP input UI —
-        //                                          surface a clear error.
+        //                                          6-digit code. v25.4: main app
+        //                                          now has a TOTP input UI
+        //                                          (AdminLoginView 'totp' state)
+        //                                          — return the result object
+        //                                          instead of throwing so the
+        //                                          caller can branch.
         //   3. { totpSetupRequired, user, token: <setup-jwt>, message }
         //                                       → admin must enroll TOTP.
         //                                          Backend issues a short-lived
@@ -108,7 +123,7 @@ export const useAuthStore = create<AuthState>()(
           totpSetupRequired?: boolean
           message?: string
         }>('/api/auth/login', {
-          json: { login: loginField, password },
+          json: { login: loginField, password, totpCode },
         })
 
         // v25.3 (TZ task #1): admin must enroll TOTP. Stash the setup token
@@ -131,16 +146,27 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: false,
             isInitialized: true,
           })
-          // Return the data so the caller can read the message + user info.
-          // Throw would lose context — caller checks `setupToken` in store
-          // OR inspects the returned object.
-          return data.user as User & { _totpSetupRequired?: boolean }
+          // Return the data object so the caller can branch on the shape
+          // (mirrors Studio's auth-store.login return type).
+          return data
         }
 
+        // v25.4: TOTP already enrolled — return the result object so the
+        // caller (AdminLoginView) can switch to the 'totp' code-input state.
+        // Previously this threw an error, which made it impossible for an
+        // admin with 2FA enabled to log into the main app.
         if (data.totpRequired) {
-          throw new Error(
-            'Требуется код 2FA. Войдите через Studio (админ-панель) или обратитесь к администратору.',
-          )
+          // Remember the user object so the caller can render the user's
+          // name/avatar in the TOTP input screen, but do NOT activate the
+          // session — the admin is not yet authenticated.
+          set({
+            user: data.user,
+            token: null,
+            setupToken: null,
+            isAuthenticated: false,
+            isInitialized: true,
+          })
+          return data
         }
 
         if (!data.token) {

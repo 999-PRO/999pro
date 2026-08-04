@@ -21,13 +21,10 @@ const nextConfig: NextConfig = {
   // Next.js may pick a parent directory as the workspace root and nest the
   // standalone output under .next/standalone/path/to/project/.
   turbopack: { root: __dirname },
-  // v24.6-audit: Studio has accumulated pre-existing TS errors in managers
-  // (useConfirmDialog API drift, missing UI exports, etc.). Dev mode ignores
-  // them, but `next build` fails. We temporarily skip type check to ship a
-  // working production build — the underlying issues are tracked in the
-  // audit report (06-frontend.md) and should be fixed in a follow-up pass.
-  // CRITICAL: this does NOT skip runtime errors — only TS type errors.
-  typescript: { ignoreBuildErrors: true },
+  // v25.5 (config audit): removed `typescript: { ignoreBuildErrors: true }`
+  // — this was a diagnostic leftover from v24.6 that silenced TS errors in
+  // production builds. Now the studio is type-checked properly (errors were
+  // fixed in the v25.4 pass).
   reactStrictMode: true,
   // v9-image-fix: disable next/image optimiser — same reasoning as the main
   // frontend. /uploads/* paths are proxied via rewrites and the optimiser
@@ -94,6 +91,9 @@ const nextConfig: NextConfig = {
     }
     // CSP — keep it but allow 'unsafe-eval' for Next.js dev mode and inline scripts/styles
     // v16.8 final: добавлены Яндекс-домены для Yandex Maps JS API
+    // v25.5 (config audit): tighten connect-src in production to match the
+    // frontend's policy — forbid plain http: and ws: (mixed-content risk on
+    // HTTPS pages). Dev still allows them for localhost + sandbox preview.
     const cspDirectives = [
       "default-src 'self'",
       isProd
@@ -102,7 +102,9 @@ const nextConfig: NextConfig = {
       "style-src 'self' 'unsafe-inline' https://api-maps.yandex.ru",
       "img-src 'self' data: blob: https: http:",
       "media-src 'self' blob: https:",
-      "connect-src 'self' ws: wss: https: http: https://api-maps.yandex.ru https://geocode-maps.yandex.ru https://*.maps.yandex.net",
+      isProd
+        ? "connect-src 'self' wss: https: https://api-maps.yandex.ru https://geocode-maps.yandex.ru https://*.maps.yandex.net"
+        : "connect-src 'self' ws: wss: https: http: https://api-maps.yandex.ru https://geocode-maps.yandex.ru https://*.maps.yandex.net",
       "font-src 'self' data:",
       "object-src 'none'",
       "base-uri 'self'",

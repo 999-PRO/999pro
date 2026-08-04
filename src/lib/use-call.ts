@@ -114,7 +114,19 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
   const localStreamRef = useRef<MediaStream | null>(null)
   const remoteStreamRef = useRef<MediaStream | null>(null)
   const pendingCandidatesRef = useRef<RTCIceCandidate[]>([])
+  // v25.4 (calls audit GAP-6): buffer early signals that arrive before the
+  // RTCPeerConnection is ready (race condition: caller's offer reaches
+  // recipient before `pcRef.current = pc` runs in `acceptIncomingCall`).
+  // Without this buffer, the offer is silently dropped and the call hangs in
+  // "connecting" forever. The buffer is drained at the end of
+  // `acceptIncomingCall` and `initiateCall` by replaying each entry.
+  const pendingSignalsRef = useRef<Array<{ from: string; data: any }>>([])
   const [iceState, setIceState] = useState<RTCIceConnectionState>('new')
+  // v25.4 (calls audit GAP-1): screen-share state. When active, the original
+  // camera video track is stored here so it can be restored when screen share
+  // is stopped.
+  const originalVideoTrackRef = useRef<MediaStreamTrack | null>(null)
+  const [isScreenSharing, setIsScreenSharing] = useState(false)
 
   // Keep a stable ref to options so callbacks can use empty dep arrays.
   // The ref's `.current` is updated synchronously on every render — this
@@ -251,6 +263,66 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
     return stream
   }, [])
 
+  // v25.4 (calls audit GAP-6): Handle an incoming signaling message.
+  // Defined BEFORE initiateCall/acceptIncomingCall so they can call
+  // drainPendingSignals() at the end of their setup. Previously this was
+  // declared after, causing "used before declaration" errors.
+  const handleSignal = useCallback(
+    async (from: string, data: any) => {
+      const pc = pcRef.current
+      // v25.4 (calls audit GAP-6): if the PC isn't ready yet (recipient is
+      // still in `acceptIncomingCall` awaiting getUserMedia), buffer the
+      // signal so it can be replayed once the PC is set up. Without this,
+      // the caller's offer is silently dropped and the call hangs forever.
+      if (!pc) {
+        pendingSignalsRef.current.push({ from, data })
+        return
+      }
+
+      if (data.type === 'offer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+        for (const c of pendingCandidatesRef.current) {
+          try { await pc.addIceCandidate(c) } catch {}
+        }
+        pendingCandidatesRef.current = []
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        const meta = pcMeta.get(pc)
+        if (meta) {
+          socketApiRef.current.sendCallSignal(meta.callId, meta.peerId, { type: 'answer', sdp: answer })
+        }
+      } else if (data.type === 'answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+        for (const c of pendingCandidatesRef.current) {
+          try { await pc.addIceCandidate(c) } catch {}
+        }
+        pendingCandidatesRef.current = []
+      } else if (data.type === 'ice-candidate') {
+        const candidate = new RTCIceCandidate(data.candidate)
+        if (pc.remoteDescription) {
+          try { await pc.addIceCandidate(candidate) } catch {}
+        } else {
+          pendingCandidatesRef.current.push(candidate)
+        }
+      }
+    },
+    [],
+  )
+
+  // v25.4 (calls audit GAP-6): drain any buffered signals that arrived before
+  // the PC was ready. Called at the end of `acceptIncomingCall` and `initiateCall`.
+  const drainPendingSignals = useCallback(async () => {
+    const buffered = pendingSignalsRef.current
+    pendingSignalsRef.current = []
+    for (const { from, data } of buffered) {
+      try {
+        await handleSignal(from, data)
+      } catch {
+        // Best-effort — a failed signal shouldn't block the rest.
+      }
+    }
+  }, [handleSignal])
+
   // Initiate a call as the CALLER (after the server confirmed call:started)
   const initiateCall = useCallback(
     async (callId: string, peerId: string, type: 'audio' | 'video') => {
@@ -281,8 +353,10 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
       socketApiRef.current.sendCallSignal(callId, peerId, { type: 'offer', sdp: offer })
+      // v25.4 (GAP-6): drain any signals that arrived while we were setting up.
+      await drainPendingSignals()
     },
-    [createPeerConnection, acquireLocalStream],
+    [createPeerConnection, acquireLocalStream, drainPendingSignals],
   )
 
   // Accept an incoming call as the RECIPIENT (after sending call:accept)
@@ -306,44 +380,11 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
           pc.addTransceiver('video', { direction: 'recvonly' })
         }
       }
+      // v25.4 (GAP-6): drain any signals that arrived while we were setting up
+      // (the caller's offer often reaches us before getUserMedia finishes).
+      await drainPendingSignals()
     },
-    [createPeerConnection, acquireLocalStream],
-  )
-
-  // Handle an incoming signaling message (offer / answer / ICE candidate)
-  const handleSignal = useCallback(
-    async (from: string, data: any) => {
-      const pc = pcRef.current
-      if (!pc) return
-
-      if (data.type === 'offer') {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
-        for (const c of pendingCandidatesRef.current) {
-          try { await pc.addIceCandidate(c) } catch {}
-        }
-        pendingCandidatesRef.current = []
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        const meta = pcMeta.get(pc)
-        if (meta) {
-          socketApiRef.current.sendCallSignal(meta.callId, meta.peerId, { type: 'answer', sdp: answer })
-        }
-      } else if (data.type === 'answer') {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
-        for (const c of pendingCandidatesRef.current) {
-          try { await pc.addIceCandidate(c) } catch {}
-        }
-        pendingCandidatesRef.current = []
-      } else if (data.type === 'ice-candidate') {
-        const candidate = new RTCIceCandidate(data.candidate)
-        if (pc.remoteDescription) {
-          try { await pc.addIceCandidate(candidate) } catch {}
-        } else {
-          pendingCandidatesRef.current.push(candidate)
-        }
-      }
-    },
-    [],
+    [createPeerConnection, acquireLocalStream, drainPendingSignals],
   )
 
   // Toggle camera on/off
@@ -489,6 +530,71 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
     }
   }, [])
 
+  // v25.4 (calls audit GAP-1): Screen share via getDisplayMedia + replaceTrack.
+  // Replaces the camera video track on the existing RTCRtpSender — no SDP
+  // renegotiation needed (replaceTrack is a lightweight operation that just
+  // swaps the media source without changing codecs/params).
+  const startScreenShare = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) return
+    const pc = pcRef.current
+    if (!pc) return
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: false, // screen audio is finicky — skip for now
+      })
+      const screenTrack = screenStream.getVideoTracks()[0]
+      if (!screenTrack) return
+      // Find the video sender on the PC.
+      const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+      if (!videoSender) return
+      // Save the original camera track so we can restore it later.
+      const localStream = localStreamRef.current
+      if (localStream) {
+        originalVideoTrackRef.current = localStream.getVideoTracks()[0] || null
+      }
+      await videoSender.replaceTrack(screenTrack)
+      // Update localStreamRef so the local preview shows the screen too.
+      if (localStream && originalVideoTrackRef.current) {
+        localStream.removeTrack(originalVideoTrackRef.current)
+        localStream.addTrack(screenTrack)
+        optionsRef.current.onLocalStreamReady?.(localStream)
+      }
+      // When the user stops sharing via browser UI, restore the camera.
+      screenTrack.addEventListener('ended', () => {
+        void stopScreenShare()
+      })
+      setIsScreenSharing(true)
+    } catch {
+      // User cancelled or permission denied — no-op.
+    }
+  }, [])
+
+  // v25.4 (calls audit GAP-1): restore the camera track after screen share.
+  const stopScreenShare = useCallback(async () => {
+    const pc = pcRef.current
+    if (!pc) return
+    const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+    if (!videoSender) return
+    const original = originalVideoTrackRef.current
+    if (original) {
+      try { await videoSender.replaceTrack(original) } catch {}
+      const localStream = localStreamRef.current
+      if (localStream) {
+        // Remove the screen track and re-add the camera track.
+        for (const t of localStream.getVideoTracks()) {
+          if (t !== original) localStream.removeTrack(t)
+        }
+        if (!localStream.getVideoTracks().includes(original)) {
+          localStream.addTrack(original)
+        }
+        optionsRef.current.onLocalStreamReady?.(localStream)
+      }
+    }
+    originalVideoTrackRef.current = null
+    setIsScreenSharing(false)
+  }, [])
+
   // Cleanup on unmount — stable because hangup is stable.
   useEffect(() => {
     return () => {
@@ -507,6 +613,10 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
     toggleSpeaker,
     restartIce,
     hangup,
+    // v25.4 (calls audit GAP-1): screen share
+    startScreenShare,
+    stopScreenShare,
+    isScreenSharing,
     _pc: pcRef,
     _localStream: localStreamRef,
     _remoteStream: remoteStreamRef,

@@ -1,0 +1,602 @@
+   500→          animate={{
+   501→            d: [
+   502→              'M0,20 Q25,5 50,20 T100,20 T150,20 T200,20',
+   503→              'M0,20 Q25,35 50,20 T100,20 T150,20 T200,20',
+   504→              'M0,20 Q25,10 50,20 T100,20 T150,20 T200,20',
+   505→              'M0,20 Q25,5 50,20 T100,20 T150,20 T200,20',
+   506→            ],
+   507→          }}
+   508→          transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+   509→        />
+   510→        <defs>
+   511→          <linearGradient id="scanWaveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+   512→            <stop offset="0%" stopColor="#6366f1" stopOpacity="0" />
+   513→            <stop offset="50%" stopColor={color} stopOpacity="1" />
+   514→            <stop offset="100%" stopColor="#ec4899" stopOpacity="0" />
+   515→          </linearGradient>
+   516→        </defs>
+   517→      </svg>
+   518→    </div>
+   519→  )
+   520→}
+   521→
+   522→// ---------------------------------------------------------------------------
+   523→//  PREMIUM Product Card (взято из v4 без изменений)
+   524→// ---------------------------------------------------------------------------
+   525→function PremiumProductCard({ product, index, onOpen }: { product: any; index: number; onOpen?: (id: string) => void }) {
+   526→  let image: string | null = null
+   527→  if (product.image) {
+   528→    image = typeof product.image === 'string' ? product.image : assetUrl(product.image)
+   529→  } else if (Array.isArray(product.images)) {
+   530→    image = product.images[0] || null
+   531→  } else if (typeof product.images === 'string') {
+   532→    try { image = JSON.parse(product.images)[0] || null } catch { image = product.images }
+   533→  }
+   534→  const price = Number(product.price) || 0
+   535→  const oldPrice = product.oldPrice ? Number(product.oldPrice) : null
+   536→  const discount = oldPrice && oldPrice > price ? Math.round(100 - (price / oldPrice) * 100) : 0
+   537→  const isAction = !!product.isAction
+   538→  const isNew = !!product.isNew
+   539→  const isPremium = !!product.isPremium || !!product.isTrending
+   540→  const inStock = product.inStock !== false
+   541→
+   542→  return (
+   543→    <motion.button
+   544→      key={product.id}
+   545→      onClick={() => onOpen?.(product.id)}
+   546→      initial={{ opacity: 0, scale: 0.85, y: 20 }}
+   547→      animate={{ opacity: 1, scale: 1, y: 0 }}
+   548→      transition={{ delay: index * 0.12, type: 'spring', stiffness: 260, damping: 20 }}
+   549→      whileHover={{ scale: 1.02, y: -2 }}
+   550→      whileTap={{ scale: 0.98 }}
+   551→      className="group relative shrink-0 w-[200px] text-left rounded-3xl overflow-hidden"
+   552→      style={{
+   553→        background: 'rgba(255,255,255,0.06)',
+   554→        backdropFilter: 'blur(24px) saturate(180%)',
+   555→        WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+   556→        border: '1px solid rgba(255,255,255,0.12)',
+   557→        boxShadow: '0 8px 32px -8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.15)',
+   558→      }}
+   559→    >
+   560→      <div className="relative w-full aspect-[4/3] bg-black/20 overflow-hidden">
+   561→        {image ? (
+   562→          <img src={image} alt={product.title} loading="lazy" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+   563→        ) : (
+   564→          <div className="w-full h-full grid place-items-center">
+   565→            <Package className="h-8 w-8 text-white/30" />
+   566→          </div>
+   567→        )}
+   568→        <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+   569→        <div className="absolute top-2 left-2 flex flex-col gap-1">
+   570→          {discount > 0 && <span className="px-2 py-0.5 rounded-lg bg-rose-500 text-white text-[10px] font-bold leading-none shadow-lg">−{discount}%</span>}
+   571→          {isAction && <span className="px-2 py-0.5 rounded-lg bg-red-500 text-white text-[10px] font-bold leading-none shadow-lg">АКЦИЯ</span>}
+   572→          {isNew && <span className="px-2 py-0.5 rounded-lg bg-violet-500 text-white text-[10px] font-bold leading-none shadow-lg">НОВИНКА</span>}
+   573→          {isPremium && (
+   574→            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold leading-none shadow-lg" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 50%, #f59e0b 100%)', color: '#78350f' }}>
+   575→              PREMIUM
+   576→            </span>
+   577→          )}
+   578→        </div>
+   579→        <div className="absolute top-2 right-2">
+   580→          {inStock ? (
+   581→            <span className="px-2 py-0.5 rounded-lg bg-emerald-500/90 text-white text-[10px] font-bold leading-none backdrop-blur shadow-lg">В НАЛИЧИИ</span>
+   582→          ) : (
+   583→            <span className="px-2 py-0.5 rounded-lg bg-slate-600/90 text-white text-[10px] font-bold leading-none backdrop-blur shadow-lg">НЕТ В НАЛИЧИИ</span>
+   584→          )}
+   585→        </div>
+   586→      </div>
+   587→      <div className="p-3 space-y-2">
+   588→        <h4 className="text-sm font-semibold leading-tight line-clamp-2 text-white group-hover:text-violet-300 transition-colors">
+   589→          {product.title}
+   590→        </h4>
+   591→        <div className="flex items-baseline gap-2">
+   592→          <span
+   593→            className="text-xl font-extrabold"
+   594→            style={{
+   595→              background: 'linear-gradient(135deg, #818cf8 0%, #c4b5fd 50%, #a78bfa 100%)',
+   596→              WebkitBackgroundClip: 'text',
+   597→              WebkitTextFillColor: 'transparent',
+   598→              backgroundClip: 'text',
+   599→            }}
+   600→          >
+   601→            {price.toLocaleString('ru-RU')} ₽
+   602→          </span>
+   603→          {oldPrice && oldPrice > price && (
+   604→            <span className="text-xs text-white/40 line-through">{oldPrice.toLocaleString('ru-RU')} ₽</span>
+   605→          )}
+   606→        </div>
+   607→        <div className="flex items-center gap-1 text-xs text-white/50 group-hover:text-violet-300 transition-colors pt-1">
+   608→          <span>Подробнее</span>
+   609→          <ArrowRight className="h-3 w-3 group-hover:translate-x-1 transition-transform" />
+   610→        </div>
+   611→      </div>
+   612→    </motion.button>
+   613→  )
+   614→}
+   615→
+   616→function ProductCardGrid({ products, onOpenProduct, title }: { products: any[]; onOpenProduct?: (id: string) => void; title?: string }) {
+   617→  if (!products || products.length === 0) return null
+   618→  const isCarousel = products.length >= 3
+   619→  const isSingle = products.length === 1
+   620→  return (
+   621→    <div className="w-full">
+   622→      {title && (
+   623→        <div className="flex items-center gap-1.5 mb-2 px-0.5">
+   624→          <Sparkles className="h-3 w-3 text-violet-400" />
+   625→          <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wide">{title}</span>
+   626→        </div>
+   627→      )}
+   628→      {isCarousel ? (
+   629→        <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 snap-x snap-mandatory no-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+   630→          {products.map((p, i) => (
+   631→            <div key={p.id} className="snap-start shrink-0">
+   632→              <PremiumProductCard product={p} index={i} onOpen={onOpenProduct} />
+   633→            </div>
+   634→          ))}
+   635→        </div>
+   636→      ) : isSingle ? (
+   637→        <div className="flex justify-center">
+   638→          <PremiumProductCard product={products[0]} index={0} onOpen={onOpenProduct} />
+   639→        </div>
+   640→      ) : (
+   641→        <div className="grid grid-cols-2 gap-3">
+   642→          {products.map((p, i) => <PremiumProductCard key={p.id} product={p} index={i} onOpen={onOpenProduct} />)}
+   643→        </div>
+   644→      )}
+   645→    </div>
+   646→  )
+   647→}
+   648→
+   649→function ContactsCard({ contacts }: { contacts: any[] }) {
+   650→  const iconConfig: Record<string, { Icon: any; bg: string; color: string }> = {
+   651→    phone: { Icon: Phone, bg: 'rgba(59,130,246,0.15)', color: '#3b82f6' },
+   652→    whatsapp: { Icon: MessageCircle, bg: 'rgba(34,197,94,0.15)', color: '#22c55e' },
+   653→    telegram: { Icon: Send, bg: 'rgba(56,189,248,0.15)', color: '#38bdf8' },
+   654→    email: { Icon: Mail, bg: 'rgba(168,85,247,0.15)', color: '#a855f7' },
+   655→  }
+   656→  return (
+   657→    <div className="w-full rounded-2xl overflow-hidden border border-border/40 bg-background/80 backdrop-blur-xl p-3 space-y-2">
+   658→      {contacts.map((c, i) => {
+   659→        const cfg = iconConfig[c.type] || iconConfig.phone
+   660→        const Icon = cfg.Icon
+   661→        const value = c.value || c.phone || c.email || ''
+   662→        let href = ''
+   663→        let linkLabel = 'Открыть'
+   664→        if (c.type === 'phone') { href = `tel:${value.replace(/\s/g, '')}`; linkLabel = 'Позвонить' }
+   665→        else if (c.type === 'email') { href = `mailto:${value}`; linkLabel = 'Написать' }
+   666→        else if (c.type === 'telegram') { href = `https://t.me/${value.replace('@', '')}`; linkLabel = 'Открыть' }
+   667→        else if (c.type === 'whatsapp') { const digits = value.replace(/[^\d]/g, ''); href = `https://wa.me/${digits}`; linkLabel = 'Написать' }
+   668→        return (
+   669→          <motion.a
+   670→            key={i}
+   671→            href={href}
+   672→            target={c.type === 'telegram' || c.type === 'whatsapp' ? '_blank' : undefined}
+   673→            rel={c.type === 'telegram' || c.type === 'whatsapp' ? 'noopener noreferrer' : undefined}
+   674→            initial={{ opacity: 0, y: 8 }}
+   675→            animate={{ opacity: 1, y: 0 }}
+   676→            transition={{ delay: i * 0.06 }}
+   677→            className="flex items-center gap-3 p-3 rounded-xl hover:bg-accent/40 transition-all active:scale-[0.98]"
+   678→          >
+   679→            <div className="h-10 w-10 rounded-full grid place-items-center shrink-0" style={{ background: cfg.bg }}>
+   680→              <Icon className="h-5 w-5" style={{ color: cfg.color }} />
+   681→            </div>
+   682→            <div className="min-w-0 flex-1">
+   683→              <div className="text-xs text-muted-foreground">{c.label || c.type}</div>
+   684→              <div className="text-sm font-medium truncate">{value}</div>
+   685→            </div>
+   686→            <div className="px-3 py-1.5 rounded-lg text-xs font-bold shrink-0" style={{ background: cfg.bg, color: cfg.color }}>{linkLabel}</div>
+   687→          </motion.a>
+   688→        )
+   689→      })}
+   690→    </div>
+   691→  )
+   692→}
+   693→
+   694→function CalculationCard({ calculation }: { calculation: any }) {
+   695→  const [open, setOpen] = useState(true)
+   696→  if (!calculation) return null
+   697→  return (
+   698→    <div className="w-full rounded-2xl overflow-hidden border border-blue-400/30 bg-gradient-to-br from-blue-50/80 to-indigo-50/60 dark:from-blue-950/30 dark:to-indigo-950/20 backdrop-blur-xl">
+   699→      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+   700→        <Calculator className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+   701→        <span className="text-sm font-semibold flex-1">
+   702→          {calculation.product?.name ? `Расчёт: ${calculation.product.name}` : 'Расчёт стоимости'}
+   703→        </span>
+   704→        {calculation.total > 0 && (
+   705→          <span className="text-base font-bold text-blue-700 dark:text-blue-300">{calculation.total.toLocaleString('ru-RU')} ₽</span>
+   706→        )}
+   707→        {calculation.range && (
+   708→          <span className="text-base font-bold text-blue-700 dark:text-blue-300">
+   709→            {calculation.range[0].toLocaleString('ru-RU')}–{calculation.range[1].toLocaleString('ru-RU')} ₽
+   710→          </span>
+   711→        )}
+   712→        <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
+   713→      </button>
+   714→      <AnimatePresence>
+   715→        {open && (
+   716→          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+   717→            <div className="px-3 pb-3 space-y-1">
+   718→              {calculation.breakdown?.map((line: string, i: number) => (
+   719→                <div key={i} className="text-xs text-foreground/70 font-mono">{line}</div>
+   720→              ))}
+   721→              {calculation.missing?.length > 0 && (
+   722→                <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 font-medium">
+   723→                  Нужно уточнить: {calculation.missing.join(', ')}
+   724→                </div>
+   725→              )}
+   726→            </div>
+   727→          </motion.div>
+   728→        )}
+   729→      </AnimatePresence>
+   730→    </div>
+   731→  )
+   732→}
+   733→
+   734→function OrderWizard({ data, onSubmitted }: { data: any; onSubmitted: (orderId: string, total: number, message: string) => void }) {
+   735→  const [step, setStep] = useState<'confirm' | 'form' | 'submitting' | 'done' | 'error'>('confirm')
+   736→  const [name, setName] = useState('')
+   737→  const [phone, setPhone] = useState('')
+   738→  const [email, setEmail] = useState('')
+   739→  const [address, setAddress] = useState('')
+   740→  const [comment, setComment] = useState('')
+   741→  const [result, setResult] = useState<any>(null)
+   742→  const [error, setError] = useState('')
+   743→
+   744→  const handleSubmit = async () => {
+   745→    if (!name.trim() || !phone.trim()) return
+   746→    setStep('submitting')
+   747→    setError('')
+   748→    try {
+   749→      const r = await api.post<{ ok: boolean; orderId?: string; orderNumber?: string; total: number; message: string; error?: string }>('/api/ai/order', {
+   750→        json: {
+   751→          productSlug: data.productSlug,
+   752→          productName: data.productName,
+   753→          customerName: name,
+   754→          customerPhone: phone,
+   755→          customerEmail: email,
+   756→          deliveryAddress: address,
+   757→          customerComment: comment,
+   758→          totalQuote: data.calculation?.total,
+   759→        },
+   760→      })
+   761→      if (r.ok === true && (r.orderId || r.orderNumber)) {
+   762→        setResult(r)
+   763→        setStep('done')
+   764→        onSubmitted(r.orderId || r.orderNumber || '', r.total, r.message)
+   765→      } else {
+   766→        setError(r.error || r.message || 'Не удалось создать заказ')
+   767→        setStep('error')
+   768→      }
+   769→    } catch (e: any) {
+   770→      setError(e?.message || 'Не удалось связаться с сервером')
+   771→      setStep('error')
+   772→    }
+   773→  }
+   774→
+   775→  if (step === 'done' && result) {
+   776→    return (
+   777→      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+   778→        className="w-full rounded-2xl overflow-hidden border border-emerald-400/40 bg-gradient-to-br from-emerald-50/90 to-teal-50/70 dark:from-emerald-950/30 dark:to-teal-950/20 backdrop-blur-xl p-4">
+   779→        <div className="flex items-center gap-3 text-emerald-700 dark:text-emerald-300 mb-3">
+   780→          <div className="h-10 w-10 rounded-full bg-emerald-500 grid place-items-center">
+   781→            <CheckCircle2 className="h-6 w-6 text-white" />
+   782→          </div>
+   783→          <div>
+   784→            <div className="font-bold text-base">Заявка успешно создана</div>
+   785→            <div className="text-xs opacity-80">Номер: <span className="font-mono font-bold">{result.orderNumber || result.orderId?.slice(-8).toUpperCase()}</span></div>
+   786→          </div>
+   787→        </div>
+   788→        {result.total > 0 && <div className="text-sm mb-2">Сумма: <span className="font-bold text-lg">{result.total.toLocaleString('ru-RU')} ₽</span></div>}
+   789→        <div className="text-xs text-muted-foreground">{result.message}</div>
+   790→      </motion.div>
+   791→    )
+   792→  }
+   793→
+   794→  if (step === 'error') {
+   795→    return (
+   796→      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+   797→        className="w-full rounded-2xl overflow-hidden border border-red-400/40 bg-red-50/80 dark:bg-red-950/30 backdrop-blur-xl p-4">
+   798→        <div className="flex items-center gap-2 text-red-700 dark:text-red-300 mb-2">
+   799→          <AlertCircle className="h-5 w-5" />
+   800→          <span className="font-semibold">Не удалось создать заявку</span>
+   801→        </div>
+   802→        <div className="text-xs text-muted-foreground mb-3">{error}</div>
+   803→        <button onClick={() => setStep('form')} className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-sm hover:bg-red-600">Попробовать снова</button>
+   804→      </motion.div>
+   805→    )
+   806→  }
+   807→
+   808→  if (step === 'submitting') {
+   809→    return (
+   810→      <div className="w-full rounded-2xl overflow-hidden border border-primary/30 bg-primary/5 backdrop-blur-xl p-6 flex flex-col items-center gap-3">
+   811→        <Loader2 className="h-8 w-8 text-primary animate-spin" />
+   812→        <div className="text-sm font-medium">Создаём заявку…</div>
+   813→        <div className="text-xs text-muted-foreground">Пожалуйста, подождите</div>
+   814→      </div>
+   815→    )
+   816→  }
+   817→
+   818→  if (step === 'confirm') {
+   819→    return (
+   820→      <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+   821→        className="w-full rounded-2xl overflow-hidden border border-primary/30 bg-gradient-to-br from-primary/5 to-blue-50/40 dark:from-primary/10 dark:to-blue-950/20 backdrop-blur-xl p-4">
+   822→        <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+   823→          <ShoppingBag className="h-4 w-4 text-primary" />
+   824→          Оформить «{data.productName}»?
+   825→        </div>
+   826→        {data.calculation && (
+   827→          <div className="text-xs text-foreground/80 space-y-0.5 mb-3 bg-background/60 rounded-lg p-2">
+   828→            {data.calculation.breakdown?.map((line: string, i: number) => (
+   829→              <div key={i} className="font-mono">{line}</div>
+   830→            ))}
+   831→            {data.calculation.total > 0 && (
+   832→              <div className="text-sm font-bold text-primary mt-1">Итого: {data.calculation.total.toLocaleString('ru-RU')} ₽</div>
+   833→            )}
+   834→          </div>
+   835→        )}
+   836→        <div className="flex gap-2">
+   837→          <button onClick={() => setStep('form')} className="flex-1 px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">
+   838→            Оформить
+   839→          </button>
+   840→          <button onClick={() => setStep('done')} className="px-3 py-2.5 rounded-xl bg-accent text-sm hover:bg-accent/80 transition-colors">
+   841→            Позже
+   842→          </button>
+   843→        </div>
+   844→      </motion.div>
+   845→    )
+   846→  }
+   847→
+   848→  // step === 'form'
+   849→  return (
+   850→    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+   851→      className="w-full rounded-2xl overflow-hidden border border-primary/30 bg-background/95 backdrop-blur-xl p-4 space-y-2">
+   852→      <div className="text-sm font-semibold mb-1">Контактные данные</div>
+   853→      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ваше имя *" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   854→      <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Телефон *" type="tel" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   855→      <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email (опционально)" type="email" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   856→      <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Адрес доставки" className="w-full h-11 px-3 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20" />
+   857→      <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Комментарий к заказу" rows={2} className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 resize-none" />
+   858→      <div className="flex gap-2 pt-1">
+   859→        <button onClick={handleSubmit} disabled={!name.trim() || !phone.trim()} className="flex-1 px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+   860→          Отправить заявку
+   861→        </button>
+   862→        <button onClick={() => setStep('confirm')} className="px-3 py-2.5 rounded-xl bg-accent text-sm hover:bg-accent/80 transition-colors">Назад</button>
+   863→      </div>
+   864→    </motion.div>
+   865→  )
+   866→}
+   867→
+   868→function ActionButton({ action, onAction }: { action: ChatAction; onAction: (a: ChatAction) => void }) {
+   869→  const icons: Record<string, any> = {
+   870→    open_catalog: Package, open_product: Package, open_cart: ShoppingBag, open_checkout: ShoppingBag,
+   871→    open_films: Film, open_music: Music, open_media: Film, open_chat: MessageCircle,
+   872→    open_support: HelpCircle, open_orders: ShoppingBag, show_contacts: Phone,
+   873→    start_order_wizard: ShoppingBag, navigate: Sparkles,
+   874→  }
+   875→  const Icon = icons[action.type] || Sparkles
+   876→  return (
+   877→    <button onClick={() => onAction(action)}
+   878→      className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full bg-white/10 text-white hover:bg-white/20 border border-white/20 transition-all">
+   879→      <Icon className="h-3.5 w-3.5" />
+   880→      {action.label}
+   881→    </button>
+   882→  )
+   883→}
+   884→
+   885→// ===========================================================================
+   886→//  v8: ChatBubble — рендер одного сообщения в истории диалога
+   887→//  Поддерживает:
+   888→//    • role='user' — правая сторона, indigo gradient
+   889→//    • role='assistant' — левая сторона, glass-фон
+   890→//    • isTyping=true — показываем displayedText с мигающим курсором
+   891→//    • response.cards / response.actions / response.calculation
+   892→// ===========================================================================
+   893→function ChatBubble({
+   894→  role,
+   895→  text,
+   896→  response,
+   897→  isTyping,
+   898→  displayedText,
+   899→  onAction,
+   900→  onOpenProduct,
+   901→}: {
+   902→  role: 'user' | 'assistant'
+   903→  text?: string
+   904→  response?: AIResponse
+   905→  isTyping?: boolean
+   906→  displayedText?: string
+   907→  onAction?: (a: ChatAction) => void
+   908→  onOpenProduct?: (id: string) => void
+   909→}) {
+   910→  const isUser = role === 'user'
+   911→  const content = isTyping ? (displayedText || '') : (text ?? response?.text ?? '')
+   912→
+   913→  if (isUser) {
+   914→    return (
+   915→      <div className="flex justify-end">
+   916→        <div
+   917→          className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-br-md text-white text-sm leading-relaxed shadow-lg"
+   918→          style={{
+   919→            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+   920→            boxShadow: '0 4px 16px -4px rgba(99,102,241,0.4)',
+   921→          }}
+   922→        >
+   923→          {content}
+   924→        </div>
+   925→      </div>
+   926→    )
+   927→  }
+   928→
+   929→  return (
+   930→    <div className="flex justify-start">
+   931→      {/* v11: max-w-[95%] (было 92%) — больше места для длинных ответов AI.
+   932→          w-full чтобы контент мог растягиваться по ширине. */}
+   933→      <div className="max-w-[95%] w-full flex flex-col gap-2">
+   934→        {/* AI avatar row */}
+   935→        <div className="flex items-center gap-2">
+   936→          <div className="h-6 w-6 rounded-full bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 grid place-items-center shrink-0">
+   937→            <Sparkles className="h-3 w-3 text-white" />
+   938→          </div>
+   939→          <span className="text-[10px] text-white/40 uppercase tracking-wide">AI</span>
+   940→        </div>
+   941→        {/* Bubble — v11: без max-height, без overflow. Текст растёт автоматически. */}
+   942→        <div
+   943→          className="px-4 py-2.5 rounded-2xl rounded-tl-md text-white text-sm leading-relaxed bg-white/5 border border-white/10 backdrop-blur-sm"
+   944→          style={{ boxShadow: '0 2px 8px -2px rgba(0,0,0,0.3)' }}
+   945→        >
+   946→          {isTyping ? (
+   947→            <div className="whitespace-pre-wrap">
+   948→              {content}
+   949→              <span
+   950→                className="inline-block w-[2px] h-[1.1em] ml-0.5 align-text-bottom bg-violet-400 animate-pulse"
+   951→                aria-hidden="true"
+   952→              />
+   953→            </div>
+   954→          ) : (
+   955→            <AIResponseRenderer text={content} />
+   956→          )}
+   957→        </div>
+   958→
+   959→        {/* Calculation card */}
+   960→        {!isTyping && response?.calculation && <CalculationCard calculation={response.calculation} />}
+   961→
+   962→        {/* Rich cards (grouped by category if available) */}
+   963→        {!isTyping && response?.cards && response.cards.length > 0 && (
+   964→          <ResponseCards cards={response.cards} onOpenProduct={onOpenProduct} />
+   965→        )}
+   966→
+   967→        {/* Action buttons */}
+   968→        {!isTyping && response?.actions && response.actions.length > 0 && (
+   969→          <div className="flex flex-wrap gap-2 pl-1">
+   970→            {response.actions.map((a, i) => (
+   971→              <ActionButton key={i} action={a} onAction={onAction!} />
+   972→            ))}
+   973→          </div>
+   974→        )}
+   975→      </div>
+   976→    </div>
+   977→  )
+   978→}
+   979→
+   980→// ===========================================================================
+   981→//  v8: ResponseCards — рендер карточек с группировкой по категориям
+   982→//  Поддерживает:
+   983→//    • Категория с заголовком → горизонтальная прокрутка
+   984→//    • Несколько категорий → разделители
+   985→//    • Компактные карточки товаров
+   986→// ===========================================================================
+   987→function ResponseCards({
+   988→  cards,
+   989→  onOpenProduct,
+   990→}: {
+   991→  cards: ChatCard[]
+   992→  onOpenProduct?: (id: string) => void
+   993→}) {
+   994→  // Группируем product/similar_products карточки по category
+   995→  // Если у карточки есть data.category — берём его; иначе — общий "Товары"
+   996→  type Group = { title: string; emoji: string; products: any[] }
+   997→  const productCards = cards.filter(c => c.kind === 'product' || c.kind === 'similar_products')
+   998→  const otherCards = cards.filter(c => c.kind !== 'product' && c.kind !== 'similar_products')
+   999→
+  1000→  const groups: Group[] = []
+  1001→  for (const card of productCards) {
+  1002→    const items = Array.isArray(card.data) ? card.data : [card.data]
+  1003→    for (const item of items) {
+  1004→      const cat = item?.category || item?.categoryName || (card.kind === 'similar_products' ? 'Похожие товары' : 'Товары')
+  1005→      let g = groups.find(x => x.title === cat)
+  1006→      if (!g) {
+  1007→        const emoji = categoryEmoji(cat)
+  1008→        g = { title: cat, emoji, products: [] }
+  1009→        groups.push(g)
+  1010→      }
+  1011→      g.products.push(item)
+  1012→    }
+  1013→  }
+  1014→
+  1015→  return (
+  1016→    <div className="flex flex-col gap-3 pl-1">
+  1017→      {groups.map((g, gi) => (
+  1018→        <div key={gi} className="flex flex-col gap-2">
+  1019→          {gi > 0 && <div className="h-px bg-white/10 my-1" />}
+  1020→          <div className="flex items-center gap-1.5 text-xs text-white/70 font-medium">
+  1021→            <span>{g.emoji}</span>
+  1022→            <span>{g.title}</span>
+  1023→            <span className="text-white/30">·</span>
+  1024→            <span className="text-white/40">{g.products.length}</span>
+  1025→          </div>
+  1026→          <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1 snap-x snap-mandatory no-scrollbar">
+  1027→            {g.products.map((p, i) => (
+  1028→              <CompactProductCard
+  1029→                key={i}
+  1030→                product={p}
+  1031→                onClick={onOpenProduct ? () => onOpenProduct(p.id || p.productId) : undefined}
+  1032→              />
+  1033→            ))}
+  1034→          </div>
+  1035→        </div>
+  1036→      ))}
+  1037→      {otherCards.map((card, i) => {
+  1038→        if (card.kind === 'contacts') return <ContactsCard key={i} contacts={card.data} />
+  1039→        if (card.kind === 'order_wizard') return <OrderWizard key={i} data={card.data} onSubmitted={() => {}} />
+  1040→        return null
+  1041→      })}
+  1042→    </div>
+  1043→  )
+  1044→}
+  1045→
+  1046→function categoryEmoji(cat: string): string {
+  1047→  const c = (cat || '').toLowerCase()
+  1048→  if (c.includes('подар')) return '🎁'
+  1049→  if (c.includes('баннер') || c.includes('banner')) return '🖨'
+  1050→  if (c.includes('печат') || c.includes('print')) return '🖨'
+  1051→  if (c.includes('визитк')) return '💳'
+  1052→  if (c.includes('футбол') || c.includes('одежд')) return '👕'
+  1053→  if (c.includes('кружк')) return '☕'
+  1054→  if (c.includes('плакат') || c.includes('постер')) return '🖼'
+  1055→  if (c.includes('буклет') || c.includes('листовк')) return '📄'
+  1056→  if (c.includes('наклейк') || c.includes('стикер')) return '✨'
+  1057→  if (c.includes('книг') || c.includes('журнал')) return '📚'
+  1058→  if (c.includes('упаков')) return '📦'
+  1059→  if (c.includes('сувенир')) return '🎀'
+  1060→  return '🛍'
+  1061→}
+  1062→
+  1063→// ===========================================================================
+  1064→//  v8: CompactProductCard — компактная карточка товара для чата
+  1065→//  Размеры: ~160px ширина, миниатюрное изображение 16:9, минимум текста
+  1066→// ===========================================================================
+  1067→function CompactProductCard({ product, onClick }: { product: any; onClick?: () => void }) {
+  1068→  if (!product) return null
+  1069→  const name = product.name || product.title || 'Товар'
+  1070→  const price = product.price != null ? product.price : product.basePrice
+  1071→  const oldPrice = product.oldPrice
+  1072→  const image = product.image || product.imageUrl || product.coverImage || (Array.isArray(product.images) ? product.images[0] : null)
+  1073→  const currencySymbol = (() => {
+  1074→    const c = (product.currency || 'RUB').toString().toUpperCase()
+  1075→    if (c === 'RUB' || c === 'РУБ') return '₽'
+  1076→    if (c === 'USD') return '$'
+  1077→    if (c === 'EUR') return '€'
+  1078→    if (c === 'KZT') return '₸'
+  1079→    if (c === 'UAH') return '₴'
+  1080→    if (c === 'BYN') return 'Br'
+  1081→    return c
+  1082→  })()
+  1083→  const isAction = product.isAction || product.discount
+  1084→  const isNew = product.isNew
+  1085→  const isPopular = product.isPopular
+  1086→  const inStock = product.inStock !== false && product.stockStatus !== 'out_of_stock' && product.quantity !== 0
+  1087→  const discountPct = oldPrice && price != null && oldPrice > price
+  1088→    ? Math.round((1 - price / oldPrice) * 100)
+  1089→    : null
+  1090→
+  1091→  return (
+  1092→    <button
+  1093→      onClick={onClick}
+  1094→      className="snap-start shrink-0 text-left w-[160px] rounded-xl overflow-hidden bg-white/5 border border-white/10 hover:border-violet-400/40 hover:bg-white/10 transition-all group"
+  1095→    >
+  1096→      {/* Image — compact 16:9 */}
+  1097→      <div className="relative aspect-[16/9] bg-black/30 overflow-hidden">
+  1098→        {image ? (
+  1099→          <img
+
+[showing lines 500-1099 of 2477; use offset=1100 with limit to continue reading]

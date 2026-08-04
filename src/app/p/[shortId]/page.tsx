@@ -85,7 +85,13 @@ export async function generateMetadata({
     openGraph: {
       title,
       description,
-      type: 'website',
+      // v25.4 (OG audit): 'website' → 'product' so Facebook renders a richer
+      // product card with price. Combined with the product:price:* tags below
+      // (emitted via the `other` field), WhatsApp/FB show the price inline.
+      // Cast to satisfy Next.js's strict OpenGraph type (it only models
+      // 'website'/'article'/'video.other' etc. — 'product' is valid per the
+      // OG spec but not in Next's type definitions).
+      type: 'product' as any,
       locale: 'ru_RU',
       siteName: '999 — Три девятки',
       url: shareUrl,
@@ -107,6 +113,17 @@ export async function generateMetadata({
       title,
       description,
       images: [ogImageUrl],
+    },
+    // v25.4 (OG audit): product:price:* tags power Facebook's product card
+    // and Twitter's "Price" label1/data1 extra fields. Emitted as raw meta
+    // tags via the `other` field (Next.js doesn't have a typed product slot).
+    other: {
+      'product:price:amount': String(product.price),
+      'product:price:currency': product.currency || 'RUB',
+      'product:availability': 'instock',
+      'product:condition': 'new',
+      'twitter:label1': 'Цена',
+      'twitter:data1': formatPrice(product.price, product.currency),
     },
     robots: {
       index: true,
@@ -173,12 +190,15 @@ export default async function SharePage({
 
   // Build JSON-LD structured data (Schema.org Product) for SEO.
   // Google rich results use this to display price/rating/availability in SERP.
+  // v25.4 (OG audit): include the /og/<shortId> proxy as the first image so
+  // Google Images indexes the branded card, not just the raw Unsplash photo.
+  const ogImageUrl = `${publicUrl}/og/${shortId}`
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: data.product.title,
     description: data.product.description || undefined,
-    image: data.product.images.map((img: string) => upgradeImageUrl(img, publicUrl)),
+    image: [ogImageUrl, ...data.product.images.map((img: string) => upgradeImageUrl(img, publicUrl))],
     sku: data.shortId,
     brand: {
       '@type': 'Brand',

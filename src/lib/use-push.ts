@@ -25,12 +25,15 @@ import { useAuthStore } from './auth-store'
 //  - `subscribedRef` is per-userId, not global, so re-login re-subscribes
 // ============================================================================
 
+// v25.5 (push audit): gate ALL push logging behind PUSH_DEBUG. Previously
+// `pushWarn` always logged to console.warn in production, polluting the
+// console and making it look like push was broken even when it was working.
 const PUSH_DEBUG = process.env.NODE_ENV !== 'production'
 function pushLog(...args: unknown[]) {
   if (PUSH_DEBUG) console.warn('[PUSH]', ...args)
 }
 function pushWarn(...args: unknown[]) {
-  console.warn('[PUSH]', ...args)
+  if (PUSH_DEBUG) console.warn('[PUSH]', ...args)
 }
 
 export function usePushNotifications() {
@@ -228,24 +231,21 @@ export function usePushNotifications() {
           pushWarn('Notification API not supported')
           return
         }
+        // v25.5 (push audit CRITICAL FIX): do NOT call Notification.requestPermission()
+        // from here. This subscribe() function is called from setTimeout(1500ms)
+        // and from focus events — NEITHER is a user gesture. iOS Safari 16.4+
+        // (PWA) silently denies permission requests not triggered by a user
+        // gesture, so calling requestPermission() here was causing push to
+        // NEVER work on iOS — permission stayed 'default' forever.
+        //
+        // Permission is requested by src/app/page.tsx's onFirstClick/onKeydown
+        // listeners, which ARE user gestures. Once permission is granted,
+        // the `permissions.query().onchange` listener below fires and calls
+        // subscribe() again — at which point permission is already 'granted'
+        // and the subscription succeeds.
         if (Notification.permission === 'default') {
-          // v18.6: don't silently exit — request permission directly.
-          // Browsers REQUIRE a user gesture, but this subscribe() function is
-          // only called from a setTimeout after auth or from a focus event
-          // (both are user-gesture-adjacent). If the request is denied, we
-          // exit gracefully. The page.tsx also has a click/keydown listener
-          // as a backup for the very first session.
-          pushLog('Permission not yet requested — requesting now')
-          try {
-            const result = await Notification.requestPermission()
-            if (result !== 'granted') {
-              pushWarn('Permission not granted:', result)
-              return
-            }
-          } catch (e) {
-            pushWarn('requestPermission threw:', e)
-            return
-          }
+          pushLog('Permission not yet requested — waiting for user gesture (page.tsx will request)')
+          return
         }
         if (Notification.permission !== 'granted') {
           pushWarn('Permission denied')
@@ -253,7 +253,27 @@ export function usePushNotifications() {
         }
 
         // 2. Get VAPID public key
-        const vapidRes = await api.get<{ publicKey: string }>('/api/push/vapid-public')
+        // v25.5 (push audit): if backend returns 503 (VAPID not configured),
+        // cache the failure so we don't keep retrying on every focus event.
+        // Previously this threw, was caught at the bottom, and retried on
+        // every focus — silent infinite retry loop.
+        const VAPID_DISABLED_KEY = '999pro-push-vapid-disabled'
+        try {
+          if (localStorage.getItem(VAPID_DISABLED_KEY) === '1') {
+            pushWarn('VAPID disabled on backend — skipping (clear localStorage to retry)')
+            return
+          }
+        } catch {}
+        let vapidRes: { publicKey: string }
+        try {
+          vapidRes = await api.get<{ publicKey: string }>('/api/push/vapid-public')
+        } catch (e: any) {
+          if (e?.status === 503) {
+            pushWarn('Backend returned 503 — VAPID not configured. Disabling push retries.')
+            try { localStorage.setItem(VAPID_DISABLED_KEY, '1') } catch {}
+          }
+          return
+        }
         if (!vapidRes.publicKey) {
           pushWarn('No VAPID public key from backend')
           return

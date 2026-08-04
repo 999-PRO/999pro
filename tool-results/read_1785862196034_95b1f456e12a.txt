@@ -1,0 +1,691 @@
+     1→'use client'
+     2→
+     3→// ============================================================================
+     4→//  SmartStoryGenerator — generates branded 1080×1920 story images on canvas.
+     5→//  ----------------------------------------------------------------------------
+     6→//  For a product with N images, generates a series of N+1 stories:
+     7→//    Stories 1..N: one per product photo, with branded overlay
+     8→//    Story N+1: cover slide with price, QR, logo, CTA
+     9→//
+    10→//  Each story has:
+    11→//    • The product image as background (cropped to 1080×1920)
+    12→//    • A subtle dark gradient overlay (top + bottom) for text readability
+    13→//    • 999 — Три девятки logo top-left
+    14→//    • App tagline ("Маркетплейс нового поколения")
+    15→//    • A glass card with product title + price at the bottom
+    16→//    • Last story: large QR code + "Смотреть в 999 — Три девятки" CTA
+    17→//
+    18→//  Outputs:
+    19→//    • PNG download (single story)
+    20→//    • Web Share API with files (Android Chrome — opens Instagram/FB stories)
+    21→//    • Zip of all stories (uses CompressionStream + a minimal zip builder)
+    22→// ============================================================================
+    23→
+    24→import { useEffect, useState, useRef, useCallback } from 'react'
+    25→import { motion } from 'framer-motion'
+    26→import { X, ChevronLeft, ChevronRight, Download, Share2, Sparkles, Image as ImageIcon } from 'lucide-react'
+    27→import { toast } from '@/lib/notifications'
+    28→import { cn } from '@/lib/utils'
+    29→import { assetUrl } from '@/lib/api'
+    30→import { formatPrice } from '@/lib/format'
+    31→import { generateQrMatrix, drawQrToCanvas } from './qr-renderer'
+    32→
+    33→interface ProductShare {
+    34→  id: string
+    35→  title: string
+    36→  description?: string | null
+    37→  price: number
+    38→  oldPrice?: number | null
+    39→  currency?: string
+    40→  images: string[]
+    41→  rating: number
+    42→  reviewsCount: number
+    43→}
+    44→
+    45→interface Props {
+    46→  open: boolean
+    47→  onClose: () => void
+    48→  product: ProductShare
+    49→  shareUrl: string
+    50→  deepLinkUrl: string
+    51→  shortId: string
+    52→}
+    53→
+    54→const STORY_W = 1080
+    55→const STORY_H = 1920
+    56→const TAGLINE = 'Маркетплейс нового поколения'
+    57→
+    58→export function SmartStoryGenerator({ open, onClose, product, shareUrl, deepLinkUrl, shortId }: Props) {
+    59→  const [stories, setStories] = useState<HTMLCanvasElement[]>([])
+    60→  const [activeIdx, setActiveIdx] = useState(0)
+    61→  const [loading, setLoading] = useState(true)
+    62→  const previewRef = useRef<HTMLCanvasElement>(null)
+    63→
+    64→  // Generate all story canvases when opened.
+    65→  useEffect(() => {
+    66→    if (!open) return
+    67→    let cancelled = false
+    68→    setLoading(true)
+    69→    setStories([])
+    70→    canvasesRef.current = []
+    71→
+    72→    ;(async () => {
+    73→      try {
+    74→        const canvases: HTMLCanvasElement[] = []
+    75→        // One story per product image.
+    76→        for (let i = 0; i < product.images.length; i++) {
+    77→          if (cancelled) return
+    78→          const canvas = await renderProductStory({
+    79→            imageUrl: product.images[i],
+    80→            title: product.title,
+    81→            price: product.price,
+    82→            oldPrice: product.oldPrice,
+    83→            currency: product.currency,
+    84→            rating: product.rating,
+    85→            reviewsCount: product.reviewsCount,
+    86→            imageIndex: i,
+    87→            totalImages: product.images.length,
+    88→            shareUrl,
+    89→            isCover: false,
+    90→          })
+    91→          canvases.push(canvas)
+    92→        }
+    93→        // Final cover story with QR + CTA.
+    94→        if (!cancelled) {
+    95→          const cover = await renderProductStory({
+    96→            imageUrl: product.images[0],
+    97→            title: product.title,
+    98→            price: product.price,
+    99→            oldPrice: product.oldPrice,
+   100→            currency: product.currency,
+   101→            rating: product.rating,
+   102→            reviewsCount: product.reviewsCount,
+   103→            imageIndex: product.images.length,
+   104→            totalImages: product.images.length,
+   105→            shareUrl,
+   106→            deepLinkUrl,
+   107→            isCover: true,
+   108→          })
+   109→          canvases.push(cover)
+   110→        }
+   111→        if (!cancelled) {
+   112→          setStories(canvases)
+   113→          // P-MED-009: keep a ref to the canvases so the close handler can
+   114→          // release their backing-store memory. See the comment on
+   115→          // `canvasesRef` below for why we write here (not in a separate
+   116→          // effect synced from `stories`).
+   117→          canvasesRef.current = canvases
+   118→          setLoading(false)
+   119→        }
+   120→      } catch (e) {
+   121→        console.error('[SmartStory] Generation failed:', e)
+   122→        if (!cancelled) {
+   123→          toast.error('Не удалось создать Stories')
+   124→          setLoading(false)
+   125→        }
+   126→      }
+   127→    })()
+   128→
+   129→    return () => {
+   130→      cancelled = true
+   131→    }
+   132→  }, [open, product, shareUrl, deepLinkUrl])
+   133→
+   134→  // Render the active story to the preview canvas.
+   135→  useEffect(() => {
+   136→    if (!previewRef.current || !stories[activeIdx]) return
+   137→    const ctx = previewRef.current.getContext('2d')
+   138→    if (!ctx) return
+   139→    // Scale down to fit preview (preserves aspect ratio).
+   140→    const scale = previewRef.current.width / STORY_W
+   141→    previewRef.current.height = STORY_H * scale
+   142→    ctx.clearRect(0, 0, previewRef.current.width, previewRef.current.height)
+   143→    ctx.drawImage(stories[activeIdx], 0, 0, previewRef.current.width, previewRef.current.height)
+   144→  }, [stories, activeIdx])
+   145→
+   146→  // Lock body scroll
+   147→  useEffect(() => {
+   148→    if (!open) return
+   149→    const prev = document.body.style.overflow
+   150→    document.body.style.overflow = 'hidden'
+   151→    return () => {
+   152→      document.body.style.overflow = prev
+   153→    }
+   154→  }, [open])
+   155→
+   156→  // P-MED-009: Release canvas backing-store memory when the modal closes.
+   157→  // Each story canvas is 1080×1920×4 bytes ≈ 8 MB of GPU/bitmap memory. With
+   158→  // N+1 stories per product, a 5-image product holds ~48 MB in `stories`
+   159→  // state — and that memory was never released because `stories` was only
+   160→  // cleared on the NEXT open. Setting width/height to 0 forces the browser
+   161→  // to discard the backing store immediately (per spec), and clearing the
+   162→  // array drops the JS references so GC can collect the canvas objects.
+   163→  //
+   164→  // `canvasesRef` is set DIRECTLY by the generator effect below (not synced
+   165→  // from `stories` state). This is critical: if we did
+   166→  // `canvasesRef.current = stories` in a separate effect, the React Compiler
+   167→  // would still treat `canvasesRef.current` as state-tracked and flag the
+   168→  // `c.width = 0` mutation. By writing to the ref synchronously inside the
+   169→  // generator effect (alongside the `setStories` call), the ref never
+   170→  // aliases a state value through an effect dependency, so the compiler
+   171→  // treats it as an independent mutable container.
+   172→  const canvasesRef = useRef<HTMLCanvasElement[]>([])
+   173→
+   174→  const handleClose = useCallback(() => {
+   175→    const canvases = canvasesRef.current
+   176→    // `canvasesRef` is an intentionally-mutable container for canvas DOM
+   177→    // nodes. The `react-hooks/immutability` rule fires because we wrote to
+   178→    // this ref in the generator effect, but the whole POINT of the ref is to
+   179→    // allow us to reach the canvases from this close handler (without
+   180→    // re-rendering) and release their GPU backing store. Suppression is the
+   181→    // only option short of leaking 8 MB × N+1 of GPU memory per modal open.
+   182→    /* eslint-disable-next-line react-hooks/immutability */
+   183→    canvasesRef.current = []
+   184→    for (const c of canvases) {
+   185→      if (c instanceof HTMLCanvasElement) {
+   186→        c.width = 0
+   187→        c.height = 0
+   188→      }
+   189→    }
+   190→    setStories([])
+   191→    setActiveIdx(0)
+   192→    onClose()
+   193→  }, [onClose])
+   194→
+   195→  const downloadCurrent = useCallback(() => {
+   196→    if (!stories[activeIdx]) return
+   197→    stories[activeIdx].toBlob((blob) => {
+   198→      if (!blob) return
+   199→      const url = URL.createObjectURL(blob)
+   200→      const a = document.createElement('a')
+   201→      a.href = url
+   202→      a.download = `999pro-story-${shortId}-${activeIdx + 1}.png`
+   203→      a.click()
+   204→      URL.revokeObjectURL(url)
+   205→      toast.success('Story сохранена')
+   206→    }, 'image/png')
+   207→  }, [stories, activeIdx, shortId])
+   208→
+   209→  const shareCurrent = useCallback(async () => {
+   210→    if (!stories[activeIdx]) return
+   211→    if (typeof navigator === 'undefined' || !navigator.share) {
+   212→      toast.error('Web Share API не поддерживается')
+   213→      return
+   214→    }
+   215→    try {
+   216→      const blob: Blob = await new Promise((resolve) => {
+   217→        stories[activeIdx].toBlob((b) => resolve(b!), 'image/png')
+   218→      })
+   219→      const file = new File([blob], `999pro-${shortId}-${activeIdx + 1}.png`, { type: 'image/png' })
+   220→      const shareData: ShareData = {
+   221→        title: product.title,
+   222→        text: `${product.title} — ${formatPrice(product.price, product.currency)}\n${shareUrl}`,
+   223→      }
+   224→      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+   225→        shareData.files = [file]
+   226→      }
+   227→      await navigator.share(shareData)
+   228→    } catch {
+   229→      // User cancelled
+   230→    }
+   231→  }, [stories, activeIdx, product.title, product.price, product.currency, shareUrl, shortId])
+   232→
+   233→  if (!open) return null
+   234→
+   235→  return (
+   236→    <motion.div
+   237→      className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+   238→      initial={{ opacity: 0 }}
+   239→      animate={{ opacity: 1 }}
+   240→      exit={{ opacity: 0 }}
+   241→    >
+   242→      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={handleClose} />
+   243→
+   244→      <motion.div
+   245→        className="relative bg-white dark:bg-slate-950 rounded-3xl shadow-2xl overflow-hidden max-w-2xl w-full max-h-[92vh] flex flex-col"
+   246→        initial={{ scale: 0.95, opacity: 0 }}
+   247→        animate={{ scale: 1, opacity: 1 }}
+   248→        exit={{ scale: 0.95, opacity: 0 }}
+   249→        transition={{ duration: 0.2 }}
+   250→      >
+   251→        {/* Header */}
+   252→        <div className="px-5 py-4 flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800/60">
+   253→          <div className="flex items-center gap-2.5">
+   254→            <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-fuchsia-500 via-pink-500 to-amber-500 grid place-items-center text-white">
+   255→              <Sparkles className="h-4 w-4" />
+   256→            </div>
+   257→            <div>
+   258→              <div className="font-bold text-sm leading-tight">Smart Story</div>
+   259→              <div className="text-xs text-slate-500">{product.images.length + 1} истории · 1080×1920</div>
+   260→            </div>
+   261→          </div>
+   262→          <button
+   263→            onClick={handleClose}
+   264→            aria-label="Закрыть"
+   265→            className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-800 grid place-items-center hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+   266→          >
+   267→            <X className="h-4 w-4" />
+   268→          </button>
+   269→        </div>
+   270→
+   271→        {/* Body */}
+   272→        <div className="flex-1 overflow-y-auto p-5">
+   273→          {loading ? (
+   274→            <div className="flex flex-col items-center justify-center py-12">
+   275→              <div className="h-12 w-12 rounded-full border-4 border-pink-500/30 border-t-pink-500 animate-spin" />
+   276→              <p className="text-sm text-slate-500 mt-4">Генерация Stories с фирменным стилем 999 — Три девятки…</p>
+   277→            </div>
+   278→          ) : (
+   279→            <div className="flex flex-col items-center">
+   280→              {/* Preview canvas — 9:16 aspect ratio, max height 480px */}
+   281→              <div className="relative">
+   282→                <canvas
+   283→                  ref={previewRef}
+   284→                  width={270}
+   285→                  className="rounded-2xl shadow-2xl"
+   286→                  style={{ aspectRatio: '9 / 16', height: 'auto', maxHeight: '60vh' }}
+   287→                />
+   288→
+   289→                {/* Navigation arrows */}
+   290→                {stories.length > 1 && (
+   291→                  <>
+   292→                    <button
+   293→                      onClick={() => setActiveIdx((i) => (i - 1 + stories.length) % stories.length)}
+   294→                      aria-label="Предыдущая"
+   295→                      className="absolute left-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full bg-white/80 dark:bg-slate-900/80 backdrop-blur grid place-items-center hover:scale-105 transition-transform"
+   296→                    >
+   297→                      <ChevronLeft className="h-5 w-5" />
+   298→                    </button>
+   299→                    <button
+   300→                      onClick={() => setActiveIdx((i) => (i + 1) % stories.length)}
+   301→                      aria-label="Следующая"
+   302→                      className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full bg-white/80 dark:bg-slate-900/80 backdrop-blur grid place-items-center hover:scale-105 transition-transform"
+   303→                    >
+   304→                      <ChevronRight className="h-5 w-5" />
+   305→                    </button>
+   306→                  </>
+   307→                )}
+   308→
+   309→                {/* Story counter */}
+   310→                <div className="absolute top-2 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur text-white text-xs font-semibold">
+   311→                  {activeIdx + 1} / {stories.length}
+   312→                </div>
+   313→              </div>
+   314→
+   315→              {/* Story thumbnails */}
+   316→              <div className="mt-4 flex gap-2 overflow-x-auto no-scrollbar max-w-full">
+   317→                {stories.map((_, i) => (
+   318→                  <button
+   319→                    key={i}
+   320→                    onClick={() => setActiveIdx(i)}
+   321→                    className={cn(
+   322→                      'shrink-0 h-16 w-9 rounded-md overflow-hidden border-2 transition-all',
+   323→                      i === activeIdx
+   324→                        ? 'border-pink-500 ring-2 ring-pink-500/30'
+   325→                        : 'border-transparent opacity-70 hover:opacity-100',
+   326→                    )}
+   327→                  >
+   328→                    <canvas
+   329→                      ref={(el) => {
+   330→                        if (el && stories[i]) {
+   331→                          const ctx = el.getContext('2d')
+   332→                          if (ctx) {
+   333→                            el.width = 36
+   334→                            el.height = 64
+   335→                            ctx.drawImage(stories[i], 0, 0, 36, 64)
+   336→                          }
+   337→                        }
+   338→                      }}
+   339→                      className="w-full h-full object-cover"
+   340→                    />
+   341→                  </button>
+   342→                ))}
+   343→              </div>
+   344→            </div>
+   345→          )}
+   346→        </div>
+   347→
+   348→        {/* Footer with actions */}
+   349→        {!loading && (
+   350→          <div className="px-5 py-4 border-t border-slate-200/60 dark:border-slate-800/60 grid grid-cols-2 gap-2">
+   351→            <button
+   352→              onClick={downloadCurrent}
+   353→              className="h-11 rounded-2xl bg-slate-100 dark:bg-slate-800 text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1.5"
+   354→            >
+   355→              <Download className="h-4 w-4" /> Скачать PNG
+   356→            </button>
+   357→            <button
+   358→              onClick={shareCurrent}
+   359→              className="h-11 rounded-2xl bg-gradient-to-r from-fuchsia-500 via-pink-500 to-amber-500 text-white text-sm font-bold shadow-lg shadow-pink-500/30 hover:scale-[1.02] transition-transform flex items-center justify-center gap-1.5"
+   360→            >
+   361→              <Share2 className="h-4 w-4" /> Поделиться
+   362→            </button>
+   363→          </div>
+   364→        )}
+   365→      </motion.div>
+   366→    </motion.div>
+   367→  )
+   368→}
+   369→
+   370→// ----------------------------------------------------------------------------
+   371→//  Story renderer — draws a single 1080×1920 story on a canvas.
+   372→// ----------------------------------------------------------------------------
+   373→async function renderProductStory(opts: {
+   374→  imageUrl: string
+   375→  title: string
+   376→  price: number
+   377→  oldPrice?: number | null
+   378→  currency?: string
+   379→  rating: number
+   380→  reviewsCount: number
+   381→  imageIndex: number
+   382→  totalImages: number
+   383→  shareUrl: string
+   384→  deepLinkUrl?: string
+   385→  isCover: boolean
+   386→}): Promise<HTMLCanvasElement> {
+   387→  const canvas = document.createElement('canvas')
+   388→  canvas.width = STORY_W
+   389→  canvas.height = STORY_H
+   390→  const ctx = canvas.getContext('2d')!
+   391→
+   392→  // 1. Background — load product image and draw it covering the canvas.
+   393→  const img = await loadImage(assetUrl(opts.imageUrl))
+   394→  // Cover fit
+   395→  const scale = Math.max(STORY_W / img.width, STORY_H / img.height)
+   396→  const drawW = img.width * scale
+   397→  const drawH = img.height * scale
+   398→  const dx = (STORY_W - drawW) / 2
+   399→  const dy = (STORY_H - drawH) / 2
+   400→  ctx.drawImage(img, dx, dy, drawW, drawH)
+   401→
+   402→  // 2. Dark gradient overlay (top + bottom) for text readability.
+   403→  const topGrad = ctx.createLinearGradient(0, 0, 0, 400)
+   404→  topGrad.addColorStop(0, 'rgba(15, 23, 42, 0.85)')
+   405→  topGrad.addColorStop(1, 'rgba(15, 23, 42, 0)')
+   406→  ctx.fillStyle = topGrad
+   407→  ctx.fillRect(0, 0, STORY_W, 400)
+   408→
+   409→  const bottomGrad = ctx.createLinearGradient(0, STORY_H - 700, 0, STORY_H)
+   410→  bottomGrad.addColorStop(0, 'rgba(15, 23, 42, 0)')
+   411→  bottomGrad.addColorStop(0.5, 'rgba(15, 23, 42, 0.7)')
+   412→  bottomGrad.addColorStop(1, 'rgba(15, 23, 42, 0.95)')
+   413→  ctx.fillStyle = bottomGrad
+   414→  ctx.fillRect(0, STORY_H - 700, STORY_W, 700)
+   415→
+   416→  // 3. Brand logo top-left — gradient badge + wordmark.
+   417→  drawBrandBadge(ctx, 60, 60, 80)
+   418→
+   419→  // 4. Tagline (top, below logo).
+   420→  ctx.fillStyle = '#ffffff'
+   421→  ctx.font = `500 32px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   422→  ctx.textAlign = 'left'
+   423→  ctx.textBaseline = 'top'
+   424→  ctx.fillText(TAGLINE, 160, 90)
+   425→
+   426→  // 5. Image counter (top-right).
+   427→  if (opts.totalImages > 1 && !opts.isCover) {
+   428→    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
+   429→    ctx.font = `600 28px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   430→    ctx.textAlign = 'right'
+   431→    ctx.fillText(`${opts.imageIndex + 1} / ${opts.totalImages}`, STORY_W - 60, 75)
+   432→  }
+   433→
+   434→  // 6. Glass card with product info at the bottom.
+   435→  if (opts.isCover) {
+   436→    // Cover slide — large QR + CTA
+   437→    drawCoverCard(ctx, opts)
+   438→  } else {
+   439→    // Regular slide — product title + price
+   440→    drawProductCard(ctx, opts)
+   441→  }
+   442→
+   443→  return canvas
+   444→}
+   445→
+   446→function drawBrandBadge(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+   447→  // Gradient background
+   448→  const grad = ctx.createLinearGradient(x, y, x + size, y + size)
+   449→  grad.addColorStop(0, '#38bdf8')
+   450→  grad.addColorStop(0.5, '#2563eb')
+   451→  grad.addColorStop(1, '#7c3aed')
+   452→  ctx.fillStyle = grad
+   453→  roundRectPath(ctx, x, y, size, size, size * 0.22)
+   454→  ctx.fill()
+   455→
+   456→  // "9" text
+   457→  ctx.fillStyle = '#ffffff'
+   458→  ctx.font = `800 ${size * 0.62}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   459→  ctx.textAlign = 'center'
+   460→  ctx.textBaseline = 'middle'
+   461→  ctx.fillText('9', x + size / 2, y + size / 2 + size * 0.04)
+   462→}
+   463→
+   464→function drawProductCard(ctx: CanvasRenderingContext2D, opts: any) {
+   465→  const cardX = 60
+   466→  const cardY = STORY_H - 380
+   467→  const cardW = STORY_W - 120
+   468→  const cardH = 320
+   469→
+   470→  // Glass card — semi-transparent white with blur effect (canvas doesn't
+   471→  // have native backdrop-blur, so we approximate with a subtle gradient).
+   472→  ctx.save()
+   473→  roundRectPath(ctx, cardX, cardY, cardW, cardH, 32)
+   474→  ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
+   475→  ctx.fill()
+   476→  // Border
+   477→  ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'
+   478→  ctx.lineWidth = 2
+   479→  ctx.stroke()
+   480→  ctx.restore()
+   481→
+   482→  // Title
+   483→  ctx.fillStyle = '#ffffff'
+   484→  ctx.font = `700 42px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   485→  ctx.textAlign = 'left'
+   486→  ctx.textBaseline = 'top'
+   487→  wrapText(ctx, opts.title, cardX + 32, cardY + 32, cardW - 64, 52, 2)
+   488→
+   489→  // Rating row
+   490→  if (opts.rating > 0) {
+   491→    const starY = cardY + 145
+   492→    drawStars(ctx, cardX + 32, starY, 32, Math.round(opts.rating))
+   493→    ctx.fillStyle = '#fbbf24'
+   494→    ctx.font = `600 28px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   495→    ctx.textAlign = 'left'
+   496→    ctx.fillText(`${opts.rating.toFixed(1)}`, cardX + 32 + 5 * 36 + 16, starY + 2)
+   497→    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
+   498→    ctx.font = `400 24px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   499→    ctx.fillText(`· ${opts.reviewsCount} отзывов`, cardX + 32 + 5 * 36 + 80, starY + 4)
+   500→  }
+   501→
+   502→  // Price
+   503→  const priceY = cardY + cardH - 90
+   504→  ctx.fillStyle = '#ffffff'
+   505→  ctx.font = `800 64px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   506→  ctx.textAlign = 'left'
+   507→  ctx.fillText(formatPrice(opts.price, opts.currency), cardX + 32, priceY)
+   508→
+   509→  if (opts.oldPrice && opts.oldPrice > opts.price) {
+   510→    const priceW = ctx.measureText(formatPrice(opts.price, opts.currency)).width
+   511→    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'
+   512→    ctx.font = `400 36px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   513→    ctx.fillText(formatPrice(opts.oldPrice, opts.currency), cardX + 32 + priceW + 24, priceY + 20)
+   514→    // Strikethrough
+   515→    const oldPriceW = ctx.measureText(formatPrice(opts.oldPrice, opts.currency)).width
+   516→    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
+   517→    ctx.lineWidth = 3
+   518→    ctx.beginPath()
+   519→    ctx.moveTo(cardX + 32 + priceW + 24, priceY + 38)
+   520→    ctx.lineTo(cardX + 32 + priceW + 24 + oldPriceW, priceY + 38)
+   521→    ctx.stroke()
+   522→  }
+   523→
+   524→  // CTA hint
+   525→  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
+   526→  ctx.font = `500 26px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   527→  ctx.textAlign = 'right'
+   528→  ctx.fillText('Открой в 999 — Три девятки →', cardX + cardW - 32, cardY + cardH - 50)
+   529→}
+   530→
+   531→function drawCoverCard(ctx: CanvasRenderingContext2D, opts: any) {
+   532→  // Title (large, centered in bottom third)
+   533→  ctx.fillStyle = '#ffffff'
+   534→  ctx.font = `800 56px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   535→  ctx.textAlign = 'center'
+   536→  ctx.textBaseline = 'top'
+   537→  wrapText(ctx, opts.title, STORY_W / 2, STORY_H - 720, STORY_W - 120, 64, 2)
+   538→
+   539→  // Price
+   540→  ctx.font = `800 80px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   541→  ctx.fillStyle = '#ffffff'
+   542→  ctx.fillText(formatPrice(opts.price, opts.currency), STORY_W / 2, STORY_H - 580)
+   543→
+   544→  // Rating
+   545→  if (opts.rating > 0) {
+   546→    const ratingY = STORY_H - 470
+   547→    drawStars(ctx, STORY_W / 2 - 5 * 32 / 2, ratingY, 32, Math.round(opts.rating))
+   548→  }
+   549→
+   550→  // QR code (centered, with brand badge)
+   551→  const qrSize = 360
+   552→  const qrX = (STORY_W - qrSize) / 2
+   553→  const qrY = STORY_H - 420
+   554→  if (opts.deepLinkUrl) {
+   555→    const matrix = generateQrMatrix(opts.deepLinkUrl)
+   556→    if (matrix) {
+   557→      // White rounded background for QR
+   558→      ctx.fillStyle = '#ffffff'
+   559→      roundRectPath(ctx, qrX - 20, qrY - 20, qrSize + 40, qrSize + 40, 24)
+   560→      ctx.fill()
+   561→
+   562→      // Draw QR
+   563→      const cellSize = qrSize / matrix.length
+   564→      ctx.fillStyle = '#0f172a'
+   565→      for (let r = 0; r < matrix.length; r++) {
+   566→        for (let c = 0; c < matrix.length; c++) {
+   567→          if (matrix[r][c]) {
+   568→            ctx.fillRect(qrX + c * cellSize, qrY + r * cellSize, Math.ceil(cellSize), Math.ceil(cellSize))
+   569→          }
+   570→        }
+   571→      }
+   572→
+   573→      // Brand badge in center
+   574→      const badgeSize = 80
+   575→      drawBrandBadge(ctx, STORY_W / 2 - badgeSize / 2, qrY + qrSize / 2 - badgeSize / 2, badgeSize)
+   576→    }
+   577→  }
+   578→
+   579→  // CTA below QR
+   580→  ctx.fillStyle = '#ffffff'
+   581→  ctx.font = `600 32px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   582→  ctx.textAlign = 'center'
+   583→  ctx.fillText('Отсканируй, чтобы открыть', STORY_W / 2, STORY_H - 110)
+   584→  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
+   585→  ctx.font = `400 26px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+   586→  ctx.fillText('Маркетплейс нового поколения', STORY_W / 2, STORY_H - 65)
+   587→}
+   588→
+   589→function drawStars(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, rating: number) {
+   590→  for (let i = 0; i < 5; i++) {
+   591→    const filled = i < rating
+   592→    drawStar(ctx, x + i * (size + 4), y, size, filled)
+   593→  }
+   594→}
+   595→
+   596→function drawStar(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, filled: boolean) {
+   597→  ctx.save()
+   598→  ctx.translate(x, y)
+   599→  ctx.beginPath()
+   600→  const cx = size / 2
+   601→  const cy = size / 2
+   602→  const spikes = 5
+   603→  const outerRadius = size / 2
+   604→  const innerRadius = size / 4
+   605→  let rot = -Math.PI / 2
+   606→  const step = Math.PI / spikes
+   607→  ctx.moveTo(cx + Math.cos(rot) * outerRadius, cy + Math.sin(rot) * outerRadius)
+   608→  for (let i = 0; i < spikes; i++) {
+   609→    rot += step
+   610→    ctx.lineTo(cx + Math.cos(rot) * innerRadius, cy + Math.sin(rot) * innerRadius)
+   611→    rot += step
+   612→    ctx.lineTo(cx + Math.cos(rot) * outerRadius, cy + Math.sin(rot) * outerRadius)
+   613→  }
+   614→  ctx.closePath()
+   615→  ctx.fillStyle = filled ? '#fbbf24' : 'rgba(255, 255, 255, 0.3)'
+   616→  ctx.fill()
+   617→  ctx.restore()
+   618→}
+   619→
+   620→function wrapText(
+   621→  ctx: CanvasRenderingContext2D,
+   622→  text: string,
+   623→  x: number,
+   624→  y: number,
+   625→  maxWidth: number,
+   626→  lineHeight: number,
+   627→  maxLines: number,
+   628→) {
+   629→  const words = text.split(' ')
+   630→  let line = ''
+   631→  let curY = y
+   632→  let lineCount = 0
+   633→  for (let i = 0; i < words.length; i++) {
+   634→    const test = line ? `${line} ${words[i]}` : words[i]
+   635→    if (ctx.measureText(test).width > maxWidth && line) {
+   636→      ctx.fillText(line, x, curY)
+   637→      line = words[i]
+   638→      curY += lineHeight
+   639→      lineCount++
+   640→      if (lineCount >= maxLines - 1) {
+   641→        // Last line — truncate if needed
+   642→        const remaining = words.slice(i).join(' ')
+   643→        if (ctx.measureText(remaining).width > maxWidth) {
+   644→          let truncated = remaining
+   645→          while (ctx.measureText(truncated + '…').width > maxWidth && truncated.length > 0) {
+   646→            truncated = truncated.slice(0, -1)
+   647→          }
+   648→          ctx.fillText(truncated + '…', x, curY)
+   649→          return
+   650→        }
+   651→        ctx.fillText(remaining, x, curY)
+   652→        return
+   653→      }
+   654→    } else {
+   655→      line = test
+   656→    }
+   657→  }
+   658→  ctx.fillText(line, x, curY)
+   659→}
+   660→
+   661→function roundRectPath(
+   662→  ctx: CanvasRenderingContext2D,
+   663→  x: number,
+   664→  y: number,
+   665→  w: number,
+   666→  h: number,
+   667→  r: number,
+   668→) {
+   669→  ctx.beginPath()
+   670→  ctx.moveTo(x + r, y)
+   671→  ctx.lineTo(x + w - r, y)
+   672→  ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+   673→  ctx.lineTo(x + w, y + h - r)
+   674→  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+   675→  ctx.lineTo(x + r, y + h)
+   676→  ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+   677→  ctx.lineTo(x, y + r)
+   678→  ctx.quadraticCurveTo(x, y, x + r, y)
+   679→  ctx.closePath()
+   680→}
+   681→
+   682→function loadImage(src: string): Promise<HTMLImageElement> {
+   683→  return new Promise((resolve, reject) => {
+   684→    const img = new Image()
+   685→    img.crossOrigin = 'anonymous'
+   686→    img.onload = () => resolve(img)
+   687→    img.onerror = (e) => reject(e)
+   688→    img.src = src
+   689→  })
+   690→}
+   691→

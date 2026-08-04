@@ -102,10 +102,25 @@ const IP_HASH_PEPPER = randHex(32);
 const vapid = genVapidKeys();
 
 // ---------- detect domain ----------
-const DEFAULT_DOMAIN = process.env.APP_DOMAIN || 'localhost';
+// v25.5 (config audit): default to tri-999.online (the actual production
+// domain). Previously defaulted to 'localhost' — operators who ran setup.js
+// without setting APP_DOMAIN ended up with VAPID_SUBJECT=mailto:admin@localhost
+// (iOS push silently fails) and CLIENT_ORIGIN with localhost (CORS rejects
+// real domain). Now the default is the real production domain, and operators
+// deploying elsewhere can override via APP_DOMAIN env var.
+const DEFAULT_DOMAIN = process.env.APP_DOMAIN || 'tri-999.online';
 const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL || (DEFAULT_DOMAIN === 'localhost'
   ? 'http://localhost:3000'
   : `https://${DEFAULT_DOMAIN}`);
+
+// v25.5: warn if APP_DOMAIN wasn't explicitly set AND we're not on localhost.
+// This is just a reminder — the default (tri-999.online) is correct for the
+// primary production deployment, but operators deploying to a different
+// domain MUST set APP_DOMAIN or the generated .env will have wrong values.
+if (!process.env.APP_DOMAIN && DEFAULT_DOMAIN !== 'localhost') {
+  console.log(`  ℹ Using default domain: ${DEFAULT_DOMAIN}`);
+  console.log(`    To override, set APP_DOMAIN=yourdomain.com before running setup.`);
+}
 
 // ---------- determine DATABASE_URL ----------
 const DATABASE_URL = determineDbUrl();
@@ -152,10 +167,14 @@ DATABASE_URL="${DATABASE_URL}"
 # ---- CORS ----
 # Comma-separated list of allowed origins. For production with a domain:
 #   CLIENT_ORIGIN="https://YOUR_DOMAIN,https://studio.YOUR_DOMAIN"
-CLIENT_ORIGIN="http://localhost:3000,http://localhost:3001"
+# v25.5: auto-generated from APP_DOMAIN — includes both the main app and
+# studio (served at /studio on the same domain).
+CLIENT_ORIGIN="${DEFAULT_DOMAIN === 'localhost' ? 'http://localhost:3000,http://localhost:3001' : `https://${DEFAULT_DOMAIN}`}"
 
 # ---- Trust proxy (set to "true" if behind Nginx/Caddy/Cloudflare) ----
-TRUST_PROXY=false
+# v25.5: default to true when a real domain is configured (production is
+# always behind a reverse proxy). localhost dev stays false.
+TRUST_PROXY=${DEFAULT_DOMAIN === 'localhost' ? 'false' : 'true'}
 
 # ---- Auth secrets (auto-generated) ----
 JWT_SECRET=${JWT_SECRET}

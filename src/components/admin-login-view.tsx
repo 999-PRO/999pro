@@ -37,7 +37,12 @@ import { api } from '@/lib/api'
 import { toast } from '@/lib/notifications'
 import type { User as UserType } from '@/lib/types'
 
-type TotpFlow = 'none' | 'setup' | 'verify'
+// v25.4: 'totp' state added for admins who ALREADY have TOTP enrolled.
+//   'none'   — login form (credentials step)
+//   'setup'  — first-time TOTP enrollment (fetching QR from /totp/setup)
+//   'verify' — first-time TOTP enrollment (user enters 6-digit code after QR scan)
+//   'totp'   — returning admin with TOTP already enrolled (enter 6-digit code)
+type TotpFlow = 'none' | 'setup' | 'verify' | 'totp'
 
 export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onNavigate: (v: string) => void }) {
   const [login, setLogin] = useState('')
@@ -179,6 +184,42 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
     }
   }
 
+  // v25.4: Submit a 6-digit TOTP code for an admin who ALREADY has 2FA enrolled.
+  // This re-calls /api/auth/login with login + password + totpCode in one request —
+  // the backend validates the code and returns a regular JWT on success.
+  async function verifyTotpLogin() {
+    if (totpCode.length !== 6) {
+      toast.error('Введите 6-значный код')
+      return
+    }
+    setTotpBusy(true)
+    try {
+      const result = await authLogin(login, password, totpCode)
+      // On success the store is authenticated — result is the User object.
+      const u = result as UserType
+      if (u?.role !== 'admin') {
+        toast.error('Этот аккаунт не является администратором')
+        return
+      }
+      toast.success('Добро пожаловать, администратор!')
+      setTotpFlow('none')
+      setTotpCode('')
+      onNavigate('studio')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Неверный код'
+      toast.error('Неверный код подтверждения', { description: msg })
+      setTotpCode('')
+    } finally {
+      setTotpBusy(false)
+    }
+  }
+
+  // v25.4: Cancel the 'totp' (already-enrolled) flow — go back to credentials.
+  function cancelTotpLogin() {
+    setTotpFlow('none')
+    setTotpCode('')
+  }
+
   function cancelTotpSetup() {
     setTotpFlow('none')
     setTotpCode('')
@@ -192,13 +233,29 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
     if (!login.trim() || !password.trim()) return
     setLoading(true)
     try {
-      const u = await authLogin(login, password)
-      // v25.3: if the auth store now has a setupToken, the backend returned
-      // totpSetupRequired — start the QR enrollment flow.
-      if (useAuthStore.getState().setupToken) {
-        if (u.role !== 'admin') {
-          // Safety: setupToken should only be issued to admins. If somehow
-          // a regular user got one, refuse and clear it.
+      // v25.4: when in 'totp' state (already-enrolled admin), submit the code
+      // alongside the credentials. When in 'none' state, just send credentials.
+      const result = await authLogin(login, password, totpFlow === 'totp' ? totpCode : undefined)
+
+      // v25.4: authLogin may now return either a User (success) or a result
+      // object ({ totpRequired } or { totpSetupRequired }) when 2FA is required.
+      if (result && typeof result === 'object' && 'totpRequired' in result) {
+        // Already-enrolled admin — show the 6-digit code input.
+        if (result.user?.role !== 'admin') {
+          toast.error('Этот аккаунт не является администратором')
+          return
+        }
+        setTotpFlow('totp')
+        setTotpCode('')
+        toast.info('Введите код 2FA', {
+          description: 'Откройте приложение-аутентификатор и введите 6-значный код.',
+        })
+        return
+      }
+
+      if (result && typeof result === 'object' && 'totpSetupRequired' in result) {
+        // First-time enrollment — start the QR setup wizard.
+        if (useAuthStore.getState().setupToken && (result as { user: UserType }).user?.role !== 'admin') {
           toast.error('Этот аккаунт не является администратором')
           clearSetupToken()
           return
@@ -210,12 +267,33 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
         await fetchTotpSetup()
         return
       }
-      // Normal login — admin already has TOTP enabled.
+
+      // Fallback for v25.3 callers: if the auth store got a setupToken even
+      // though result is a User (legacy shape), still start the wizard.
+      if (useAuthStore.getState().setupToken) {
+        const u = result as UserType
+        if (u.role !== 'admin') {
+          toast.error('Этот аккаунт не является администратором')
+          clearSetupToken()
+          return
+        }
+        setTotpFlow('setup')
+        toast.info('Требуется настройка 2FA', {
+          description: 'Для аккаунта администратора обязательно включение двухфакторной аутентификации.',
+        })
+        await fetchTotpSetup()
+        return
+      }
+
+      // Normal login — admin already has TOTP enabled and code was accepted.
+      const u = result as UserType
       if (u.role !== 'admin') {
         toast.error('Этот аккаунт не является администратором')
         return
       }
       toast.success('Добро пожаловать, администратор!')
+      setTotpFlow('none')
+      setTotpCode('')
       onNavigate('studio')
     } catch (e: any) {
       toast.error('Ошибка входа', { description: e?.message || 'Проверьте данные' })
@@ -230,7 +308,74 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
   const SHOW_DEV_HINTS = process.env.NEXT_PUBLIC_DEV_HINTS === '1'
 
   // ========================================================================
-  // 2FA setup wizard — replaces the login form when totpFlow !== 'none'
+  // v25.4: TOTP-already-enrolled screen — shown when totpFlow === 'totp'.
+  // Distinct from the setup wizard: no QR, just a 6-digit code input.
+  // ========================================================================
+  if (totpFlow === 'totp') {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-5 bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-950">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md rounded-3xl border border-border/40 bg-background/80 backdrop-blur-xl p-8 shadow-2xl"
+        >
+          {/* Header */}
+          <div className="flex flex-col items-center text-center gap-3 mb-6">
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 grid place-items-center shadow-lg shadow-sky-500/30">
+              <Shield className="h-8 w-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold">Двухфакторная аутентификация</h1>
+            <p className="text-sm text-muted-foreground">
+              Введите 6-значный код из приложения-аутентификатора.
+            </p>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!totpBusy && totpCode.length === 6) void verifyTotpLogin()
+            }}
+            className="space-y-4"
+          >
+            <input
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="000000"
+              inputMode="numeric"
+              autoFocus
+              className="w-full h-14 px-4 rounded-xl bg-background border border-border/60 outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/20 text-center font-mono text-2xl tracking-widest"
+            />
+
+            <button
+              type="submit"
+              disabled={totpBusy || totpCode.length !== 6}
+              className="w-full flex items-center justify-center gap-2 h-12 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.02] transition-transform shadow-lg shadow-sky-500/30"
+            >
+              {totpBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+              Войти
+            </button>
+          </form>
+
+          <button
+            onClick={cancelTotpLogin}
+            disabled={totpBusy}
+            className="w-full mt-3 flex items-center justify-center gap-1.5 h-10 rounded-xl bg-accent hover:bg-accent/80 transition-colors text-xs font-medium disabled:opacity-40"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Назад к форме входа
+          </button>
+
+          <div className="mt-4 p-3 rounded-xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900">
+            <div className="text-xs text-muted-foreground">
+              💡 Если у вас нет доступа к аутентификатору, обратитесь к администратору для сброса 2FA.
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    )
+  }
+
+  // ========================================================================
+  // 2FA setup wizard — shown when totpFlow === 'setup' || 'verify'
   // ========================================================================
   if (totpFlow !== 'none') {
     return (

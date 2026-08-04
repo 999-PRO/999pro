@@ -53,7 +53,7 @@ sudo apt update
 sudo apt install -y curl ca-certificates gnupg sqlite3 cron
 
 # Install Bun (faster than Node for our stack)
-curl -fsSL https://bun.sh/install | bash
+# Node.js 20+ required (see scripts/install-node.sh)
 source ~/.bashrc
 
 # Install Caddy (reverse proxy + auto-HTTPS)
@@ -76,9 +76,9 @@ cd /opt/999pro
 git clone <your-repo-url> .
 
 # Install dependencies for all 3 services
-bun install
-cd mini-services/backend && bun install && cd ../..
-cd mini-services/studio && bun install && cd ../..
+npm install
+cd mini-services/backend && npm install && cd ../..
+cd mini-services/studio && npm install && cd ../..
 ```
 
 ### 1.3 Configure secrets
@@ -87,14 +87,14 @@ cd mini-services/studio && bun install && cd ../..
 # Generate fresh secrets — DO NOT reuse dev values
 NODE_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
 RESET_TOKEN=$(openssl rand -hex 24)
-VAPID_KEYS=$(bunx web-push generate-vapid-keys)
+VAPID_KEYS=$(npx web-push generate-vapid-keys)
 # (copy the public + private keys from the output)
 
 cat > /opt/999pro/mini-services/backend/.env <<EOF
 DATABASE_URL=postgresql://ninepro:your-strong-password@localhost:5432/ninepro?schema=public&connection_limit=10&pool_timeout=10
 PORT=4000
 NODE_ENV=production
-CLIENT_ORIGIN=https://999.pro,https://studio.999.pro
+CLIENT_ORIGIN=https://tri-999.online
 
 JWT_SECRET=$NODE_SECRET
 JWT_EXPIRES_IN=7d
@@ -102,11 +102,11 @@ BCRYPT_ROUNDS=12
 
 VAPID_PUBLIC_KEY=<from output above>
 VAPID_PRIVATE_KEY=<from output above>
-VAPID_SUBJECT=mailto:admin@999.pro
+VAPID_SUBJECT=mailto:admin@tri-999.online
 
 RESET_ADMIN_TOKEN=$RESET_TOKEN
 
-TURN_URL=turn:turn.999.pro:3478
+TURN_URL=turn:turn.tri-999.online:3478
 TURN_USERNAME=999pro
 # v24.6-audit fix: was TURN_PASSWORD, but the backend reads TURN_CREDENTIAL
 # (see mini-services/backend/src/routes/calls.ts). Mismatched env var name
@@ -123,16 +123,16 @@ chmod 600 /opt/999pro/mini-services/backend/.env
 
 ```bash
 cd /opt/999pro/mini-services/backend
-bunx prisma migrate deploy    # apply all migrations (no data loss)
-bunx prisma generate
-bunx prisma db seed           # optional: seed with demo data
+npx prisma migrate deploy    # apply all migrations (no data loss)
+npx prisma generate
+npx prisma db seed           # optional: seed with demo data
 ```
 
 ### 1.5 Configure Caddy
 
 ```bash
 sudo tee /etc/caddy/Caddyfile <<'EOF'
-999.pro, www.999.pro {
+tri-999.online, www.tri-999.online {
     encode gzip zstd
 
     # Socket.IO — must NOT be cached, must support websockets
@@ -171,7 +171,7 @@ sudo tee /etc/caddy/Caddyfile <<'EOF'
 }
 
 # Optional: separate domain for Studio
-studio.999.pro {
+studio.tri-999.online {
     encode gzip zstd
     reverse_proxy localhost:3001
 }
@@ -185,7 +185,7 @@ sudo systemctl reload caddy
 ```bash
 sudo cp /opt/999pro/deploy/coturn.conf /etc/turnserver.conf
 # Edit /etc/turnserver.conf: set user=999pro:<strong-password>,
-# set realm=999.pro, uncomment cert/pkey paths (use Let's Encrypt certs)
+# set realm=tri-999.online, uncomment cert/pkey paths (use Let's Encrypt certs)
 
 # Open firewall ports
 sudo ufw allow 3478/tcp
@@ -224,7 +224,7 @@ After=network.target
 Type=simple
 User=www-data
 WorkingDirectory=/opt/999pro/mini-services/backend
-ExecStart=/home/www-data/.bun/bin/bunx tsx src/index.ts
+ExecStart=/usr/bin/env npx tsx src/index.ts
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -243,7 +243,7 @@ After=network.target 999pro-backend.service
 Type=simple
 User=www-data
 WorkingDirectory=/opt/999pro
-ExecStart=/home/www-data/.bun/bin/bun .next/standalone/server.js
+ExecStart=/usr/bin/env node .next/standalone/server.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -264,7 +264,7 @@ After=network.target 999pro-backend.service
 Type=simple
 User=www-data
 WorkingDirectory=/opt/999pro/mini-services/studio
-ExecStart=/home/www-data/.bun/bin/bun .next/standalone/server.js
+ExecStart=/usr/bin/env node .next/standalone/server.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -283,10 +283,10 @@ sudo systemctl enable --now 999pro-backend 999pro-frontend 999pro-studio
 
 ```bash
 cd /opt/999pro
-bun run build
+npm run build
 
 cd mini-services/studio
-bun run build
+npm run build
 ```
 
 ## 2. Monitoring
@@ -300,9 +300,9 @@ bun run build
 Use these with your uptime monitor (UptimeRobot, Pingdom, BetterUptime):
 
 ```
-https://999.pro/api/health        → expect 200 + {"ok": true}
-https://999.pro/api/ready         → expect 200 + {"ok": true}
-https://999.pro/api/health/detailed → expect 200, db.ok === true, latencyMs < 100
+https://tri-999.online/api/health        → expect 200 + {"ok": true}
+https://tri-999.online/api/ready         → expect 200 + {"ok": true}
+https://tri-999.online/api/health/detailed → expect 200, db.ok === true, latencyMs < 100
 ```
 
 ### 2.2 Sentry (error tracking)
@@ -351,27 +351,44 @@ scrape_configs:
 |-------|-----|----------|----------|
 | Liveness | /api/health | 200, ok:true | 3 consecutive failures |
 | Readiness | /api/ready | 200, ok:true | 1 failure (DB down = critical) |
-| Frontend | https://999.pro/ | 200 | 3 consecutive failures |
-| Studio | https://999.pro/studio/ | 200 | 3 consecutive failures |
+| Frontend | https://tri-999.online/ | 200 | 3 consecutive failures |
+| Studio | https://tri-999.online/studio/ | 200 | 3 consecutive failures |
 | DB latency | /api/health/detailed | db.latencyMs < 100 | > 500ms |
 | Memory | /api/health/detailed | rssMb < 1024 | > 2048 |
-| SSL cert | https://999.pro | valid > 14 days | < 7 days |
+| SSL cert | https://tri-999.online | valid > 14 days | < 7 days |
 | Disk usage | df -h | < 80% | > 90% |
 
 ## 3. Backups
 
-### 3.1 Database (SQLite)
+### 3.1 Database (PostgreSQL)
 
-Daily backup runs at 03:00 via cron (`scripts/setup-cron.sh`):
-- SQLite online backup (non-blocking)
+v25.5: PostgreSQL is the only production database. Daily backup runs at 03:00
+via cron (`scripts/setup-cron.sh`):
+- `pg_dump` with custom format (fast restore, parallelizable)
 - gzip compressed
 - Stored in `mini-services/backend/db/backups/`
 - Retention: 30 days
 
+**Manual backup**:
+```bash
+# Single command — produces a compressed custom-format dump
+PGPASSWORD="$DB_PASSWORD" pg_dump \
+  -h localhost -U "$DB_USER" -d "$DB_NAME" \
+  -F c -Z 9 \
+  -f "mini-services/backend/db/backups/999pro-$(date +%Y%m%d-%H%M%S).dump"
+```
+
 **Restore**:
 ```bash
-bash scripts/restore-db.sh latest   # restore most recent backup
-bash scripts/restore-db.sh <file>   # restore specific file
+# Stop the backend first to avoid write conflicts
+sudo systemctl stop 999pro-backend
+
+PGPASSWORD="$DB_PASSWORD" pg_restore \
+  -h localhost -U "$DB_USER" -d "$DB_NAME" \
+  --clean --if-exists --no-owner \
+  "mini-services/backend/db/backups/999pro-LATEST.dump"
+
+sudo systemctl start 999pro-backend
 ```
 
 ### 3.2 Uploaded files
@@ -452,7 +469,7 @@ Migration path:
 - [ ] `VAPID_PRIVATE_KEY` is fresh (not the dev default)
 - [ ] `RESET_ADMIN_TOKEN` is fresh
 - [ ] HTTPS is enforced (Caddy redirects HTTP → HTTPS)
-- [ ] CORS allowlist is explicit (`CLIENT_ORIGIN=https://999.pro,https://studio.999.pro`)
+- [ ] CORS allowlist is explicit (`CLIENT_ORIGIN=https://tri-999.online`)
 - [ ] `NODE_ENV=production` (enables strict CSP, disables dev logs)
 - [ ] Coturn password is strong (32+ random chars)
 - [ ] Firewall allows only 80, 443, 3478, 5349, 49152-65535/udp
@@ -470,35 +487,35 @@ After deploy, run through this checklist:
 sudo systemctl status 999pro-backend 999pro-frontend 999pro-studio
 
 # 2. Health checks
-curl https://999.pro/api/health
-curl https://999.pro/api/ready
-curl https://999.pro/api/health/detailed | jq
+curl https://tri-999.online/api/health
+curl https://tri-999.online/api/ready
+curl https://tri-999.online/api/health/detailed | jq
 
 # 3. Frontend loads
-curl -sI https://999.pro/ | head -3
+curl -sI https://tri-999.online/ | head -3
 
 # 4. Studio loads
-curl -sI https://999.pro/studio/ | head -3
+curl -sI https://tri-999.online/studio/ | head -3
 
 # 5. WebSocket upgrade works (should return 101 Switching Protocols)
 curl -sI -H "Connection: Upgrade" -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: test" \
-  https://999.pro/socket.io/?EIO=4&transport=websocket
+  https://tri-999.online/socket.io/?EIO=4&transport=websocket
 
 # 6. PWA manifest is reachable
-curl -sI https://999.pro/manifest.webmanifest
+curl -sI https://tri-999.online/manifest.webmanifest
 
 # 7. Service worker is reachable
-curl -sI https://999.pro/sw.js
+curl -sI https://tri-999.online/sw.js
 
 # 8. ICE config endpoint works
-curl https://999.pro/api/calls/ice-servers | jq
+curl https://tri-999.online/api/calls/ice-servers | jq
 
 # 9. Push VAPID public key
-curl https://999.pro/api/push/vapid-public | jq
+curl https://tri-999.online/api/push/vapid-public | jq
 
 # 10. Create first admin
-# Open https://999.pro/studio/ — first-run wizard appears
+# Open https://tri-999.online/studio/ — first-run wizard appears
 # Create admin account with strong password
 ```
 
@@ -517,12 +534,12 @@ git checkout <last-good-commit>
 
 # 3. Roll back the DB if a migration broke things
 cd mini-services/backend
-bunx prisma migrate resolve --rolled-back <bad-migration-name>
+npx prisma migrate resolve --rolled-back <bad-migration-name>
 bash /opt/999pro/scripts/restore-db.sh latest
 
 # 4. Rebuild
-cd /opt/999pro && bun run build
-cd mini-services/studio && bun run build
+cd /opt/999pro && npm run build
+cd mini-services/studio && npm run build
 
 # 5. Restart
 sudo systemctl start 999pro-backend 999pro-frontend 999pro-studio
@@ -538,12 +555,12 @@ git pull origin main
 
 # Apply migrations (no data loss with prisma migrate deploy)
 cd mini-services/backend
-bunx prisma migrate deploy
-bunx prisma generate
+npx prisma migrate deploy
+npx prisma generate
 
 # Rebuild frontend + studio
-cd /opt/999pro && bun run build
-cd mini-services/studio && bun run build
+cd /opt/999pro && npm run build
+cd mini-services/studio && npm run build
 
 # Restart services (zero downtime if behind load balancer)
 sudo systemctl restart 999pro-backend 999pro-frontend 999pro-studio

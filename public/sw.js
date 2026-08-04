@@ -5,8 +5,12 @@
 // breaks ALL PWA features (offline cache, push notifications, etc).
 // ============================================================================
 
-const CACHE_VERSION = '999pro-v22-5-ai-auth-fix-2026-07-20'
+// v25.5: bump cache version to force SW update + remove diagnostic date suffix.
+const CACHE_VERSION = '999pro-v25-5-production'
 const OFFLINE_URL = '/offline.html'
+// v25.5: SW_DEBUG flag — set to true only when debugging SW issues.
+// In production this is false so no console noise is generated.
+const SW_DEBUG = false
 
 // Core app shell — always precached. These files are small and stable.
 const APP_SHELL = [
@@ -119,13 +123,16 @@ self.addEventListener('install', (event) => {
       .then((results) => {
         const failed = results.filter((r) => r.status === 'rejected')
         if (failed.length > 0) {
-          console.warn(
-            '[SW] Precache partial failure:',
-            failed.length,
-            'of',
-            results.length,
-            'files failed. Offline support may be degraded.',
-          )
+          // v25.5: gate behind SW_DEBUG to avoid console noise in production.
+          if (typeof SW_DEBUG !== 'undefined' && SW_DEBUG) {
+            console.warn(
+              '[SW] Precache partial failure:',
+              failed.length,
+              'of',
+              results.length,
+              'files failed. Offline support may be degraded.',
+            )
+          }
         }
       })
       .then(() => {
@@ -228,11 +235,10 @@ self.addEventListener('activate', (event) => {
         // ignore cache cleanup errors
       }
 
-      // Log storage usage for debugging (P-MED-010)
-      if (navigator.storage && navigator.storage.estimate) {
-        const est = await navigator.storage.estimate()
-        console.log('[SW] Storage usage:', Math.round((est.usage || 0) / 1024 / 1024), 'MB /', Math.round((est.quota || 0) / 1024 / 1024), 'MB quota')
-      }
+      // v25.5: removed diagnostic console.log — was firing on every SW
+      // activation in production, polluting the console.
+      // Storage estimate is still available via navigator.storage.estimate()
+      // if needed for debugging.
 
       // Enable navigation preload
       if (self.registration.navigationPreload) {
@@ -678,7 +684,7 @@ self.addEventListener('pushsubscriptionchange', (event) => {
             }
           }
         } catch (e) {
-          console.warn('[SW] Failed to fetch VAPID key for rotation:', e)
+          if (SW_DEBUG) console.warn('[SW] Failed to fetch VAPID key for rotation:', e)
         }
 
         const newSub = await reg.pushManager.subscribe({
@@ -697,7 +703,7 @@ self.addEventListener('pushsubscriptionchange', (event) => {
           })
         }
       } catch (e) {
-        console.warn('[SW] pushsubscriptionchange failed:', e)
+        if (SW_DEBUG) console.warn('[SW] pushsubscriptionchange failed:', e)
       }
     })(),
   )
