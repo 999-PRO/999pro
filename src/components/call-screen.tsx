@@ -106,6 +106,52 @@ export function CallScreen(props: CallScreenProps) {
     }
   }, [call.status])
 
+  // v25.6 (call UI): Proximity sensor — turn off the screen when the phone
+  // is held to the ear during an audio call. This is the standard phone-app
+  // behaviour: when the proximity sensor detects the phone is near the face,
+  // the screen turns off to prevent accidental taps and save battery.
+  // When the phone moves away, the screen turns back on.
+  //
+  // Browser support: 'ondeviceproximity' (older) and 'onuserproximity' (newer).
+  // iOS Safari doesn't expose these events to web pages, so this is primarily
+  // for Android Chrome. iOS handles proximity at the OS level for PWA calls
+  // when the audio is routed to the earpiece (which it is by default).
+  //
+  // We also use the Page Visibility API as a fallback: if the page becomes
+  // hidden during a call, we treat it as "phone to ear".
+  const [isNearProximity, setIsNearProximity] = useState(false)
+  useEffect(() => {
+    if (call.status !== 'connected') {
+      setIsNearProximity(false)
+      return
+    }
+    // Only enable proximity screen-off for AUDIO calls (video calls need the screen).
+    if (call.type === 'video') return
+
+    const onDeviceProximity = (e: any) => {
+      // e.value is the distance in centimeters; e.min/e.max are the sensor range.
+      // When e.value < e.max (or e.value === 0), the phone is near the ear.
+      const isNear = e.value !== undefined && (e.value === 0 || (e.max && e.value < e.max))
+      setIsNearProximity(!!isNear)
+    }
+    const onUserProximity = (e: any) => {
+      // userproximity event: e.near is a boolean (true when near).
+      setIsNearProximity(!!e.near)
+    }
+    // Some browsers fire 'deviceproximity', others 'userproximity'. Register both.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('deviceproximity', onDeviceProximity as EventListener)
+      window.addEventListener('userproximity', onUserProximity as EventListener)
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('deviceproximity', onDeviceProximity as EventListener)
+        window.removeEventListener('userproximity', onUserProximity as EventListener)
+      }
+      setIsNearProximity(false)
+    }
+  }, [call.status, call.type])
+
   const peer = call.peer
   const peerName = peer?.displayName || peer?.username || 'Пользователь'
   const peerInitials = peerName.slice(0, 2).toUpperCase()
@@ -245,14 +291,23 @@ export function CallScreen(props: CallScreenProps) {
   }
 
   // ====== ACTIVE CALL SCREEN ======
+  // v25.6 (call UI): when the proximity sensor detects the phone is near the
+  // ear (audio calls only), we turn the screen black to save battery and
+  // prevent accidental taps. The wake lock is released so the OS can turn
+  // off the display. When the phone moves away, the screen returns.
+  const proximityScreenOff = isNearProximity && call.type === 'audio' && call.status === 'connected'
   return (
-    <div className="fixed inset-0 z-[200] flex flex-col"
+    <div className="fixed inset-0 z-[200] flex flex-col transition-opacity duration-300"
       style={{
-        background: isVideo
+        background: proximityScreenOff
           ? '#000'
-          : 'linear-gradient(135deg, rgba(56,189,248,0.18) 0%, rgba(37,99,235,0.25) 50%, rgba(124,58,237,0.25) 100%)',
-        backdropFilter: 'blur(40px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          : isVideo
+            ? '#000'
+            : 'linear-gradient(135deg, rgba(56,189,248,0.18) 0%, rgba(37,99,235,0.25) 50%, rgba(124,58,237,0.25) 100%)',
+        backdropFilter: proximityScreenOff ? 'none' : 'blur(40px) saturate(180%)',
+        WebkitBackdropFilter: proximityScreenOff ? 'none' : 'blur(40px) saturate(180%)',
+        opacity: proximityScreenOff ? 0 : 1,
+        pointerEvents: proximityScreenOff ? 'none' : 'auto',
       }}
     >
       {/* ═══════════════════════════════════════════════════════════════

@@ -290,7 +290,18 @@ export async function safeComparePassword(
  * tokenVersion is bumped (the next request will see a stale cache entry,
  * mismatch, and re-fetch).
  */
-interface CachedAuth { v: number; role: UserRole; expires: number }
+// v25.6 (auth security fix): cache now stores emailVerified + lockedUntil so
+// the email-verification gate can be enforced on cache HITs too (not just
+// on cache MISS). Previously, once a user was cached (via socket connect),
+// every subsequent REST request skipped the emailVerified check — allowing
+// unverified users to use protected routes for up to 60s per cache window.
+interface CachedAuth {
+  v: number
+  role: UserRole
+  expires: number
+  emailVerified: Date | null
+  lockedUntil: Date | null
+}
 // B-HIGH-002: bounded LRU cache (was: unbounded Map — grew forever, leaking
 // memory one entry per user-id per token-version bump; under sustained traffic
 // with rotating users this caused OOM over days of uptime).
@@ -382,8 +393,32 @@ async function requireAuthAsync(req: AuthedRequest, res: Response, next: NextFun
         return res.status(403).json({ error: 'Email not verified. Please verify your email to continue.', emailVerificationRequired: true })
       }
     }
-    cached = { v: user.tokenVersion, role: user.role as UserRole, expires: now + AUTH_CACHE_TTL_MS }
+    cached = {
+      v: user.tokenVersion,
+      role: user.role as UserRole,
+      expires: now + AUTH_CACHE_TTL_MS,
+      // v25.6: store these so we can re-check on cache HIT
+      emailVerified: user.emailVerified,
+      lockedUntil: user.lockedUntil,
+    }
     AUTH_CACHE.set(decoded.sub, cached)
+  } else {
+    // v25.6 (auth security fix): re-check emailVerified + lockedUntil on cache HIT.
+    // Previously these checks only ran on cache MISS, allowing unverified users
+    // to bypass the gate for up to 60s after their socket connected.
+    if (cached.lockedUntil && cached.lockedUntil.getTime() > Date.now()) {
+      AUTH_CACHE.delete(decoded.sub)
+      return res.status(403).json({ error: 'Аккаунт заблокирован администратором' })
+    }
+    if (!cached.emailVerified) {
+      const securitySettings = await prisma.securitySettings.findUnique({ where: { id: 'default' } })
+      const emailVerificationRequired =
+        securitySettings?.emailVerificationRequired ??
+        process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
+      if (emailVerificationRequired) {
+        return res.status(403).json({ error: 'Email not verified. Please verify your email to continue.', emailVerificationRequired: true })
+      }
+    }
   }
 
   // If the user's tokenVersion has been bumped, the token is stale.
@@ -487,8 +522,31 @@ async function optionalAuthAsync(req: AuthedRequest, next: NextFunction): Promis
           return next()
         }
       }
-      cached = { v: user.tokenVersion, role: user.role as UserRole, expires: now + AUTH_CACHE_TTL_MS }
+      cached = {
+        v: user.tokenVersion,
+        role: user.role as UserRole,
+        expires: now + AUTH_CACHE_TTL_MS,
+        // v25.6: store these so we can re-check on cache HIT
+        emailVerified: user.emailVerified,
+        lockedUntil: user.lockedUntil,
+      }
       AUTH_CACHE.set(decoded.sub, cached)
+    } else {
+      // v25.6 (auth security fix): re-check on cache HIT (same as requireAuth).
+      if (cached.lockedUntil && cached.lockedUntil.getTime() > Date.now()) {
+        AUTH_CACHE.delete(decoded.sub)
+        return next()
+      }
+      if (!cached.emailVerified) {
+        const securitySettings = await prisma.securitySettings.findUnique({ where: { id: 'default' } })
+        const emailVerificationRequired =
+          securitySettings?.emailVerificationRequired ??
+          process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
+        if (emailVerificationRequired) {
+          AUTH_CACHE.delete(decoded.sub)
+          return next()
+        }
+      }
     }
 
     // If tokenVersion mismatch → revoked token, treat as anonymous.

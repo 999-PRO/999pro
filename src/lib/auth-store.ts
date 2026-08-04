@@ -327,6 +327,17 @@ export const useAuthStore = create<AuthState>()(
             set({ isInitialized: true })
             return
           }
+          // v25.6 (auth fix): a 403 with `emailVerificationRequired: true` means
+          // the user's email is not yet verified but the account is valid.
+          // Don't logout — keep the token + user so the EmailVerificationModal
+          // can continue polling. Logging out here was causing admins (whose
+          // emailVerified was null) to be kicked to the login screen immediately
+          // after login when EMAIL_VERIFICATION_REQUIRED=true.
+          if (e instanceof ApiError && e.status === 403 && e.details &&
+              typeof e.details === 'object' && 'emailVerificationRequired' in e.details) {
+            set({ isInitialized: true })
+            return
+          }
           if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
             set({ user: null, token: null, setupToken: null, isAuthenticated: false, isInitialized: true })
           } else {

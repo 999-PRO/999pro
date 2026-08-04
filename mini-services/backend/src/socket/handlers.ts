@@ -161,20 +161,45 @@ async function tryAuth(socket: Socket): Promise<{ userId: string; username: stri
     // (getCachedAuth compares v and deletes on mismatch).
     const cached = getCachedAuth(decoded.sub, decoded.v)
     if (cached) {
+      // v25.6 (auth security fix): re-check emailVerified + lockedUntil on cache HIT.
+      // Previously the socket layer accepted any cached entry, allowing unverified
+      // users to connect and use socket events (chat, typing, calls) even when
+      // EMAIL_VERIFICATION_REQUIRED=true.
+      if (cached.lockedUntil && cached.lockedUntil.getTime() > Date.now()) return null
+      if (!cached.emailVerified) {
+        const securitySettings = await prisma.securitySettings.findUnique({ where: { id: 'default' } })
+        const emailVerificationRequired =
+          securitySettings?.emailVerificationRequired ??
+          process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
+        if (emailVerificationRequired) return null
+      }
       return { userId: decoded.sub, username: decoded.username }
     }
     // Cache miss — fall through to DB lookup, then populate the cache so the
     // NEXT socket connect (and any REST request) hits the cache.
     const user = await prisma.user.findUnique({
       where: { id: decoded.sub },
-      select: { tokenVersion: true, deletedAt: true, role: true },
+      // v25.6: select emailVerified + lockedUntil so we can check them here
+      // AND cache them for future cache-HIT checks.
+      select: { tokenVersion: true, deletedAt: true, role: true, emailVerified: true, lockedUntil: true },
     })
     if (!user || user.deletedAt) return null
     if (user.tokenVersion !== decoded.v) return null
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) return null
+    // v25.6: enforce email verification on socket connect too
+    if (!user.emailVerified) {
+      const securitySettings = await prisma.securitySettings.findUnique({ where: { id: 'default' } })
+      const emailVerificationRequired =
+        securitySettings?.emailVerificationRequired ??
+        process.env.EMAIL_VERIFICATION_REQUIRED === 'true'
+      if (emailVerificationRequired) return null
+    }
     setCachedAuth(decoded.sub, {
       v: user.tokenVersion,
       role: user.role as 'user' | 'admin',
       expires: Date.now() + 60_000,
+      emailVerified: user.emailVerified,
+      lockedUntil: user.lockedUntil,
     })
     return { userId: decoded.sub, username: decoded.username }
   } catch {

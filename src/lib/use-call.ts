@@ -328,15 +328,13 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
     async (callId: string, peerId: string, type: 'audio' | 'video') => {
       const pc = await createPeerConnection()
       pcMeta.set(pc, { callId, peerId })
-      pcRef.current = pc
-
+      // v25.6 (calls critical fix): DO NOT set pcRef.current here — set it
+      // AFTER addTransceiver completes. Otherwise, any signal arriving during
+      // the slow acquireLocalStream() window is processed against a PC with
+      // no transceivers, causing duplicate transceiver creation and broken media.
       const stream = await acquireLocalStream(type)
 
       // Use transceivers instead of offerToReceiveAudio/Video (deprecated).
-      // Modern WebRTC API: addTransceiver with direction 'sendrecv' tells
-      // the browser to both send and receive media of that kind.
-      // This avoids "bad configuration parameters" errors on Safari iOS
-      // and other browsers that rejected the legacy offerToReceive* options.
       pc.addTransceiver(stream.getAudioTracks()[0] || 'audio', {
         direction: 'sendrecv',
       })
@@ -345,10 +343,12 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
         if (videoTrack) {
           pc.addTransceiver(videoTrack, { direction: 'sendrecv' })
         } else {
-          // No video track (camera unavailable) — still receive remote video
           pc.addTransceiver('video', { direction: 'recvonly' })
         }
       }
+
+      // NOW the PC is fully configured — expose it so handleSignal can process signals.
+      pcRef.current = pc
 
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
@@ -364,11 +364,21 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
     async (callId: string, peerId: string, type: 'audio' | 'video') => {
       const pc = await createPeerConnection()
       pcMeta.set(pc, { callId, peerId })
-      pcRef.current = pc
-
+      // v25.6 (calls critical fix): DO NOT set pcRef.current here — set it
+      // AFTER addTransceiver completes. This is the root cause of "stuck on
+      // Connecting": if the caller's offer arrives during the slow
+      // acquireLocalStream() window (500ms-3s on mobile), handleSignal sees
+      // pcRef.current is set and processes the offer immediately — but the PC
+      // has no transceivers yet, so setRemoteDescription creates DUPLICATE
+      // transceivers based on the offer's m-lines. When acceptIncomingCall
+      // then calls addTransceiver, those tracks end up on un-negotiated
+      // transceivers and media never flows.
+      //
+      // By deferring pcRef.current assignment until after addTransceiver,
+      // handleSignal buffers the offer in pendingSignalsRef, and
+      // drainPendingSignals() replays it against a fully-configured PC.
       const stream = await acquireLocalStream(type)
 
-      // Same transceiver approach as initiateCall — see comment there.
       pc.addTransceiver(stream.getAudioTracks()[0] || 'audio', {
         direction: 'sendrecv',
       })
@@ -380,6 +390,11 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
           pc.addTransceiver('video', { direction: 'recvonly' })
         }
       }
+
+      // NOW the PC is fully configured — expose it so handleSignal can process
+      // the buffered offer (and any ICE candidates that arrived).
+      pcRef.current = pc
+
       // v25.4 (GAP-6): drain any signals that arrived while we were setting up
       // (the caller's offer often reaches us before getUserMedia finishes).
       await drainPendingSignals()
@@ -459,6 +474,13 @@ export function useCall(socketApi: UseCallApi, options: UseCallHookOptions) {
       opts.remoteVideoRef.current.srcObject = null
     }
     pendingCandidatesRef.current = []
+    // v25.6 (calls fix #2): clear buffered signals so a stale offer from a
+    // previous call isn't replayed against the next call's PC.
+    pendingSignalsRef.current = []
+    // v25.6 (calls fix #1): also clear the screen-share state so a stale
+    // track reference doesn't leak into the next call.
+    originalVideoTrackRef.current = null
+    setIsScreenSharing(false)
   }, [])
 
   // ====== SPEAKER TOGGLE ======

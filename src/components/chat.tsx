@@ -733,6 +733,18 @@ export function ChatView() {
         cur.map((u) => (u.id === data.userId ? { ...u, isOnline: false, lastSeen: new Date().toISOString() } : u)),
       )
     },
+    // v25.6 (chat sync): when someone creates a conversation WITH us, add it
+    // to our chat list immediately so we can receive their messages without
+    // a page refresh.
+    onConversationCreated: (payload) => {
+      if (!payload?.conversation) return
+      const newConv = payload.conversation
+      setConversations((cur) => {
+        // Avoid duplicates — if we already have this conversation, skip.
+        if (cur.some((c) => c.id === newConv.id)) return cur
+        return [newConv, ...cur]
+      })
+    },
   })
 
   // Mark messages as read when opening a conversation

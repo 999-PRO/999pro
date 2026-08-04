@@ -150,6 +150,11 @@ router.post(
           role,
           referralCode: newRefCode,
           referredById: referrerId,
+          // v25.6 (auth fix): admins are operator-trusted — auto-verify email
+          // so they're not blocked by EMAIL_VERIFICATION_REQUIRED. Without this,
+          // the first admin (created via registration when adminCount===0) would
+          // be locked out of their own account when email verification is on.
+          emailVerified: role === 'admin' ? new Date() : undefined,
         },
       })
       return { user: created, assignedRole: role }
@@ -665,6 +670,12 @@ router.get(
         lastSeen: true,
         createdAt: true,
         updatedAt: true,
+        // v25.6 (email verification fix): include emailVerified + totpEnabled
+        // so the frontend can detect verification status. Previously these were
+        // missing from the select, so /me always returned emailVerified:null —
+        // the EmailVerificationModal's polling never detected verification.
+        emailVerified: true,
+        totpEnabled: true,
       },
     })
     if (!user) return res.status(404).json({ error: 'User not found' })
@@ -870,6 +881,8 @@ router.post(
           password,
           displayName: data.displayName,
           role: 'admin',
+          // v25.6 (auth fix): auto-verify admin email — see /register for rationale.
+          emailVerified: new Date(),
         },
       })
     }).catch((err) => {
@@ -1110,6 +1123,8 @@ router.post(
           password,
           displayName: data.displayName,
           role: 'admin',
+          // v25.6 (auth fix): auto-verify admin email — see /register for rationale.
+          emailVerified: new Date(),
         },
       })
     })
@@ -1247,18 +1262,27 @@ router.post(
     })
     await auditLogRaw(user.id, req, 'auth', user.id, 'totp_enabled', {})
 
+    // v25.6 (2FA fix): re-fetch the user AFTER the update so the returned
+    // object reflects totpEnabled:true. Previously the stale pre-update
+    // `user` was returned, so the frontend saw totpEnabled:false even after
+    // successful enrollment — causing the 2FA status to display incorrectly.
+    const updatedUser = await prisma.user.findUnique({ where: { id: user.id } })
+    if (!updatedUser) {
+      return res.status(500).json({ error: 'User disappeared after TOTP update' })
+    }
+
     // Issue a fresh regular JWT (no totpPending). If the caller used a
     // setup token, this regular token replaces it — full admin access
     // restored. If the caller already had a regular token, this just
     // refreshes it (harmless).
     const freshToken = signToken({
-      sub: user.id,
-      username: user.username,
-      role: user.role as 'user' | 'admin',
-      v: user.tokenVersion,
+      sub: updatedUser.id,
+      username: updatedUser.username,
+      role: updatedUser.role as 'user' | 'admin',
+      v: updatedUser.tokenVersion,
     })
 
-    res.json({ enabled: true, token: freshToken, user: publicUser(user, { includeContact: true }) })
+    res.json({ enabled: true, token: freshToken, user: publicUser(updatedUser, { includeContact: true }) })
   }),
 )
 

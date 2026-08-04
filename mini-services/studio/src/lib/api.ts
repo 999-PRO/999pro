@@ -158,6 +158,15 @@ function buildUrl(path: string): string {
 export function assetUrl(path: string | null | undefined): string {
   if (!path) return ''
   if (/^https?:\/\//.test(path) || path.startsWith('data:')) return path
+  // v25.6 (Hero Block fix): Studio has basePath '/studio' — /uploads/* and
+  // /api/* must be prefixed so they match the auto-prefixed Next.js rewrites
+  // when running standalone (dev mode). In production, nginx proxies /studio/uploads/
+  // to the backend via the studio rewrite. Without this prefix, image previews
+  // in Studio show broken (404) because the browser fetches /uploads/abc.jpg
+  // which doesn't match /studio/uploads/:path*.
+  if (typeof window !== 'undefined' && (path.startsWith('/uploads/') || path.startsWith('/api/'))) {
+    return `/studio${path}`
+  }
   return path
 }
 

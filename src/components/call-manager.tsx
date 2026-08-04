@@ -227,11 +227,11 @@ export function CallManager() {
       patchCall({ status: 'connecting' })
       // Caller initiates the WebRTC offer now that the recipient accepted
       if (directionRef.current === 'outgoing' && peerIdRef.current) {
-        webrtc.initiateCall(payload.callId, peerIdRef.current, typeRef.current).then(() => {
-          patchCall({ status: 'connected', startedAt: Date.now() })
-        }).catch((e: any) => {
-          // Same error handling as handleAccept — distinguish permission
-          // denied from other failures.
+        // v25.6 (calls fix #4): do NOT transition to 'connected' here — wait
+        // for ICE to reach 'connected' state (handled in onIceConnectionStateChange).
+        // Previously the UI showed "connected" timer while media wasn't flowing,
+        // which users perceived as "stuck on Connecting".
+        webrtc.initiateCall(payload.callId, peerIdRef.current, typeRef.current).catch((e: any) => {
           const errName = e?.name || ''
           let msg = 'Не удалось установить соединение'
           if (errName === 'NotAllowedError' || errName === 'SecurityError') {
@@ -289,7 +289,10 @@ export function CallManager() {
       }
     },
     onCallSignal: (payload) => {
-      webrtc.handleSignal(payload.from, payload.data)
+      // v25.6 (calls fix #3): catch promise rejections from handleSignal
+      // (e.g. setRemoteDescription fails on malformed SDP) so they don't
+      // become unhandled rejections that silently kill the call.
+      void webrtc.handleSignal(payload.from, payload.data).catch(() => {})
     },
   })
 
@@ -300,6 +303,15 @@ export function CallManager() {
     {
       localVideoRef, remoteVideoRef,
       onIceConnectionStateChange: (state) => {
+        // v25.6 (calls fix #4): transition to 'connected' ONLY when ICE
+        // actually connects — not when initiateCall/acceptIncomingCall resolve.
+        // This ensures the UI shows "Соединение…" until media truly flows.
+        if (state === 'connected' || state === 'completed') {
+          const cur = useCallStore.getState().call
+          if (cur && cur.status !== 'connected') {
+            patchCall({ status: 'connected', startedAt: cur.startedAt || Date.now() })
+          }
+        }
         // Auto-restart ICE on 'failed' — recovers from network changes
         // (WiFi → cellular, NAT rebinding) without dropping the call.
         // Only the caller initiates the restart to avoid both sides
@@ -356,7 +368,9 @@ export function CallManager() {
     if (peerIdRef.current) {
       try {
         await webrtcAcceptIncomingCall(call.callId, peerIdRef.current, call.type)
-        patchCall({ status: 'connected', startedAt: Date.now() })
+        // v25.6 (calls fix #4): do NOT patchCall({status:'connected'}) here —
+        // wait for ICE to reach 'connected' state (handled in onIceConnectionStateChange).
+        // The status stays 'connecting' until media truly flows.
       } catch (e: any) {
         // Distinguish between permission denied (user blocked camera/mic)
         // and other errors (device not found, HTTPS required, etc.)

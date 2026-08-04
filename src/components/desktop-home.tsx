@@ -136,6 +136,21 @@ function BentoHero({ onNavigate, onOpenSearch }: { onNavigate: (v: string) => vo
     fetchStats()
   }, [fetchHero, fetchStats])
 
+  // v25.6 (Hero Block fix): instantly refresh when Studio saves the hero block.
+  // Previously BentoHero had no listener for '999pro:settings-changed' — admins
+  // had to refresh the page to see their changes. Now the hero updates the
+  // moment Studio broadcasts the save.
+  useEffect(() => {
+    const onSettingsChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { key?: string } | undefined
+      if (detail?.key === 'heroBlock') {
+        void fetchHero()
+      }
+    }
+    window.addEventListener('999pro:settings-changed', onSettingsChanged as EventListener)
+    return () => window.removeEventListener('999pro:settings-changed', onSettingsChanged as EventListener)
+  }, [fetchHero])
+
   // v12.6: Pull To Refresh subscription — refetch hero + stats.
   usePullToRefreshSubscription(async () => {
     await Promise.all([fetchHero(), fetchStats()])
@@ -197,19 +212,46 @@ function BentoHero({ onNavigate, onOpenSearch }: { onNavigate: (v: string) => vo
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-3 pt-2">
-                <button
-                  onClick={() => onNavigate('catalog')}
-                  className="group/btn inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white text-slate-900 text-sm font-semibold shadow-2xl shadow-white/20 hover:scale-[1.03] active:scale-95 transition-all duration-300"
-                >
-                  Открыть каталог
-                  <ArrowRight className="h-4 w-4 group-hover/btn:translate-x-0.5 transition-transform" />
-                </button>
-                <button
-                  onClick={() => onNavigate('club')}
-                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white/10 backdrop-blur-md text-white text-sm font-semibold border border-white/20 hover:bg-white/15 transition-all duration-300"
-                >
-                  999 CLUB
-                </button>
+                {/* v25.6 (Hero Block fix): use config-driven buttons when admin
+                    has configured them; fall back to sensible defaults otherwise. */}
+                {hero?.primaryButton ? (
+                  <button
+                    onClick={() => {
+                      if (hero.primaryButton?.view) onNavigate(hero.primaryButton.view)
+                      else if (hero.primaryButton?.link) window.open(hero.primaryButton.link, '_blank', 'noopener,noreferrer')
+                    }}
+                    className="group/btn inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white text-slate-900 text-sm font-semibold shadow-2xl shadow-white/20 hover:scale-[1.03] active:scale-95 transition-all duration-300"
+                  >
+                    {hero.primaryButton.text}
+                    <ArrowRight className="h-4 w-4 group-hover/btn:translate-x-0.5 transition-transform" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onNavigate('catalog')}
+                    className="group/btn inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white text-slate-900 text-sm font-semibold shadow-2xl shadow-white/20 hover:scale-[1.03] active:scale-95 transition-all duration-300"
+                  >
+                    Открыть каталог
+                    <ArrowRight className="h-4 w-4 group-hover/btn:translate-x-0.5 transition-transform" />
+                  </button>
+                )}
+                {hero?.secondaryButton ? (
+                  <button
+                    onClick={() => {
+                      if (hero.secondaryButton?.view) onNavigate(hero.secondaryButton.view)
+                      else if (hero.secondaryButton?.link) window.open(hero.secondaryButton.link, '_blank', 'noopener,noreferrer')
+                    }}
+                    className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white/10 backdrop-blur-md text-white text-sm font-semibold border border-white/20 hover:bg-white/15 transition-all duration-300"
+                  >
+                    {hero.secondaryButton.text}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onNavigate('club')}
+                    className="inline-flex items-center gap-2 px-6 py-3.5 rounded-full bg-white/10 backdrop-blur-md text-white text-sm font-semibold border border-white/20 hover:bg-white/15 transition-all duration-300"
+                  >
+                    999 CLUB
+                  </button>
+                )}
               </div>
             </div>
           </div>

@@ -68,6 +68,31 @@ router.post(
         messages: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
     })
+
+    // v25.6 (chat sync fix): broadcast the new conversation to the OTHER
+    // participant so their chat list updates in real-time. Previously, the
+    // other user's socket was never joined to the new conversation's room
+    // (auto-join only runs on socket connect), so when the creator sent the
+    // first message, the broadcast missed the other participant entirely —
+    // they only saw the message after refreshing (which re-runs auto-join).
+    // Now we both join both participants' sockets to the room AND emit
+    // 'conversation:created' so the client can prepend the conversation.
+    try {
+      const io = getIo()
+      if (io) {
+        // Join both participants' currently-connected sockets to the new room.
+        io.in(`user:${meId}`).socketsJoin(`conversation:${conv.id}`)
+        io.in(`user:${participantId}`).socketsJoin(`conversation:${conv.id}`)
+        // Notify the other participant so their client adds the conversation.
+        io.to(`user:${participantId}`).emit('conversation:created', {
+          conversation: formatConversation(conv, participantId),
+        })
+      }
+    } catch {
+      // Non-critical — the conversation was created successfully, the
+      // broadcast is best-effort.
+    }
+
     res.status(201).json({ conversation: formatConversation(conv, meId) })
   }),
 )
