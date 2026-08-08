@@ -605,7 +605,10 @@ function ReviewCard({
       {/* v25.7 (TZ ЭТАП 2.3): nested admin replies. The backend includes
           replies via Prisma `include: { replies: true }` on GET /api/reviews.
           Each reply is rendered as a smaller, indented card with an
-          "Администратор" badge. Replies have no rating (rating=0). */}
+          "Администратор" badge. Replies have no rating (rating=0).
+          v25.8 (TRI999 launch): admin can delete any reply (own or another
+          admin's). The backend's DELETE /api/reviews/:id allows admin to
+          delete any review including replies. */}
       {review.replies && review.replies.length > 0 && (
         <div className="mt-3 ml-3 pl-3 border-l-2 border-primary/30 space-y-2">
           {review.replies.map((reply) => (
@@ -627,6 +630,26 @@ function ReviewCard({
                 <span className="text-[10px] text-muted-foreground ml-auto">
                   {timeAgo(new Date(reply.createdAt))}
                 </span>
+                {/* v25.8: admin can delete any reply (own or another admin's).
+                    Backend DELETE /api/reviews/:id allows this for admin role. */}
+                {isAdmin && (
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Удалить этот ответ?')) return
+                      try {
+                        await api.delete(`/api/reviews/${reply.id}`)
+                        onReplyAdded?.()
+                      } catch (e: any) {
+                        alert(e?.message || 'Не удалось удалить ответ')
+                      }
+                    }}
+                    className="h-6 w-6 rounded-full hover:bg-destructive/10 grid place-items-center text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                    aria-label="Удалить ответ"
+                    title="Удалить ответ"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
               </div>
               <p className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">
                 {reply.content}

@@ -37,7 +37,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { shortId } = await params
   if (!shortId || !/^[A-Za-z0-9]{4,32}$/.test(shortId)) {
-    return { title: 'Товар не найден — 999 — Три девятки' }
+    return { title: 'Товар не найден — TRI999' }
   }
 
   // Resolve the public URL from the request headers — this ensures OG tags
@@ -50,17 +50,17 @@ export async function generateMetadata({
 
   const data = await fetchShareData(shortId)
   if (!data) {
-    return { title: 'Товар не найден — 999 — Три девятки' }
+    return { title: 'Товар не найден — TRI999' }
   }
 
   const { product } = data
   // Use the request-resolved shareUrl — overrides whatever the backend sent
   // (which may have used a different host if the request came through a proxy).
   const shareUrl = `${publicUrl}/p/${shortId}`
-  const title = `${product.title} — ${formatPrice(product.price, product.currency)} | 999 — Три девятки`
+  const title = `${product.title} — ${formatPrice(product.price, product.currency)} | TRI999`
   const description =
     (product.description ? product.description.slice(0, 160) : null) ||
-    `${product.title} за ${formatPrice(product.price, product.currency)}. Маркетплейс нового поколения — 999 — Три девятки.`
+    `${product.title} за ${formatPrice(product.price, product.currency)}. TRI999.`
 
   // ─── OG Image — use OUR proxy endpoint, not the raw Unsplash URL ───
   // WhatsApp / Facebook / Telegram crawlers don't reliably fetch OG images
@@ -93,7 +93,7 @@ export async function generateMetadata({
       // OG spec but not in Next's type definitions).
       type: 'product' as any,
       locale: 'ru_RU',
-      siteName: '999 — Три девятки',
+      siteName: 'TRI999',
       url: shareUrl,
       // Single OG image (not multiple) — WhatsApp prefers ONE og:image
       // and may ignore the rest. Pointing to our proxy ensures it's
@@ -103,7 +103,7 @@ export async function generateMetadata({
           url: ogImageUrl,
           width: 1200,
           height: 1200,
-          alt: `${product.title} — 999 — Три девятки`,
+          alt: `${product.title} — TRI999`,
           type: 'image/jpeg',
         },
       ],
@@ -202,7 +202,7 @@ export default async function SharePage({
     sku: data.shortId,
     brand: {
       '@type': 'Brand',
-      name: '999 — Три девятки',
+      name: 'TRI999',
     },
     offers: {
       '@type': 'Offer',

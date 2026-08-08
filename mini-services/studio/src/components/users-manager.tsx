@@ -59,13 +59,16 @@ const fetchUsers = useCallback(() => {
     setLoading(true)
     setError(null)
     api
-      .get<{ items: UserRow[]; total: number }>('/api/users/search', {
+      .get<{ users: UserRow[]; items?: UserRow[]; total: number }>('/api/users/search', {
         auth: true,
         query: { q: deferredSearch || undefined, limit: PAGE_SIZE, offset: page * PAGE_SIZE },
       })
       .then((d) => {
-        setUsers(d.items || [])
-        setTotal(d.total ?? d.items.length)
+        // v25.8: backend returns { users, total }, but older versions returned
+        // { items, total }. Support both for forward/backward compat.
+        const list = d.users || d.items || []
+        setUsers(list)
+        setTotal(d.total ?? list.length)
       })
       .catch((e: unknown) => {
         const msg = e instanceof Error ? (e instanceof Error ? e.message : String(e)) : 'Не удалось загрузить пользователей'

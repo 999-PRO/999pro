@@ -50,11 +50,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(APP_PUBLIC_URL),
   // v12.6: minimal title "999 Store" per Phase 6 spec. Description kept short
   // and on-brand for SEO/social cards.
-  title: '999 — Три девятки',
-  description: '999 — Три девятки. Современный маркетплейс товаров и услуг с голосовым AI-агентом.',
-  applicationName: '999 — Три девятки',
-  authors: [{ name: 'Три девятки Team' }],
-  keywords: ['999', 'Три девятки', 'маркетплейс', 'магазин', 'каталог', 'чат', 'AI'],
+  title: 'TRI999',
+  description: 'TRI999 — современный маркетплейс товаров и услуг с AI-ассистентом.',
+  applicationName: 'TRI999',
+  authors: [{ name: 'TRI999 Team' }],
+  keywords: ['TRI999', 'маркетплейс', 'магазин', 'каталог', 'чат', 'AI'],
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
@@ -62,7 +62,7 @@ export const metadata: Metadata = {
     // background (html/body blue) shows through it — no white strip above
     // the header when the app runs as a PWA. Requires viewport-fit=cover.
     statusBarStyle: 'black-translucent',
-    title: '999 — Три девятки',
+    title: 'TRI999',
   },
   icons: {
     icon: [
@@ -97,25 +97,25 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: '999 — Три девятки',
-    description: '999 — Три девятки. Современный маркетплейс товаров и услуг с голосовым AI-агентом.',
+    title: 'TRI999',
+    description: 'TRI999 — современный маркетплейс товаров и услуг с AI-ассистентом.',
     type: 'website',
     locale: 'ru_RU',
-    siteName: '999 — Три девятки',
+    siteName: 'TRI999',
     url: APP_PUBLIC_URL,
     images: [
       {
         url: '/og',
         width: 1200,
         height: 630,
-        alt: '999 — Три девятки. Маркетплейс нового поколения.',
+        alt: 'TRI999',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: '999 — Три девятки',
-    description: 'Современный маркетплейс товаров и услуг с голосовым AI-агентом.',
+    title: 'TRI999',
+    description: 'TRI999 — современный маркетплейс товаров и услуг с AI-ассистентом.',
     images: ['/og'],
   },
   alternates: {
@@ -316,17 +316,13 @@ const SPLASH_BOOTSTRAP = `
       var s = document.createElement('div');
       s.id = 'app-splash';
       s.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:' + bg + ';z-index:9999;transition:opacity .3s ease;';
-      // Splash logo: «999» крупно + «Три девятки» под ним.
+      // Splash logo: TRI999 wordmark.
       var logo = document.createElement('div');
-      logo.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;line-height:1;color:' + fg + ';font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;';
+      logo.style.cssText = 'display:flex;align-items:center;line-height:1;color:' + fg + ';font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;';
       var logoNum = document.createElement('div');
       logoNum.style.cssText = 'font-size:48px;font-weight:800;letter-spacing:-0.02em;';
-      logoNum.textContent = '999';
-      var logoWord = document.createElement('div');
-      logoWord.style.cssText = 'font-size:12px;font-weight:300;letter-spacing:0.2em;text-transform:uppercase;opacity:0.65;';
-      logoWord.textContent = 'Три девятки';
+      logoNum.textContent = 'TRI999';
       logo.appendChild(logoNum);
-      logo.appendChild(logoWord);
       s.appendChild(logo);
       var sp = document.createElement('div');
       sp.style.cssText = 'position:absolute;bottom:25%;width:36px;height:36px;border:3px solid ' + spinnerTrack + ';border-top-color:' + spinnerTop + ';border-radius:50%;animation:app-splash-spin .8s linear infinite;';
@@ -416,7 +412,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             __html: JSON.stringify({
               '@context': 'https://schema.org',
               '@type': 'Organization',
-              name: '999 — Три девятки',
+              name: 'TRI999',
               url: APP_PUBLIC_URL,
               logo: `${APP_PUBLIC_URL}/icons/icon-512.png`,
             }).replace(/</g, '\\u003c'),
@@ -429,7 +425,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               '@context': 'https://schema.org',
               '@type': 'LocalBusiness',
               '@id': `${APP_PUBLIC_URL}/#localbusiness`,
-              name: '999 — Три девятки',
+              name: 'TRI999',
               image: `${APP_PUBLIC_URL}/icons/screenshot-phone-1.png`,
               url: APP_PUBLIC_URL,
               telephone: process.env.NEXT_PUBLIC_BUSINESS_PHONE || undefined,
@@ -476,7 +472,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               '@context': 'https://schema.org',
               '@type': 'WebSite',
               url: APP_PUBLIC_URL,
-              name: '999 — Три девятки',
+              name: 'TRI999',
               potentialAction: {
                 '@type': 'SearchAction',
                 target: `${APP_PUBLIC_URL}/?view=search&q={search_term_string}`,

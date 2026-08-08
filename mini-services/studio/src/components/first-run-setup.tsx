@@ -167,7 +167,7 @@ export function FirstRunSetup() {
               </motion.div>
             </div>
             <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
-              <span className="text-gradient">999PRO</span>
+              <span className="text-gradient">TRI999</span>
             </h1>
             <p className="text-sm text-muted-foreground mt-1.5">
               Мастер первого запуска
@@ -432,7 +432,7 @@ export function FirstRunSetup() {
             transition={{ delay: 0.6, duration: 0.5 }}
             className="text-center text-xs text-muted-foreground mt-6"
           >
-            999PRO Studio · Первоначальная настройка
+            TRI999 Studio · Первоначальная настройка
           </motion.p>
         </motion.div>
       </div>

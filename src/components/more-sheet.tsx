@@ -227,7 +227,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         if (typeof navigator !== 'undefined' && navigator.share) {
           try {
             await navigator.share({
-              title: '999 — Три девятки',
+              title: 'TRI999',
               text: 'Современный маркетплейс нового поколения с голосовым AI-агентом',
               url: window.location.origin,
             })
@@ -306,7 +306,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         <div className="text-left">
           <h1 className="text-2xl font-extrabold">Ещё</h1>
           <p className="text-sm text-muted-foreground">
-            Дополнительные разделы и настройки «Три девятки»
+            Дополнительные разделы и настройки TRI999
           </p>
         </div>
 

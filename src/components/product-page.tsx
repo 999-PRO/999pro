@@ -72,6 +72,9 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [imgIndex, setImgIndex] = useState(0)
+  // v25.8 (TRI999 launch): selected color index — when set, the main image
+  // switches to that color's photo. null = use the regular image gallery.
+  const [selectedColorIdx, setSelectedColorIdx] = useState<number | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
   const [qrOpen, setQrOpen] = useState(false)
   const touchStartX = useRef(0)
@@ -92,6 +95,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
     let alive = true
     setLoading(true)
     setImgIndex(0)
+    setSelectedColorIdx(null)
     // v21: If initialProduct is provided (from orders/cart), show it immediately
     // so the user sees content right away. Then try to fetch fresh data with
     // includeDeleted=true (handles soft-deleted products from past orders).
@@ -302,19 +306,36 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
               >
                 <div
                   className="flex h-full transition-transform duration-300 ease-out"
-                  style={{ transform: `translateX(-${imgIndex * 100}%)` }}
+                  style={{
+                    transform: selectedColorIdx !== null && product.colors?.[selectedColorIdx]?.image
+                      ? 'translateX(0)'
+                      : `translateX(-${imgIndex * 100}%)`
+                  }}
                 >
-                  {product.images.map((src, i) => (
+                  {/* v25.8: if a color is selected and has its own image, show
+                      that image instead of the gallery. Otherwise show the gallery. */}
+                  {selectedColorIdx !== null && product.colors?.[selectedColorIdx]?.image ? (
                     <img
-                      key={i}
-                      src={assetUrl(src)}
-                      alt={`${product.title} — фото ${i + 1}`}
+                      src={assetUrl(product.colors[selectedColorIdx].image)}
+                      alt={`${product.title} — ${product.colors[selectedColorIdx].name}`}
                       className="h-full w-full object-cover shrink-0"
                       style={{ aspectRatio: '3 / 4' }}
                       decoding="async"
                       draggable={false}
                     />
-                  ))}
+                  ) : (
+                    product.images.map((src, i) => (
+                      <img
+                        key={i}
+                        src={assetUrl(src)}
+                        alt={`${product.title} — фото ${i + 1}`}
+                        className="h-full w-full object-cover shrink-0"
+                        style={{ aspectRatio: '3 / 4' }}
+                        decoding="async"
+                        draggable={false}
+                      />
+                    ))
+                  )}
                 </div>
 
                 {/* Top overlay — back + share buttons + discount badge.
@@ -405,7 +426,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
               <div className="px-4 pt-2 flex flex-col gap-4">
 
               {/* Thumbnails */}
-              {product.images.length > 1 && (
+              {product.images.length > 1 && selectedColorIdx === null && (
                 <div
                   className="flex gap-3 overflow-x-auto no-scrollbar py-4 px-1 -mx-1"
                   // v25.7 (TZ ЭТАП 2.8): allow vertical scroll pass-through so
@@ -434,6 +455,57 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                       />
                     </button>
                   ))}
+                </div>
+              )}
+
+              {/* v25.8 (TRI999 launch): Color selector — clicking a color
+                  instantly switches the main image to that color's photo. */}
+              {product.colors && product.colors.length > 0 && (
+                <div className="py-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-semibold">
+                      Цвет: {selectedColorIdx !== null ? product.colors[selectedColorIdx].name : 'выберите'}
+                    </span>
+                    {selectedColorIdx !== null && (
+                      <button
+                        onClick={() => setSelectedColorIdx(null)}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Сбросить
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {product.colors.map((color, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          haptic.tap()
+                          setSelectedColorIdx(idx === selectedColorIdx ? null : idx)
+                        }}
+                        aria-label={`Цвет: ${color.name}`}
+                        className={cn(
+                          'relative h-14 w-14 rounded-full overflow-hidden border-2 transition-all',
+                          selectedColorIdx === idx
+                            ? 'border-primary scale-110 shadow-glow'
+                            : 'border-border/40 hover:border-primary/40',
+                        )}
+                      >
+                        {color.image ? (
+                          <img
+                            src={assetUrl(color.image)}
+                            alt={color.name}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="h-full w-full grid place-items-center bg-muted text-[10px] font-medium text-muted-foreground">
+                            {color.name.slice(0, 3)}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 

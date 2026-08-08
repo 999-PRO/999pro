@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useDeferredValue, useRef, useMemo } from 'react'
 import { Plus, Pencil, Trash2, Eye, EyeOff, Search, Package, CheckSquare, Square, CheckCheck, X } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
-import type { Product } from '@/lib/types'
+import type { Product, ProductColor } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -409,6 +409,8 @@ function ProductEditor({ product, existingCategories, onClose, onSaved }: {
   const [oldPrice, setOldPrice] = useState(String(product?.oldPrice ?? ''))
   const [category, setCategory] = useState(product?.category || CATEGORIES[0])
   const [images, setImages] = useState<string[]>(product?.images || [])
+  // v25.8 (TRI999 launch): product colors with per-color image.
+  const [colors, setColors] = useState<ProductColor[]>(product?.colors || [])
   const [inStock, setInStock] = useState(product?.inStock ?? true)
   // v11: physical stock quantity — used to show "В наличии" / "Заканчивается" / "Нет в наличии".
   // Default to 10 for new products so they show "В наличии" by default.
@@ -483,7 +485,7 @@ function ProductEditor({ product, existingCategories, onClose, onSaved }: {
     isAction,
     isNew,
     isRecommended,
-  }), [title, description, price, oldPrice, category, images, inStock, quantity, isPopular, isAction, isNew, isRecommended])
+  }), [title, description, price, oldPrice, category, images, colors, inStock, quantity, isPopular, isAction, isNew, isRecommended])
 
 const save = async () => {
     if (!title.trim()) return toast.error('Введите название')
@@ -500,6 +502,7 @@ const save = async () => {
         oldPrice: oldPrice ? Number(oldPrice) : undefined,
         category,
         images,
+        colors,
         inStock,
         // v11: send quantity to backend — 0 = out of stock, >0 = available
         quantity: Math.max(0, parseInt(quantity, 10) || 0),
@@ -559,6 +562,11 @@ const save = async () => {
 
         <div className="space-y-4">
           <ImageUploader value={images} onChange={setImages} multiple max={8} aspect="square" label="Фотографии товара" />
+
+          {/* v25.8 (TRI999 launch): Product colors with per-color image.
+              One product → multiple colors → each color has its own photo.
+              On the product page, clicking a color instantly switches the main image. */}
+          <ProductColorsEditor colors={colors} onChange={setColors} />
 
           <div className="space-y-1.5">
             <Label htmlFor="title">Название</Label>
@@ -734,5 +742,129 @@ const save = async () => {
         title={title || (product ? 'Без названия' : 'Новый товар')}
       />
     </Dialog>
+  )
+}
+
+// ============================================================================
+//  ProductColorsEditor — manages per-color photos for a product.
+//  v25.8 (TRI999 launch):
+//    • Each color has a name (e.g. "Белый", "Чёрный", "Красный") and a photo.
+//    • On the product page, clicking a color instantly switches the main image.
+//    • Empty array = no color variants (the regular image gallery is used).
+// ============================================================================
+function ProductColorsEditor({ colors, onChange }: {
+  colors: ProductColor[]
+  onChange: (colors: ProductColor[]) => void
+}) {
+  const [newName, setNewName] = useState('')
+
+  const addColor = () => {
+    const name = newName.trim()
+    if (!name) return
+    if (colors.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+      toast.error('Такой цвет уже добавлен')
+      return
+    }
+    onChange([...colors, { name, image: '' }])
+    setNewName('')
+  }
+
+  const removeColor = (idx: number) => {
+    onChange(colors.filter((_, i) => i !== idx))
+  }
+
+  const updateImage = (idx: number, image: string) => {
+    onChange(colors.map((c, i) => (i === idx ? { ...c, image } : c)))
+  }
+
+  const updateName = (idx: number, name: string) => {
+    onChange(colors.map((c, i) => (i === idx ? { ...c, name } : c)))
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>Цвета товара (с фото для каждого цвета)</Label>
+      <p className="text-xs text-muted-foreground">
+        Добавьте цвета и для каждого выберите свою фотографию. На странице товара клиент
+        нажимает на цвет — изображение сразу меняется.
+      </p>
+
+      {colors.length > 0 && (
+        <div className="space-y-2">
+          {colors.map((color, idx) => (
+            <div key={idx} className="flex items-center gap-2 p-2 rounded-xl bg-muted/30 border border-border/40">
+              {/* Color photo */}
+              <div className="h-14 w-14 shrink-0 rounded-lg overflow-hidden bg-muted border border-border/40 grid place-items-center">
+                {color.image ? (
+                  <img src={assetUrl(color.image)} alt={color.name} className="h-full w-full object-cover" />
+                ) : (
+                  <ImageUploader
+                    value={[]}
+                    onChange={(imgs) => imgs[0] && updateImage(idx, imgs[0])}
+                    multiple={false}
+                    max={1}
+                    aspect="square"
+                    label=""
+                  />
+                )}
+              </div>
+              {/* Name + change-photo button */}
+              <div className="flex-1 min-w-0">
+                <Input
+                  value={color.name}
+                  onChange={(e) => updateName(idx, e.target.value)}
+                  className="rounded-lg h-9"
+                  placeholder="Название цвета"
+                />
+                {color.image && (
+                  <button
+                    type="button"
+                    onClick={() => updateImage(idx, '')}
+                    className="text-xs text-muted-foreground hover:text-foreground mt-1"
+                  >
+                    Сменить фото
+                  </button>
+                )}
+              </div>
+              {/* Remove */}
+              <button
+                type="button"
+                onClick={() => removeColor(idx)}
+                className="h-9 w-9 grid place-items-center rounded-lg text-destructive hover:bg-destructive/10 shrink-0"
+                title="Удалить цвет"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add new color */}
+      <div className="flex gap-2">
+        <Input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              addColor()
+            }
+          }}
+          placeholder="Например: Белый, Чёрный, Красный…"
+          className="rounded-xl flex-1"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={addColor}
+          disabled={!newName.trim()}
+          className="rounded-xl gap-2"
+        >
+          <Plus className="h-4 w-4" />
+          Добавить
+        </Button>
+      </div>
+    </div>
   )
 }

@@ -137,7 +137,7 @@ export function FilmChatCard({ payload, isOwn }: FilmChatCardProps) {
             </span>
           )}
           <span className="inline-flex items-center gap-0.5">
-            <Star className="h-2.5 w-2.5 text-amber-400" /> 999 — Три девятки
+            <Star className="h-2.5 w-2.5 text-amber-400" /> TRI999
           </span>
         </div>
 

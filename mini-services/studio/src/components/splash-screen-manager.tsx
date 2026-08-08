@@ -38,8 +38,8 @@ interface SplashScreenSettings {
 const DEFAULTS: SplashScreenSettings = {
   enabled: false,
   image: null,
-  title: '999 — Три девятки',
-  subtitle: 'Маркетплейс нового поколения',
+  title: 'TRI999',
+  subtitle: 'TRI999',
   description: '',
   textColor: '#ffffff',
   showText: true,
@@ -246,7 +246,7 @@ export function SplashScreenManager() {
               <Input
                 value={settings.title}
                 onChange={(e) => setSettings({ ...settings, title: e.target.value })}
-                placeholder="999 — Три девятки"
+                placeholder="TRI999"
                 maxLength={50}
               />
             </div>
@@ -255,7 +255,7 @@ export function SplashScreenManager() {
               <Input
                 value={settings.subtitle}
                 onChange={(e) => setSettings({ ...settings, subtitle: e.target.value })}
-                placeholder="Маркетплейс нового поколения"
+                placeholder="TRI999"
                 maxLength={100}
               />
             </div>

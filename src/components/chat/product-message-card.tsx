@@ -14,7 +14,7 @@
 //    • Click anywhere on the card → opens the existing ProductPage Bottom
 //      Sheet (same flow as clicking a product in the catalog grid) via the
 //      `onOpenProduct(id)` callback. No new navigation paths.
-//    • Uses existing 999 — Три девятки design tokens (glass-message, formatPrice,
+//    • Uses existing TRI999 design tokens (glass-message, formatPrice,
 //      assetUrl, gradients) — no new CSS classes introduced.
 //    • Re-render-safe: a single in-flight fetch guarded by an `alive` flag,
 //      dedup of identical productId via a tiny module-level cache (so
@@ -224,10 +224,10 @@ export function ProductMessageCard({ productId, isOwn, onOpenProduct }: Props) {
           ) : null}
         </div>
 
-        {/* Branding chip — keeps 999 — Три девятки identity inside the card */}
+        {/* Branding chip — keeps TRI999 identity inside the card */}
         <div className="absolute top-2 right-2">
           <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 text-white shadow">
-            999 — Три девятки
+            TRI999
           </span>
         </div>
       </div>

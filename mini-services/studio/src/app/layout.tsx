@@ -11,15 +11,15 @@ const geistSans = Geist({
 })
 
 export const metadata: Metadata = {
-  title: 'Studio «Три девятки» — Панель управления',
-  description: 'Административная панель для управления контентом приложения «Три девятки».',
-  applicationName: 'Studio «Три девятки»',
+  title: 'Studio TRI999 — Панель управления',
+  description: 'Административная панель для управления контентом приложения TRI999.',
+  applicationName: 'Studio TRI999',
   // Phase 18: paths must include /studio/ basePath — otherwise they 404
   manifest: '/studio/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Studio «Три девятки»',
+    title: 'Studio TRI999',
   },
   icons: {
     icon: [

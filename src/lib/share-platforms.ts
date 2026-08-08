@@ -34,7 +34,7 @@ interface SharePayload {
   appTagline?: string
 }
 
-const DEFAULT_TAGLINE = 'Маркетплейс нового поколения — 999 — Три девятки'
+const DEFAULT_TAGLINE = 'TRI999'
 
 /** Format a price with currency symbol. */
 function formatPrice(price: number, currency?: string): string {

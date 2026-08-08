@@ -98,7 +98,7 @@ function parsePagination(query: any) {
   return { limit, offset }
 }
 
-// Helper: serialise product (parse images JSON safely)
+// Helper: serialise product (parse images + colors JSON safely)
 function serialiseProduct(p: any) {
   // Wave 4 (B-DB-001): convert Prisma Decimal fields to JS number for JSON
   // serialisation. Frontend expects number (not string) for price/oldPrice.
@@ -107,6 +107,17 @@ function serialiseProduct(p: any) {
   const result = { ...p, images: safeParseJsonArray(p.images) }
   if (result.price != null) result.price = Number(result.price)
   if (result.oldPrice != null) result.oldPrice = Number(result.oldPrice)
+  // v25.8: parse colors JSON array. Each entry: { name, image }.
+  if (typeof result.colors === 'string') {
+    try {
+      const parsed = JSON.parse(result.colors)
+      result.colors = Array.isArray(parsed) ? parsed : []
+    } catch {
+      result.colors = []
+    }
+  } else if (result.colors == null) {
+    result.colors = []
+  }
   return result
 }
 
@@ -672,6 +683,8 @@ router.post(
         isPremium: data.isPremium ?? false, // B-LOW-006 fix: schema now includes this field
         // v24.5: department link
         departmentId: data.departmentId || null,
+        // v25.8 (TRI999 launch): colors array
+        colors: JSON.stringify(data.colors ?? []),
       },
     })
     await auditLog(req, 'product', product.id, 'create', {
@@ -703,6 +716,13 @@ const updateProductSchema = z.object({
   isPremium: z.boolean().optional(),
   // v24.5: department link for contacts by direction
   departmentId: z.string().nullable().optional(),
+  // v25.8: colors array (each entry: { name, image })
+  colors: z.array(
+    z.object({
+      name: z.string().min(1).max(64),
+      image: z.string().min(1).max(2048),
+    })
+  ).max(50).optional(),
 })
 
 // PATCH /api/products/:id — admin only
@@ -736,6 +756,8 @@ router.patch(
         ...(data.isPremium !== undefined && { isPremium: data.isPremium }),
         // v24.5: department link
         ...(data.departmentId !== undefined && { departmentId: data.departmentId || null }),
+        // v25.8: colors array
+        ...(data.colors !== undefined && { colors: JSON.stringify(data.colors) }),
       },
     })
     await auditLog(req, 'product', updated.id, 'update', {

@@ -33,9 +33,8 @@ generator client {
 }
 
 datasource db {
-  // v25.3-test: SQLite for local test build (PostgreSQL still required in prod).
-  // The runtime check in src/lib/prisma.ts rejects SQLite when NODE_ENV=production.
-  provider = "sqlite"
+  // v25.8 (TRI999 launch): PostgreSQL is the ONLY production database provider.
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -197,6 +196,13 @@ model Product {
   isRecommended Boolean @default(false) // "Рекомендуем"
   isTrending   Boolean  @default(false) // "В тренде" (Studio manual toggle)
   isPremium    Boolean  @default(false) // "Премиум" (Studio manual toggle)
+  // v25.8 (TRI999 launch): Product colors with per-color image.
+  // JSON-encoded array of { name: string, image: string } objects.
+  // Each color has its own photo — when the user picks a color on the product
+  // page, the main image instantly switches to that color's photo.
+  // Example: [{"name":"Белый","image":"/uploads/white.jpg"},{"name":"Чёрный","image":"/uploads/black.jpg"}]
+  // Empty array = no color variants (regular image gallery is used).
+  colors       String   @default("[]")
   // Engagement counters — lifetime totals, used by the smart-ranking
   // algorithm on the home page. These NEVER decrease (a favorite removed
   // still counts as a "favorite add" because the user showed interest).

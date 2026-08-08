@@ -1,27 +1,27 @@
 'use client'
 
 // ChatBackground — decorative animated SVG wallpaper for chat views.
-// Renders soft floating shapes, "999 — Три девятки" text snippets, and small icons
+// Renders soft floating shapes, "TRI999" text snippets, and small icons
 // (chat bubbles, megaphone, shopping bag) at very low opacity so they
 // don't compete with content but add visual life to the background.
 //
 // Fixed position, pointer-events: none, z-0 — sits behind everything.
 
 const SHAPES = [
-  // Top-left cluster — chat bubble + 999 — Три девятки text
+  // Top-left cluster — chat bubble + TRI999 text
   { type: 'bubble', x: '5%', y: '8%', size: 80, rotation: -15, delay: 0 },
-  { type: 'text', x: '12%', y: '15%', text: '999 — Три девятки', size: 24, delay: 1.5 },
+  { type: 'text', x: '12%', y: '15%', text: 'TRI999', size: 24, delay: 1.5 },
   { type: 'bubble', x: '85%', y: '12%', size: 60, rotation: 20, delay: 0.8 },
-  { type: 'text', x: '78%', y: '22%', text: '999 — Три девятки', size: 18, delay: 2.2 },
+  { type: 'text', x: '78%', y: '22%', text: 'TRI999', size: 18, delay: 2.2 },
   // Mid-section — megaphone + shopping bag
   { type: 'megaphone', x: '8%', y: '45%', size: 50, rotation: -10, delay: 1.2 },
   { type: 'bag', x: '88%', y: '50%', size: 45, rotation: 15, delay: 0.5 },
   { type: 'bubble', x: '15%', y: '70%', size: 70, rotation: 10, delay: 1.8 },
-  { type: 'text', x: '82%', y: '75%', text: '999 — Три девятки', size: 20, delay: 0.3 },
+  { type: 'text', x: '82%', y: '75%', text: 'TRI999', size: 20, delay: 0.3 },
   // Bottom scattered
   { type: 'bubble', x: '45%', y: '85%', size: 55, rotation: -5, delay: 2.5 },
   { type: 'megaphone', x: '92%', y: '88%', size: 40, rotation: 25, delay: 1.0 },
-  { type: 'text', x: '3%', y: '90%', text: '999 — Три девятки', size: 16, delay: 1.7 },
+  { type: 'text', x: '3%', y: '90%', text: 'TRI999', size: 16, delay: 1.7 },
   // Floating soft circles
   { type: 'circle', x: '30%', y: '25%', size: 120, color: 'rgba(96,165,250,0.04)', delay: 0 },
   { type: 'circle', x: '70%', y: '60%', size: 90, color: 'rgba(167,139,250,0.04)', delay: 1.0 },

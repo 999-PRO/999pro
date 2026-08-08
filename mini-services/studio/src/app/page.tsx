@@ -64,10 +64,12 @@ const CommunicationManager = dynamic(() => import('@/components/communication-ma
 const SplashScreenManager = dynamic(() => import('@/components/splash-screen-manager').then(m => ({ default: m.SplashScreenManager })), { ssr: false, loading: loadingFallback })
 // v22 audit: Manager management — create / block / role change.
 const ManagersManager = dynamic(() => import('@/components/managers-manager').then(m => ({ default: m.ManagersManager })), { ssr: false, loading: loadingFallback })
+// v25.8 (TRI999 launch): Chat settings — visibility + test-data cleanup
+const ChatSettingsManager = dynamic(() => import('@/components/chat-settings-manager').then(m => ({ default: m.ChatSettingsManager })), { ssr: false, loading: loadingFallback })
 
-type View = 'analytics' | 'share' | 'products' | 'users' | 'managers' | 'leads' | 'contacts' | 'stories' | 'club' | 'banners' | 'hero' | 'header' | 'audit' | 'orders' | 'delivery' | 'home' | 'info-pages' | 'moderation' | 'aikb' | 'ai-providers' | 'promo-codes' | 'bonus-points' | 'module-access' | 'security' | 'registration-settings' | 'communication' | 'splash-screen' | 'mass-push' | 'departments'
+type View = 'analytics' | 'share' | 'products' | 'users' | 'managers' | 'leads' | 'contacts' | 'stories' | 'club' | 'banners' | 'hero' | 'header' | 'audit' | 'orders' | 'delivery' | 'home' | 'info-pages' | 'moderation' | 'aikb' | 'ai-providers' | 'promo-codes' | 'bonus-points' | 'module-access' | 'security' | 'registration-settings' | 'communication' | 'splash-screen' | 'mass-push' | 'departments' | 'chat-settings'
 
-const VALID_VIEWS = ['analytics', 'share', 'products', 'users', 'managers', 'leads', 'contacts', 'stories', 'club', 'banners', 'hero', 'header', 'audit', 'orders', 'delivery', 'home', 'info-pages', 'moderation', 'aikb', 'ai-providers', 'promo-codes', 'bonus-points', 'module-access', 'security', 'registration-settings', 'communication', 'splash-screen', 'mass-push', 'departments']
+const VALID_VIEWS = ['analytics', 'share', 'products', 'users', 'managers', 'leads', 'contacts', 'stories', 'club', 'banners', 'hero', 'header', 'audit', 'orders', 'delivery', 'home', 'info-pages', 'moderation', 'aikb', 'ai-providers', 'promo-codes', 'bonus-points', 'module-access', 'security', 'registration-settings', 'communication', 'splash-screen', 'mass-push', 'departments', 'chat-settings']
 
 function getInitialView(): View {
   if (typeof window === 'undefined') return 'analytics'
@@ -310,6 +312,7 @@ useEffect(() => {
               {view === 'products' && <ProductsManager key="products" />}
               {view === 'users' && <UsersManager key="users" />}
               {view === 'managers' && <ManagersManager key="managers" />}
+              {view === 'chat-settings' && <ChatSettingsManager key="chat-settings" />}
               {view === 'leads' && <LeadsManager key="leads" />}
               {view === 'contacts' && <ContactsManager key="contacts" />}
               {view === 'mass-push' && <MassPushManager key="mass-push" />}

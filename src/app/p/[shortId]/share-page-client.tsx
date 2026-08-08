@@ -130,7 +130,7 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
       if (isIOS) {
         toast.info('Откройте в Safari', {
-          description: 'Нажмите «Поделиться» → «На экран Домой», чтобы установить 999 — Три девятки.',
+          description: 'Нажмите «Поделиться» → «На экран Домой», чтобы установить TRI999.',
           duration: 6000,
         })
       } else {
@@ -144,7 +144,7 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-sky-50 dark:from-slate-950 dark:via-slate-900 dark:to-blue-950">
-      {/* Top brand bar — always visible, reinforces 999 — Три девятки identity */}
+      {/* Top brand bar — always visible, reinforces TRI999 identity */}
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-white/80 dark:bg-slate-950/80 border-b border-slate-200/60 dark:border-slate-800/60">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <a
@@ -155,8 +155,8 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
               9
             </div>
             <div className="leading-tight">
-              <div className="text-base font-extrabold tracking-tight">999 <span className="font-light text-slate-500">— Три девятки</span></div>
-              <div className="text-[10px] text-slate-500 -mt-0.5 hidden sm:block">Маркетплейс нового поколения</div>
+              <div className="text-base font-extrabold tracking-tight">TRI999</div>
+              <div className="text-[10px] text-slate-500 -mt-0.5 hidden sm:block">TRI999</div>
             </div>
           </a>
           <div className="flex items-center gap-2">
@@ -355,7 +355,7 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
                 className="w-full h-12 rounded-2xl bg-gradient-to-r from-blue-600 via-blue-600 to-violet-600 text-white font-bold shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 transition-all hover:scale-[1.02] flex items-center justify-center gap-2"
               >
                 <Smartphone className="h-5 w-5" />
-                Открыть в приложении «Три девятки»
+                Открыть в приложении TRI999
               </button>
 
               <div className="grid grid-cols-2 gap-2.5">
@@ -384,7 +384,7 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
               <div className="relative">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="h-7 w-7 rounded-xl bg-white/20 backdrop-blur grid place-items-center text-sm font-extrabold">9</div>
-                  <div className="text-sm font-bold">999 — Три девятки</div>
+                  <div className="text-sm font-bold">TRI999</div>
                 </div>
                 <h3 className="text-lg font-extrabold leading-tight mb-1">
                   Тысячи товаров и услуг в одном приложении
@@ -497,10 +497,10 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
       <footer className="mt-16 border-t border-slate-200/60 dark:border-slate-800/60 py-8">
         <div className="max-w-5xl mx-auto px-4 text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
-            <div className="h-7 w-7 rounded-xl bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 grid place-items-center text-white text-xs font-extrabold">9</div>
-            <span className="font-extrabold">999 <span className="font-light text-slate-500">— Три девятки</span></span>
+            <div className="h-7 w-7 rounded-xl bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 grid place-items-center text-white text-xs font-extrabold">T</div>
+            <span className="font-extrabold">TRI999</span>
           </div>
-          <p className="text-xs text-slate-500">Маркетплейс нового поколения · © 999 — Три девятки</p>
+          <p className="text-xs text-slate-500">TRI999</p>
         </div>
       </footer>
 

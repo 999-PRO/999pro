@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, Search, LogOut, KeyRound, Phone, Sparkles, Activity, Share2, Users, Sun, Moon, Truck, ShoppingBag, Home, FileText, Shield, ShieldCheck, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, UserPlus, Smartphone, Megaphone } from 'lucide-react'
+import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, Search, LogOut, KeyRound, Phone, Sparkles, Activity, Share2, Users, Sun, Moon, Truck, ShoppingBag, Home, FileText, Shield, ShieldCheck, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, UserPlus, Smartphone, Megaphone, MessagesSquare } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
@@ -23,7 +23,8 @@ const NAV = [
   { id: 'orders', label: 'Заказы', icon: ShoppingBag },
   { id: 'delivery', label: 'Доставка', icon: Truck },
   { id: 'users', label: 'Пользователи', icon: Users },
-  { id: 'managers', label: 'Менеджеры', icon: ShieldCheck },
+  { id: 'managers', label: 'Админы и менеджеры', icon: ShieldCheck },
+  { id: 'chat-settings', label: 'Настройки чата', icon: MessagesSquare },
   { id: 'contacts', label: 'Контакты', icon: Phone },
   // v24.4: Mass push + departments (contacts by direction)
   { id: 'mass-push', label: 'Push-рассылка', icon: Megaphone },
@@ -62,13 +63,12 @@ export function Sidebar({ view, onNavigate, onOpenSearch, onLogout }: SidebarPro
   return (
     <aside className="hidden md:flex w-72 lg:w-80 shrink-0 sticky top-0 h-screen flex-col border-r border-border/60 glass">
       <div className="p-6">
-        <button onClick={() => onNavigate('analytics')} className="flex items-center gap-3" aria-label="Studio «Три девятки» — на аналитику">
+        <button onClick={() => onNavigate('analytics')} className="flex items-center gap-3" aria-label="TRI999 Studio — на аналитику">
           <div className="h-10 w-10 rounded-xl gradient-brand grid place-items-center shadow-glow">
             <ImagePlus className="h-5 w-5 text-white" />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="font-extrabold text-lg leading-none">999</span>
-            <span className="text-[10px] font-light tracking-[0.18em] uppercase text-muted-foreground mt-0.5">Три девятки</span>
+            <span className="font-extrabold text-lg leading-none tracking-tight">TRI999</span>
             <span className="text-xs text-muted-foreground leading-tight mt-0.5">Studio</span>
           </div>
         </button>

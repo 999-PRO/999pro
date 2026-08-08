@@ -17,12 +17,8 @@ export async function GET() {
       </linearGradient>
     </defs>
     <rect width="1200" height="630" fill="url(#bg)"/>
-    <text x="600" y="280" font-family="Arial, sans-serif" font-size="180" font-weight="800"
-          fill="#ffffff" text-anchor="middle">999</text>
-    <text x="600" y="380" font-family="Arial, sans-serif" font-size="42" font-weight="300"
-          fill="#93c5fd" text-anchor="middle" letter-spacing="6">ТРИ ДЕВЯТКИ</text>
-    <text x="600" y="470" font-family="Arial, sans-serif" font-size="32"
-          fill="#cbd5e1" text-anchor="middle">Маркетплейс нового поколения</text>
+    <text x="600" y="320" font-family="Arial, sans-serif" font-size="180" font-weight="800"
+          fill="#ffffff" text-anchor="middle">TRI999</text>
   </svg>`
 
   try {

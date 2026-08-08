@@ -9,6 +9,11 @@ export type { UserRole, User, ChatUser } from '@999pro/shared'
 
 // ChatUser теперь импортируется из @999pro/shared (H11 fix).
 
+export interface ProductColor {
+  name: string
+  image: string
+}
+
 export interface Product {
   id: string
   title: string
@@ -44,6 +49,8 @@ export interface Product {
     address?: string | null
     managerName?: string | null
   } | null
+  // v25.8 (TRI999 launch): product colors with per-color image.
+  colors?: ProductColor[]
 }
 
 // v11: helper — resolve stock label from quantity + inStock.

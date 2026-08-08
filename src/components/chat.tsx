@@ -1287,7 +1287,7 @@ export function ChatView() {
   const handleDeleteConversation = async () => {
     if (!activeConv) return
     if (activeConv.type === 'support') {
-      toast.error('Нельзя удалить чат с поддержкой — это основной канал связи с командой «Три девятки».')
+      toast.error('Нельзя удалить чат с поддержкой — это основной канал связи с командой TRI999.')
       return
     }
     // Phase 10: use custom confirm dialog instead of native confirm()
@@ -1787,7 +1787,7 @@ export function ChatView() {
         : undefined
     }
     >
-      {/* Animated decorative background — floating SVG shapes, "999 — Три девятки" text,
+      {/* Animated decorative background — floating SVG shapes, "TRI999" text,
           soft coloured circles. pointer-events:none, z-0. */}
       <ChatBackground />
       {/* h-full на мобильном (= 100dvh родителя), на десктопе — calc от viewport */}
@@ -2701,7 +2701,7 @@ export function ChatView() {
           if (contextMenu.message?.mediaUrl && navigator.share) {
             try {
               await navigator.share({
-                title: '999 — Три девятки',
+                title: 'TRI999',
                 url: assetUrl(contextMenu.message.mediaUrl),
               })
             } catch {}

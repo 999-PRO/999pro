@@ -35,7 +35,7 @@ const ru: TranslationMap = {
   'nav.search': 'Поиск',
 
   // Home
-  'home.title': '999 — Три девятки. Маркетплейс нового поколения',
+  'home.title': 'TRI999',
   'home.subtitle': 'Покупайте, делитесь моментами и общайтесь в одном современном приложении.',
   'home.cta.catalog': 'В каталог',
   // v12.3: 'home.cta.feed' removed — Feed module deleted.
@@ -71,10 +71,10 @@ const ru: TranslationMap = {
   'reviews.sort.lowest': 'Низкий',
 
   // Support
-  'support.title': 'Поддержка «Три девятки»',
+  'support.title': 'Поддержка TRI999',
   'support.online': 'Онлайн · отвечает в течение часа',
   'support.placeholder': 'Напишите сообщение…',
-  'support.welcome': 'Здравствуйте! Я из команды поддержки «Три девятки». Чем могу помочь?',
+  'support.welcome': 'Здравствуйте! Я из команды поддержки TRI999. Чем могу помочь?',
   'support.disclaimer': 'Чат с поддержкой · ответы в течение 1 часа',
 
   // Settings
@@ -96,7 +96,7 @@ const ru: TranslationMap = {
   'settings.about': 'О приложении',
   'settings.about.desc': 'Версия, сборка, лицензия',
   'settings.share': 'Поделиться приложением',
-  'settings.share.desc': 'Рассказать друзьям о «Три девятки»',
+  'settings.share.desc': 'Рассказать друзьям о TRI999',
 
   // Common
   'common.cancel': 'Отмена',

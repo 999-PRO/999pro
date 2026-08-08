@@ -105,6 +105,15 @@ export const createProductSchema = z.object({
   isPremium: z.boolean().optional(),
   // v24.5: department link for contacts by direction
   departmentId: z.string().nullable().optional(),
+  // v25.8 (TRI999 launch): product colors with per-color image.
+  // Each entry: { name: string, image: string }.
+  // Empty array = no color variants (the regular image gallery is used).
+  colors: z.array(
+    z.object({
+      name: z.string().min(1).max(64),
+      image: z.string().min(1).max(2048),
+    })
+  ).max(50).optional(),
 })
 
 export const createStorySchema = z.object({

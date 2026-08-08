@@ -10,6 +10,11 @@ export interface User {
   role?: UserRole
 }
 
+export interface ProductColor {
+  name: string
+  image: string
+}
+
 export interface Product {
   id: string
   title: string
@@ -30,6 +35,8 @@ export interface Product {
   isRecommended: boolean
   // v24.4: optional link to a Department (contacts group)
   departmentId?: string | null
+  // v25.8: product colors with per-color image
+  colors?: ProductColor[]
   createdAt?: string
   updatedAt?: string
 }

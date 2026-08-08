@@ -437,7 +437,7 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
         await navigator.share({
-          title: '999 — Три девятки',
+          title: 'TRI999',
           url: assetUrl(url),
         })
       } catch {

@@ -13,7 +13,7 @@
 //      or downloads it (iOS Safari).
 //    • Analytics tracking — every tap on a platform records a `share` event
 //      on the backend, with the platform name for attribution.
-//    • Premium glass design with 999 — Три девятки branding.
+//    • Premium glass design with TRI999 branding.
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react'
@@ -532,7 +532,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
                 <div>
                   <div className="font-bold text-sm mb-0.5">Smart Story</div>
                   <div className="text-xs text-white/80 leading-tight">
-                    Создать красивую историю 1080×1440 с логотипом 999 — Три девятки и QR-кодом
+                    Создать красивую историю 1080×1440 с логотипом TRI999 и QR-кодом
                   </div>
                 </div>
                 <button
@@ -564,7 +564,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
           <div className="px-5 py-3 border-t border-slate-200/60 dark:border-slate-800/60 shrink-0">
             <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500">
               <div className="h-4 w-4 rounded-md bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 grid place-items-center text-white text-[8px] font-extrabold">9</div>
-              999 — Три девятки — Маркетплейс нового поколения
+              TRI999 — TRI999
             </div>
           </div>
         </motion.div>

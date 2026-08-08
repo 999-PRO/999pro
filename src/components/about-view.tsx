@@ -34,8 +34,8 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
     // v25.6 (Task #4): Web Share API with proper clipboard fallback.
     // Toast "Ссылка скопирована" only after successful copy.
     const shareData = {
-      title: '999 — Три девятки',
-      text: 'Современный маркетплейс нового поколения с голосовым AI-агентом',
+      title: 'TRI999',
+      text: 'TRI999 — современный маркетплейс товаров и услуг',
       url: typeof window !== 'undefined' ? window.location.origin : 'https://999pro.app',
     }
     if (typeof navigator !== 'undefined' && navigator.share) {
@@ -86,14 +86,11 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
         {/* Hero */}
         <div className="flex flex-col items-center text-center mb-8">
           <div className="h-24 w-24 rounded-3xl gradient-brand grid place-items-center shadow-glow-lg mb-4">
-            <span className="text-3xl font-extrabold text-white">999</span>
+            <span className="text-2xl font-extrabold text-white">TRI999</span>
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight mb-0.5">999</h1>
-          <p className="text-base font-light tracking-[0.2em] uppercase text-muted-foreground mb-2">
-            Три девятки
-          </p>
+          <h1 className="text-3xl font-extrabold tracking-tight mb-2">TRI999</h1>
           <p className="text-sm text-muted-foreground mb-2">
-            Маркетплейс нового поколения
+            Современный маркетплейс товаров и услуг
           </p>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/15 text-primary text-xs font-semibold">
             <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
@@ -108,7 +105,7 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
             <h2 className="font-semibold">О приложении</h2>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            «Три девятки» — это современный маркетплейс, объединяющий каталог товаров, ленту публикаций,
+            TRI999 — это современный маркетплейс, объединяющий каталог товаров, ленту публикаций,
             живой чат с аудио- и видеозвонками, истории и систему отзывов. Приложение работает как
             PWA — устанавливается на рабочий стол, работает офлайн и отправляет push-уведомления.
           </p>
@@ -207,7 +204,7 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5">✓</span>
-              Поддержка 24/7 через чат с командой «Три девятки»
+              Поддержка 24/7 через чат с командой TRI999
             </li>
           </ul>
         </div>
@@ -219,10 +216,10 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
             <h2 className="font-semibold">Лицензия</h2>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            © 2026 «Три девятки». Все права защищены.
+            © 2026 TRI999. Все права защищены.
           </p>
           <p className="text-xs text-muted-foreground mt-2">
-            Приложение «Три девятки» распространяется на условиях проприетарной лицензии.
+            Приложение TRI999 распространяется на условиях проприетарной лицензии.
             Исходный код является коммерческой тайной. Любое использование, копирование или
             распространение без письменного разрешения правообладателя запрещено.
           </p>
@@ -233,7 +230,7 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
           <Heart className="h-5 w-5 text-rose-500 mx-auto mb-2" />
           <p className="text-sm font-medium mb-1">Сделано с любовью</p>
           <p className="text-xs text-muted-foreground">
-            Командой «Три девятки» для наших пользователей
+            Командой TRI999 для наших пользователей
           </p>
         </div>
 
@@ -247,7 +244,7 @@ export function AboutView({ onNavigate }: { onNavigate: (v: string) => void }) {
         </Button>
 
         <div className="text-center text-xs text-muted-foreground pt-4 pb-2">
-          999 · Три девятки · {BUILD_INFO.version} · {BUILD_INFO.buildDate}
+          TRI999 · {BUILD_INFO.version} · {BUILD_INFO.buildDate}
         </div>
       </div>
     </div>

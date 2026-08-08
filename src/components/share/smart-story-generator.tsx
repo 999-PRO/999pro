@@ -10,10 +10,10 @@
 //  Each story has:
 //    • The product image as background (cropped to 1080×1920)
 //    • A subtle dark gradient overlay (top + bottom) for text readability
-//    • 999 — Три девятки logo top-left
-//    • App tagline ("Маркетплейс нового поколения")
+//    • TRI999 logo top-left
+//    • App tagline ("TRI999")
 //    • A glass card with product title + price at the bottom
-//    • Last story: large QR code + "Смотреть в 999 — Три девятки" CTA
+//    • Last story: large QR code + "Смотреть в TRI999" CTA
 //
 //  Outputs:
 //    • PNG download (single story)
@@ -57,7 +57,7 @@ interface Props {
 // better on product cards. All downstream layout constants are re-tuned below.
 const STORY_W = 1080
 const STORY_H = 1440
-const TAGLINE = 'Маркетплейс нового поколения'
+const TAGLINE = 'TRI999'
 
 export function SmartStoryGenerator({ open, onClose, product, shareUrl, deepLinkUrl, shortId }: Props) {
   const [stories, setStories] = useState<HTMLCanvasElement[]>([])
@@ -277,7 +277,7 @@ export function SmartStoryGenerator({ open, onClose, product, shareUrl, deepLink
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="h-12 w-12 rounded-full border-4 border-pink-500/30 border-t-pink-500 animate-spin" />
-              <p className="text-sm text-slate-500 mt-4">Генерация Stories с фирменным стилем 999 — Три девятки…</p>
+              <p className="text-sm text-slate-500 mt-4">Генерация Stories с фирменным стилем TRI999…</p>
             </div>
           ) : (
             <div className="flex flex-col items-center">
@@ -533,7 +533,7 @@ function drawProductCard(ctx: CanvasRenderingContext2D, opts: any) {
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
   ctx.font = `500 22px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'right'
-  ctx.fillText('Открой в 999 — Три девятки →', cardX + cardW - 28, cardY + cardH - 44)
+  ctx.fillText('Открой в TRI999 →', cardX + cardW - 28, cardY + cardH - 44)
 }
 
 function drawCoverCard(ctx: CanvasRenderingContext2D, opts: any) {
@@ -598,7 +598,7 @@ function drawCoverCard(ctx: CanvasRenderingContext2D, opts: any) {
   ctx.fillText('Отсканируй, чтобы открыть', STORY_W / 2, STORY_H - 90)
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
   ctx.font = `400 22px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
-  ctx.fillText('Маркетплейс нового поколения', STORY_W / 2, STORY_H - 50)
+  ctx.fillText('TRI999', STORY_W / 2, STORY_H - 50)
 }
 
 function drawStars(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, rating: number) {

@@ -113,7 +113,7 @@ export function AnalyticsView() {
       <div className="mb-6 flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Аналитика</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Обзор контента и активности в приложении «Три девятки».</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Обзор контента и активности в приложении TRI999.</p>
         </div>
         <button
           onClick={refresh}

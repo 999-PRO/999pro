@@ -184,7 +184,7 @@ function ChatListItemImpl({
                   style={{ background: 'linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)' }}
                   title="Закреплённый чат с поддержкой"
                 >
-                  999 — Три девятки
+                  TRI999
                 </span>
               )}
               <div className="text-sm font-semibold truncate text-foreground">

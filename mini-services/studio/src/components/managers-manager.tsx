@@ -1,24 +1,26 @@
 'use client'
 
 // ============================================================================
-//  ManagersManager — admin panel for managing managers (and admins).
-//  v22 audit: created because the previous UsersManager only supported
-//  deleting users. There was no UI to:
-//    • Create new manager accounts
-//    • List existing managers/admins
-//    • Block / unblock managers
-//    • Change roles (promote user → manager, demote manager → user)
+//  ManagersManager — admin panel for managing staff (admins + managers).
+//  v25.8 (TRI999 launch): now supports creating BOTH admins and managers,
+//  editing staff profile fields (displayName, username, email, phone, password),
+//  and the existing block/unblock/role-change/delete operations.
 //
 //  Backend endpoints (all admin-only):
-//    POST   /api/users/managers      — create manager
-//    GET    /api/users/managers      — list managers + admins
+//    POST   /api/users/managers      — create staff (role: admin|manager)
+//    GET    /api/users/managers      — list staff (admins + managers)
+//    PATCH  /api/users/:id           — update profile fields (v25.8)
 //    PATCH  /api/users/:id/role      — change role
 //    POST   /api/users/:id/block     — block user
 //    POST   /api/users/:id/unblock   — unblock user
+//    DELETE /api/users/:id           — soft-delete user
 // ============================================================================
 
 import { useEffect, useState, useCallback } from 'react'
-import { UserPlus, Shield, ShieldCheck, Lock, Unlock, X, Loader2, AlertTriangle } from 'lucide-react'
+import {
+  UserPlus, Shield, ShieldCheck, Lock, Unlock, X, Loader2, AlertTriangle,
+  Trash2, Pencil,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/lib/auth-store'
 import { toast } from '@/lib/notifications'
@@ -36,6 +38,7 @@ interface StaffUser {
   createdAt: string
   lockedUntil: string | null
   failedLoginCount: number
+  phone?: string
 }
 
 interface CreateDialogState {
@@ -45,6 +48,18 @@ interface CreateDialogState {
   email: string
   password: string
   displayName: string
+  role: 'admin' | 'manager'
+}
+
+interface EditDialogState {
+  open: boolean
+  loading: boolean
+  user: StaffUser | null
+  displayName: string
+  username: string
+  email: string
+  phone: string
+  password: string // empty = no change
 }
 
 const emptyCreate = (): CreateDialogState => ({
@@ -54,6 +69,18 @@ const emptyCreate = (): CreateDialogState => ({
   email: '',
   password: '',
   displayName: '',
+  role: 'manager',
+})
+
+const emptyEdit = (): EditDialogState => ({
+  open: false,
+  loading: false,
+  user: null,
+  displayName: '',
+  username: '',
+  email: '',
+  phone: '',
+  password: '',
 })
 
 export function ManagersManager() {
@@ -61,6 +88,7 @@ export function ManagersManager() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialog, setCreateDialog] = useState<CreateDialogState>(emptyCreate)
+  const [editDialog, setEditDialog] = useState<EditDialogState>(emptyEdit)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const me = useAuthStore((s) => s.user)
 
@@ -71,7 +99,7 @@ export function ManagersManager() {
       const d = await api.get<{ managers: StaffUser[] }>('/api/users/managers', { auth: true })
       setStaff(d.managers || [])
     } catch (e: any) {
-      setError(e?.message || 'Не удалось загрузить менеджеров')
+      setError(e?.message || 'Не удалось загрузить персонал')
     } finally {
       setLoading(false)
     }
@@ -88,17 +116,63 @@ export function ManagersManager() {
           email: createDialog.email,
           password: createDialog.password,
           displayName: createDialog.displayName || undefined,
+          role: createDialog.role,
         },
         auth: true,
       })
-      toast.success('Менеджер создан', { description: `${createDialog.username} (${createDialog.email})` })
+      const roleLabel = createDialog.role === 'admin' ? 'Администратор' : 'Менеджер'
+      toast.success(`${roleLabel} создан`, {
+        description: `${createDialog.username} (${createDialog.email})`,
+      })
       setCreateDialog(emptyCreate())
       await load()
     } catch (e: any) {
       const errBody = e?.body || e?.message || String(e)
-      toast.error('Ошибка создания', { description: typeof errBody === 'string' ? errBody : JSON.stringify(errBody) })
+      toast.error('Ошибка создания', {
+        description: typeof errBody === 'string' ? errBody : JSON.stringify(errBody),
+      })
     } finally {
       setCreateDialog((s) => ({ ...s, loading: false }))
+    }
+  }
+
+  const handleEdit = (user: StaffUser) => {
+    setEditDialog({
+      open: true,
+      loading: false,
+      user,
+      displayName: user.displayName || '',
+      username: user.username,
+      email: user.email,
+      phone: user.phone || '',
+      password: '',
+    })
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editDialog.user) return
+    setEditDialog((s) => ({ ...s, loading: true }))
+    try {
+      const body: any = {
+        displayName: editDialog.displayName,
+        username: editDialog.username,
+        email: editDialog.email,
+      }
+      if (editDialog.phone) body.phone = editDialog.phone
+      if (editDialog.password) body.password = editDialog.password
+      await api.patch(`/api/users/${editDialog.user.id}`, { json: body, auth: true })
+      toast.success('Профиль обновлён', {
+        description: editDialog.password ? 'Пароль изменён — пользователь должен войти заново.' : undefined,
+      })
+      setEditDialog(emptyEdit())
+      await load()
+    } catch (e: any) {
+      const errBody = e?.body || e?.message || String(e)
+      toast.error('Ошибка обновления', {
+        description: typeof errBody === 'string' ? errBody : JSON.stringify(errBody),
+      })
+    } finally {
+      setEditDialog((s) => ({ ...s, loading: false }))
     }
   }
 
@@ -144,18 +218,32 @@ export function ManagersManager() {
     }
   }
 
+  const handleDelete = async (user: StaffUser) => {
+    if (!confirm(`Удалить аккаунт ${user.displayName || user.username}? Это необратимо.`)) return
+    setActionLoading(user.id)
+    try {
+      await api.delete(`/api/users/${user.id}`, { auth: true })
+      toast.success('Аккаунт удалён', { description: user.username })
+      await load()
+    } catch (e: any) {
+      toast.error('Ошибка удаления', { description: e?.message || String(e) })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   return (
     <div className="px-4 md:px-6 py-6 pb-28 page-top-padding">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Менеджеры и админы</h1>
+          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Админы и менеджеры</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Создание менеджеров, смена ролей, блокировка доступа.
+            Создание администраторов и менеджеров, управление профилем, ролями и доступом.
           </p>
         </div>
         <Button onClick={() => setCreateDialog({ ...emptyCreate(), open: true })} className="gap-2">
           <UserPlus className="h-4 w-4" />
-          Создать менеджера
+          Создать
         </Button>
       </div>
 
@@ -176,7 +264,7 @@ export function ManagersManager() {
         </div>
       ) : staff.length === 0 ? (
         <div className="rounded-2xl glass p-8 text-center text-sm text-muted-foreground">
-          Менеджеров пока нет. Создайте первого.
+          Персонала пока нет. Создайте первого администратора или менеджера.
         </div>
       ) : (
         <div className="space-y-2">
@@ -228,8 +316,16 @@ export function ManagersManager() {
                 </div>
 
                 {/* Actions */}
-                {!isMe && !isAdmin && (
+                {!isMe && (
                   <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => handleEdit(u)}
+                      disabled={actionLoading === u.id}
+                      title="Редактировать профиль"
+                      className="h-9 w-9 grid place-items-center rounded-xl hover:bg-primary/10 text-primary transition-colors disabled:opacity-50"
+                    >
+                      {actionLoading === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+                    </button>
                     {isBlocked ? (
                       <button
                         onClick={() => handleUnblock(u)}
@@ -237,18 +333,26 @@ export function ManagersManager() {
                         title="Разблокировать"
                         className="h-9 w-9 grid place-items-center rounded-xl hover:bg-emerald-500/10 text-emerald-600 transition-colors disabled:opacity-50"
                       >
-                        {actionLoading === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unlock className="h-4 w-4" />}
+                        <Unlock className="h-4 w-4" />
                       </button>
                     ) : (
                       <button
                         onClick={() => handleBlock(u)}
                         disabled={actionLoading === u.id}
                         title="Заблокировать"
-                        className="h-9 w-9 grid place-items-center rounded-xl hover:bg-red-500/10 text-red-600 transition-colors disabled:opacity-50"
+                        className="h-9 w-9 grid place-items-center rounded-xl hover:bg-amber-500/10 text-amber-600 transition-colors disabled:opacity-50"
                       >
-                        {actionLoading === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                        <Lock className="h-4 w-4" />
                       </button>
                     )}
+                    <button
+                      onClick={() => handleDelete(u)}
+                      disabled={actionLoading === u.id}
+                      title="Удалить аккаунт"
+                      className="h-9 w-9 grid place-items-center rounded-xl hover:bg-destructive/10 text-destructive transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                     <select
                       value={u.role}
                       onChange={(e) => handleRoleChange(u, e.target.value as 'user' | 'manager' | 'admin')}
@@ -262,10 +366,8 @@ export function ManagersManager() {
                     </select>
                   </div>
                 )}
-                {(isMe || isAdmin) && (
-                  <div className="text-xs text-muted-foreground px-2 shrink-0">
-                    {isAdmin && !isMe ? 'Защищён' : isMe ? '' : ''}
-                  </div>
+                {isMe && (
+                  <div className="text-xs text-muted-foreground px-2 shrink-0">(это вы)</div>
                 )}
               </div>
             )
@@ -273,14 +375,14 @@ export function ManagersManager() {
         </div>
       )}
 
-      {/* Create manager dialog */}
+      {/* Create staff dialog */}
       {createDialog.open && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-3xl bg-background border border-border/60 shadow-2xl">
             <div className="flex items-center justify-between p-5 border-b border-border/60">
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <UserPlus className="h-5 w-5" />
-                Новый менеджер
+                Новый сотрудник
               </h2>
               <button
                 onClick={() => setCreateDialog(emptyCreate())}
@@ -290,6 +392,41 @@ export function ManagersManager() {
               </button>
             </div>
             <div className="p-5 space-y-3">
+              {/* Role selector */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Роль *</label>
+                <div className="flex gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setCreateDialog((s) => ({ ...s, role: 'manager' }))}
+                    className={`flex-1 h-11 rounded-xl border text-sm font-medium transition-colors ${
+                      createDialog.role === 'manager'
+                        ? 'bg-blue-500 text-white border-blue-500'
+                        : 'bg-background border-border/60 hover:bg-accent'
+                    }`}
+                  >
+                    <Shield className="h-4 w-4 inline mr-1" />
+                    Менеджер
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateDialog((s) => ({ ...s, role: 'admin' }))}
+                    className={`flex-1 h-11 rounded-xl border text-sm font-medium transition-colors ${
+                      createDialog.role === 'admin'
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-background border-border/60 hover:bg-accent'
+                    }`}
+                  >
+                    <ShieldCheck className="h-4 w-4 inline mr-1" />
+                    Администратор
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {createDialog.role === 'admin'
+                    ? 'Полный доступ ко всем функциям Studio. Обязательная 2FA при первом входе.'
+                    : 'Доступ к операционным функциям Studio (заказы, чаты, товары). Без 2FA.'}
+                </p>
+              </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Имя пользователя *</label>
                 <input
@@ -306,7 +443,7 @@ export function ManagersManager() {
                   type="email"
                   value={createDialog.email}
                   onChange={(e) => setCreateDialog((s) => ({ ...s, email: e.target.value }))}
-                  placeholder="anna@999.pro"
+                  placeholder="anna@tri999.com"
                   className="w-full h-11 mt-1 px-3 rounded-xl bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
@@ -330,13 +467,16 @@ export function ManagersManager() {
                   className="w-full h-11 mt-1 px-3 rounded-xl bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
-              <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-700 dark:text-amber-400 flex gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <div>
-                  Менеджер получит роль с правами admin-уровня на большинстве endpoints.
-                  Для granular permissions используйте Module Access Manager.
+              {createDialog.role === 'admin' && (
+                <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-700 dark:text-amber-400 flex gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    Администратор должен будет настроить 2FA (TOTP) при первом входе —
+                    покажется QR-код для сканирования в приложении Google Authenticator
+                    или аналогичном.
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             <div className="p-5 border-t border-border/60 flex gap-2 justify-end">
               <Button variant="ghost" onClick={() => setCreateDialog(emptyCreate())}>
@@ -349,6 +489,98 @@ export function ManagersManager() {
               >
                 {createDialog.loading && <Loader2 className="h-4 w-4 animate-spin" />}
                 Создать
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit staff dialog */}
+      {editDialog.open && editDialog.user && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-3xl bg-background border border-border/60 shadow-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-border/60">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Pencil className="h-5 w-5" />
+                Редактировать профиль
+              </h2>
+              <button
+                onClick={() => setEditDialog(emptyEdit())}
+                className="h-8 w-8 grid place-items-center rounded-full hover:bg-accent"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Отображаемое имя</label>
+                <input
+                  type="text"
+                  value={editDialog.displayName}
+                  onChange={(e) => setEditDialog((s) => ({ ...s, displayName: e.target.value }))}
+                  className="w-full h-11 mt-1 px-3 rounded-xl bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Имя пользователя</label>
+                <input
+                  type="text"
+                  value={editDialog.username}
+                  onChange={(e) => setEditDialog((s) => ({ ...s, username: e.target.value }))}
+                  className="w-full h-11 mt-1 px-3 rounded-xl bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Email</label>
+                <input
+                  type="email"
+                  value={editDialog.email}
+                  onChange={(e) => setEditDialog((s) => ({ ...s, email: e.target.value }))}
+                  className="w-full h-11 mt-1 px-3 rounded-xl bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Телефон</label>
+                <input
+                  type="text"
+                  value={editDialog.phone}
+                  onChange={(e) => setEditDialog((s) => ({ ...s, phone: e.target.value }))}
+                  placeholder="+7..."
+                  className="w-full h-11 mt-1 px-3 rounded-xl bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">
+                  Новый пароль (оставьте пустым, чтобы не менять)
+                </label>
+                <input
+                  type="password"
+                  value={editDialog.password}
+                  onChange={(e) => setEditDialog((s) => ({ ...s, password: e.target.value }))}
+                  placeholder="••••••••"
+                  className="w-full h-11 mt-1 px-3 rounded-xl bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+                {editDialog.password && editDialog.password.length < 8 && (
+                  <p className="text-xs text-destructive mt-1">Минимум 8 символов</p>
+                )}
+                {editDialog.password && editDialog.password.length >= 8 && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    При смене пароля все текущие сессии пользователя будут завершены.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="p-5 border-t border-border/60 flex gap-2 justify-end">
+              <Button variant="ghost" onClick={() => setEditDialog(emptyEdit())}>
+                Отмена
+              </Button>
+              <Button
+                onClick={handleSaveEdit}
+                disabled={editDialog.loading || (editDialog.password.length > 0 && editDialog.password.length < 8)}
+                className="gap-2"
+              >
+                {editDialog.loading && <Loader2 className="h-4 w-4 animate-spin" />}
+                Сохранить
               </Button>
             </div>
           </div>

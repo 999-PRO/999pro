@@ -33,12 +33,18 @@ const FAR_FUTURE = new Date('2099-12-31T23:59:59Z')
 // accounts — that would be privilege escalation (a manager could create a
 // second manager account, share credentials, and bypass audit attribution).
 // Only a true admin (not a manager) can mint new manager accounts.
+//
+// v25.8 (TRI999 launch): now accepts an optional `role` field ('admin' | 'manager').
+// Defaults to 'manager' for backward compat. This lets the operator create
+// BOTH admins and managers from the Studio UI.
 const createManagerSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Username must be alphanumeric + underscore'),
   email: z.string().email().max(200),
   password: z.string().min(8).max(128),
   displayName: z.string().max(100).optional(),
   phone: z.string().max(30).optional(),
+  // v25.8: role can be 'admin' or 'manager'. Default is 'manager'.
+  role: z.enum(['admin', 'manager']).default('manager'),
 })
 
 router.post(
@@ -50,22 +56,27 @@ router.post(
     if (!parsed.success) {
       return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
     }
-    const { username, email, password, displayName, phone } = parsed.data
+    const { username, email, password, displayName, phone, role } = parsed.data
 
-    // Check for existing username/email
+    // Check for existing username/email/phone
     const existing = await prisma.user.findFirst({
-      where: { OR: [{ username }, { email }] },
-      select: { id: true, username: true, email: true },
+      where: { OR: [{ username }, { email }, { phone: phone || `pending-${username}` }] },
+      select: { id: true, username: true, email: true, phone: true },
     })
     if (existing) {
+      const field = existing.username === username
+        ? 'username'
+        : existing.email === email
+          ? 'email'
+          : 'phone'
       return res.status(409).json({
-        error: 'Пользователь с таким именем или email уже существует',
-        field: existing.username === username ? 'username' : 'email',
+        error: 'Пользователь с таким именем, email или телефоном уже существует',
+        field,
       })
     }
 
     const hashedPassword = await hashPassword(password)
-    const manager = await prisma.user.create({
+    const created = await prisma.user.create({
       data: {
         username,
         email,
@@ -78,16 +89,20 @@ router.post(
         // pattern as migration v25_7_phone_required. The new manager can set
         // their real phone later via the profile screen.
         phone: phone || `pending-${username}`,
-        role: 'manager',
+        role,
+        // v25.8: admins are operator-trusted — auto-verify email so they're
+        // not blocked by EMAIL_VERIFICATION_REQUIRED. Also auto-verify for
+        // managers since they're also staff.
+        emailVerified: new Date(),
       },
       select: { id: true, username: true, email: true, displayName: true, role: true, createdAt: true },
     })
 
-    await auditLogRaw(req.user!.id, req, 'user', manager.id, 'admin_create_manager', {
-      after: { username, email, role: 'manager' },
+    await auditLogRaw(req.user!.id, req, 'user', created.id, 'admin_create_staff', {
+      after: { username, email, role },
     })
 
-    res.status(201).json({ user: manager })
+    res.status(201).json({ user: created })
   }),
 )
 
@@ -510,6 +525,139 @@ router.delete(
 // (POST /managers + GET /managers are declared at the TOP of this file,
 //  BEFORE /:id, to avoid Express matching /managers as id="managers".)
 // ============================================================================
+
+// ============================================================================
+// v25.8 (TRI999 launch): PATCH /api/users/:id — update user profile fields.
+// ----------------------------------------------------------------------------
+// Allows an admin to update a user's displayName, username, email, password,
+// and phone from the Studio. All updates are admin-only (requireAdminOnly).
+// On password change, tokenVersion is bumped → all existing JWTs are
+// invalidated immediately (the user must log in again with the new password).
+// On username/email change, uniqueness is checked before applying.
+// ============================================================================
+const updateUserSchema = z.object({
+  displayName: z.string().max(100).optional(),
+  username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Username must be alphanumeric + underscore').optional(),
+  email: z.string().email().max(200).optional(),
+  phone: z.string().max(30).optional(),
+  password: z.string().min(8).max(128).optional(),
+})
+
+router.patch(
+  '/:id',
+  requireAuth,
+  requireAdminOnly,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const targetId = req.params.id
+    const parsed = updateUserSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
+    }
+    const updates = parsed.data
+
+    // At least one field must be provided.
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' })
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: targetId },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        phone: true,
+        displayName: true,
+        role: true,
+        deletedAt: true,
+        password: true,
+      },
+    })
+    if (!target || target.deletedAt) {
+      return res.status(404).json({ error: 'Пользователь не найден' })
+    }
+
+    // Check uniqueness for username / email / phone if they're being changed.
+    if (updates.username && updates.username !== target.username) {
+      const clash = await prisma.user.findFirst({
+        where: { username: updates.username, id: { not: targetId } },
+        select: { id: true },
+      })
+      if (clash) {
+        return res.status(409).json({ error: 'Это имя пользователя уже занято', field: 'username' })
+      }
+    }
+    if (updates.email && updates.email !== target.email) {
+      const clash = await prisma.user.findFirst({
+        where: { email: updates.email, id: { not: targetId } },
+        select: { id: true },
+      })
+      if (clash) {
+        return res.status(409).json({ error: 'Этот email уже используется', field: 'email' })
+      }
+    }
+    if (updates.phone && updates.phone !== target.phone) {
+      const clash = await prisma.user.findFirst({
+        where: { phone: updates.phone, id: { not: targetId } },
+        select: { id: true },
+      })
+      if (clash) {
+        return res.status(409).json({ error: 'Этот телефон уже используется', field: 'phone' })
+      }
+    }
+
+    // Build the update data.
+    const updateData: any = {}
+    if (updates.displayName !== undefined) updateData.displayName = updates.displayName || null
+    if (updates.username !== undefined) updateData.username = updates.username
+    if (updates.email !== undefined) updateData.email = updates.email
+    if (updates.phone !== undefined) updateData.phone = updates.phone
+    let passwordChanged = false
+    if (updates.password) {
+      updateData.password = await hashPassword(updates.password)
+      // Bump tokenVersion to invalidate all existing JWTs.
+      updateData.tokenVersion = { increment: 1 }
+      passwordChanged = true
+    }
+
+    const before = {
+      username: target.username,
+      email: target.email,
+      displayName: target.displayName,
+      phone: target.phone,
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: targetId },
+      data: updateData,
+      select: {
+        id: true, username: true, email: true, displayName: true, role: true,
+        phone: true, isOnline: true, lastSeen: true, createdAt: true,
+        lockedUntil: true, failedLoginCount: true,
+      },
+    })
+
+    // Invalidate auth cache + kick sockets (forces re-login on password change,
+    // or just refreshes role/identity cache on profile updates).
+    invalidateAuthCache(targetId)
+    if (passwordChanged) {
+      try { kickUserSockets(targetId) } catch { /* non-critical */ }
+    }
+
+    await auditLogRaw(req.user!.id, req, 'user', targetId, 'admin_update_user', {
+      before,
+      after: {
+        username: updated.username,
+        email: updated.email,
+        displayName: updated.displayName,
+        phone: updated.phone,
+        passwordChanged,
+      },
+    })
+
+    res.json({ user: updated })
+  }),
+)
 
 // PATCH /api/users/:id/role — change user role.
 // v24.6-audit (C-AI-3 fix): admin-only (requireAdminOnly). Managers must NOT
