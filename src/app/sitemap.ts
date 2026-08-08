@@ -111,5 +111,42 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     })
   }
 
+  // v25.7 (TZ ЭТАП 2.9): include DB-backed info pages (privacy, terms, delivery
+  // info, etc.) — these are the most SEO-valuable pages (long-form content).
+  try {
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:4000'
+    const infoRes = await fetch(`${backendUrl}/api/info-pages/menu`, {
+      next: { revalidate: 3600 },
+    })
+    if (infoRes.ok) {
+      const infoData: { items?: Array<{ slug: string; updatedAt?: string }> } = await infoRes.json()
+      for (const item of infoData.items ?? []) {
+        entries.push({
+          url: `${publicUrl}/?view=info&page=${encodeURIComponent(item.slug)}`,
+          lastModified: item.updatedAt ? new Date(item.updatedAt) : BUILD_TIME,
+          changeFrequency: 'monthly',
+          priority: 0.5,
+        })
+      }
+    }
+  } catch {
+    // Info pages are non-critical for sitemap — skip on error.
+  }
+
+  // v25.7: static app pages (about, contacts, reviews).
+  const staticPages = [
+    { path: '/?view=about', priority: 0.4 },
+    { path: '/?view=contacts', priority: 0.6 },
+    { path: '/?view=reviews', priority: 0.5 },
+  ]
+  for (const p of staticPages) {
+    entries.push({
+      url: `${publicUrl}${p.path}`,
+      lastModified: BUILD_TIME,
+      changeFrequency: 'monthly',
+      priority: p.priority,
+    })
+  }
+
   return entries
 }

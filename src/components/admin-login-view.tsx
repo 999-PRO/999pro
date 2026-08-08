@@ -173,8 +173,11 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
       setTotpCode('')
       setTotpQrUrl('')
       setTotpSecret('')
-      // Navigate to studio
-      onNavigate('studio')
+      // v25.7 (TZ ЭТАП 2.1): land on Home instead of forcing Studio — admin
+      // can then pick Chat / Studio / Catalog from the sidebar/bottom-nav.
+      // This fixes the symptom "admin logged in but cannot use the chat":
+      // the chat is now reachable in one tap from the post-login screen.
+      onNavigate('home')
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Неверный код'
       toast.error('Ошибка проверки кода', { description: msg })
@@ -204,7 +207,8 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
       toast.success('Добро пожаловать, администратор!')
       setTotpFlow('none')
       setTotpCode('')
-      onNavigate('studio')
+      // v25.7: land on Home — admin can access Chat, Studio, etc. from there.
+      onNavigate('home')
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Неверный код'
       toast.error('Неверный код подтверждения', { description: msg })
@@ -294,7 +298,8 @@ export function AdminLoginView({ onBack, onNavigate }: { onBack: () => void; onN
       toast.success('Добро пожаловать, администратор!')
       setTotpFlow('none')
       setTotpCode('')
-      onNavigate('studio')
+      // v25.7: land on Home — admin can access Chat, Studio, etc. from there.
+      onNavigate('home')
     } catch (e: any) {
       toast.error('Ошибка входа', { description: e?.message || 'Проверьте данные' })
     } finally {

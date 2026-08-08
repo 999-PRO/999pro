@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Star, StarHalf, X, Camera, Loader2, PenLine, Trash2, MessageSquare, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon } from 'lucide-react'
+import { Star, StarHalf, X, Camera, Loader2, PenLine, Trash2, MessageSquare, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon, ShieldCheck, CornerDownRight } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
 import type { Product, Review } from '@/lib/types'
 import { useAuthStore } from '@/lib/auth-store'
@@ -69,6 +69,11 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
   const [totalReviews, setTotalReviews] = useState(0)
   const [myReview, setMyReview] = useState<Review | null>(null)
   const [showForm, setShowForm] = useState(false)
+  // v25.7 (TZ ЭТАП 2.3): when an admin clicks "Изменить" on someone else's
+  // review, we open the ReviewForm with that review pre-filled. For the
+  // user's OWN review, `editingReview` is null and the form falls back to
+  // `myReview` (preserving the pre-v25.7 behavior).
+  const [editingReview, setEditingReview] = useState<Review | null>(null)
   const [showAllSheet, setShowAllSheet] = useState(false)
   // Phase 10: custom confirm dialog state
   const [deleteReviewId, setDeleteReviewId] = useState<string | null>(null)
@@ -133,8 +138,15 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
 
   const handleSaved = (review: Review) => {
     setShowForm(false)
-    setMyReview(review)
-    toast.success(myReview ? 'Отзыв обновлён' : 'Спасибо за отзыв!')
+    // v25.7 (TZ ЭТАП 2.3): only update `myReview` when the saved review was
+    // the user's OWN review (editingReview was null). If the admin was
+    // editing someone else's review (editingReview is set), don't hijack
+    // it as "my review" — just refetch the list.
+    if (!editingReview) {
+      setMyReview(review)
+    }
+    toast.success(editingReview ? 'Отзыв обновлён' : myReview ? 'Отзыв обновлён' : 'Спасибо за отзыв!')
+    setEditingReview(null)
     refresh()
     onReviewChanged?.()
   }
@@ -198,7 +210,7 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
       {isAuthenticated ? (
         !myReview && (
           <Button
-            onClick={() => setShowForm(true)}
+            onClick={() => { setEditingReview(null); setShowForm(true) }}
             className="w-full rounded-2xl h-11 mb-3 gradient-brand text-white font-semibold"
           >
             <PenLine className="h-4 w-4 mr-1.5" /> Оставить отзыв
@@ -244,8 +256,13 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
           <ReviewCard
             review={myReview}
             isOwn
-            onEdit={() => setShowForm(true)}
+            // v25.7 (TZ ЭТАП 2.3): admins can also reply to their own
+            // reviews (and edit/delete any review) — pass isAdmin so the
+            // reply button + admin edit/delete buttons appear.
+            isAdmin={user?.role === 'admin'}
+            onEdit={() => { setEditingReview(null); setShowForm(true) }}
             onDelete={() => handleDelete(myReview.id)}
+            onReplyAdded={refresh}
           />
         </div>
       )}
@@ -282,7 +299,19 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.98 }}
                   >
-                    <ReviewCard review={r} />
+                    <ReviewCard
+                      review={r}
+                      // v25.7 (TZ ЭТАП 2.3): admins can edit/delete/reply
+                      // to ANY review. Regular users see only the standard
+                      // card (no admin actions).
+                      isAdmin={user?.role === 'admin'}
+                      onEdit={() => {
+                        setEditingReview(r)
+                        setShowForm(true)
+                      }}
+                      onDelete={() => handleDelete(r.id)}
+                      onReplyAdded={refresh}
+                    />
                   </motion.div>
                 ))}
             </AnimatePresence>
@@ -331,8 +360,11 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
         <AnimatePresence>
           <ReviewForm
             product={product}
-            existingReview={myReview}
-            onClose={() => setShowForm(false)}
+            // v25.7 (TZ ЭТАП 2.3): when an admin is editing someone else's
+            // review, `editingReview` is set. Otherwise fall back to the
+            // user's own review (pre-v25.7 behavior).
+            existingReview={editingReview ?? myReview}
+            onClose={() => { setShowForm(false); setEditingReview(null) }}
             onSaved={handleSaved}
           />
         </AnimatePresence>,
@@ -378,15 +410,52 @@ function StarRating({ value, size = 'md' }: { value: number; size?: 'sm' | 'md' 
 function ReviewCard({
   review,
   isOwn,
+  isAdmin,
   onEdit,
   onDelete,
+  onReplyAdded,
 }: {
   review: Review
   isOwn?: boolean
+  // v25.7 (TZ ЭТАП 2.3): when true, admin edit/delete buttons are shown for
+  // ANY review (not just the caller's own). The backend already permits
+  // admin edits/deletes via requireAuth + role check; this just exposes
+  // the UI for it.
+  isAdmin?: boolean
   onEdit?: () => void
   onDelete?: () => void
+  // v25.7: called after a reply is successfully posted so the parent can
+  // refetch and the new reply appears under this review.
+  onReplyAdded?: () => void
 }) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  // v25.7: admin reply composer state.
+  const [replyOpen, setReplyOpen] = useState(false)
+  const [replyText, setReplyText] = useState('')
+  const [replyBusy, setReplyBusy] = useState(false)
+
+  const submitReply = async () => {
+    const text = replyText.trim()
+    if (!text) {
+      toast.error('Введите текст ответа')
+      return
+    }
+    setReplyBusy(true)
+    try {
+      await api.post<Review>(`/api/reviews/${review.id}/replies`, {
+        json: { content: text },
+        auth: true,
+      })
+      toast.success('Ответ опубликован')
+      setReplyText('')
+      setReplyOpen(false)
+      onReplyAdded?.()
+    } catch (e: any) {
+      toast.error(e?.details?.error || 'Не удалось опубликовать ответ')
+    } finally {
+      setReplyBusy(false)
+    }
+  }
 
   return (
     <div className="glass rounded-2xl p-4">
@@ -413,8 +482,9 @@ function ReviewCard({
             <span className="text-xs text-muted-foreground">{timeAgo(new Date(review.createdAt))}</span>
           </div>
         </div>
-        {/* Edit / delete buttons for own review */}
-        {isOwn && (
+        {/* Edit / delete buttons — shown for the user's OWN review OR for
+            ANY review when the caller is an admin. v25.7 (TZ ЭТАП 2.3). */}
+        {(isOwn || isAdmin) && (
           <div className="flex gap-1 shrink-0">
             {onEdit && (
               <button
@@ -448,7 +518,13 @@ function ReviewCard({
       )}
 
       {review.photos.length > 0 && (
-        <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
+        <div
+          className="flex gap-2 mt-3 overflow-x-auto no-scrollbar"
+          // v25.7 (TZ ЭТАП 2.8): allow vertical scroll pass-through so the
+          // product page doesn't get "stuck" when the user starts a swipe
+          // over the review photos strip.
+          style={{ touchAction: 'pan-x pan-y' }}
+        >
           {review.photos.map((url, i) => (
             <button
               key={i}
@@ -475,6 +551,89 @@ function ReviewCard({
           initialIndex={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
         />
+      )}
+
+      {/* v25.7 (TZ ЭТАП 2.3): admin reply button. Visible only to admins.
+          Toggles an inline textarea where the admin can write a reply. */}
+      {isAdmin && (
+        <div className="mt-3">
+          {!replyOpen ? (
+            <button
+              onClick={() => setReplyOpen(true)}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 transition-colors"
+            >
+              <CornerDownRight className="h-3.5 w-3.5" />
+              Ответить от имени администратора
+            </button>
+          ) : (
+            <div className="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Ответ администратора
+              </div>
+              <Textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="Введите ответ…"
+                className="min-h-[72px] bg-background text-sm"
+                disabled={replyBusy}
+                autoFocus
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setReplyOpen(false); setReplyText('') }}
+                  disabled={replyBusy}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={submitReply}
+                  disabled={replyBusy || !replyText.trim()}
+                >
+                  {replyBusy && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}
+                  Опубликовать
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* v25.7 (TZ ЭТАП 2.3): nested admin replies. The backend includes
+          replies via Prisma `include: { replies: true }` on GET /api/reviews.
+          Each reply is rendered as a smaller, indented card with an
+          "Администратор" badge. Replies have no rating (rating=0). */}
+      {review.replies && review.replies.length > 0 && (
+        <div className="mt-3 ml-3 pl-3 border-l-2 border-primary/30 space-y-2">
+          {review.replies.map((reply) => (
+            <div key={reply.id} className="rounded-xl bg-accent/30 p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Avatar className="h-6 w-6">
+                  {reply.user?.avatar && <AvatarImage src={reply.user.avatar} alt={reply.user.username} />}
+                  <AvatarFallback className="gradient-brand text-white text-[10px]">
+                    {initials(reply.user?.displayName || reply.user?.username)}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="font-semibold text-xs">
+                  {reply.user?.displayName || reply.user?.username || 'Администратор'}
+                </span>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
+                  <ShieldCheck className="h-2.5 w-2.5" />
+                  АДМИН
+                </span>
+                <span className="text-[10px] text-muted-foreground ml-auto">
+                  {timeAgo(new Date(reply.createdAt))}
+                </span>
+              </div>
+              <p className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">
+                {reply.content}
+              </p>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

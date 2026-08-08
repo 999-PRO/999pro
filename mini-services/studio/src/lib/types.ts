@@ -101,6 +101,18 @@ export interface Analytics {
   messages: number
   users: number
   banners: number
+  // v25.7 (TZ ЭТАП 2.5): added by GET /api/analytics — count of users
+  // currently online (User.isOnline flag, flipped by socket connect).
+  onlineNow?: number
+  // v22 fields (kept for forward-compat with the existing overview cards).
+  todayOrders?: number
+  todayRevenue?: number
+  totalRevenue?: number
+  statusBreakdown?: Record<string, number>
+  recentOrders?: Array<{
+    id: string; total: number; status: string; name: string | null
+    createdAt: string; itemsCount: number; firstItemTitle: string | null
+  }>
 }
 
 export interface HeaderImageSetting {

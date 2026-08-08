@@ -712,10 +712,17 @@ function ReviewForm({
     setSubmitting(true)
     try {
       const body = { productId: product.id, rating, title: title.trim() || undefined, content: content.trim() || undefined }
+      // v25.7 (TZ ЭТАП 2.3): the backend returns a FLAT Review object, NOT
+      // `{ review: Review }`. The previous typing expected a wrapper, so
+      // `result.review` was always undefined → onSaved(undefined) → the
+      // user's "your review" highlight disappeared even though the save
+      // succeeded. Fixed to read the flat shape (matches the other two
+      // ReviewForm implementations in reviews-view.tsx and
+      // product-reviews-inline.tsx).
       const result = existingReview
-        ? await api.patch<{ review: Review }>(`/api/reviews/${existingReview.id}`, { json: body, auth: true })
-        : await api.post<{ review: Review }>('/api/reviews', { json: body, auth: true })
-      onSaved(result.review)
+        ? await api.patch<Review>(`/api/reviews/${existingReview.id}`, { json: body, auth: true })
+        : await api.post<Review>('/api/reviews', { json: body, auth: true })
+      onSaved(result)
     } catch (e: any) {
       toast.error(e?.details?.error || 'Не удалось сохранить отзыв')
     } finally {

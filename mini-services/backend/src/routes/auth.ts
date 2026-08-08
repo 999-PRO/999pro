@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import crypto from 'node:crypto'
+import { Prisma, type User } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import {
   hashPassword,
@@ -57,9 +58,12 @@ router.post(
     const email = data.email.trim().toLowerCase()
     const username = data.username.trim().toLowerCase()
 
+    // v25.7 (TZ ЭТАП 2.6): pre-check phone uniqueness too. Previously phone
+    // uniqueness relied solely on the Prisma @unique constraint, which threw
+    // P2002 with no handler → 500. Now we explicitly check and return 409.
     const exists = await prisma.user.findFirst({
-      where: { OR: [{ email }, { username }] },
-      select: { id: true, email: true, username: true, role: true },
+      where: { OR: [{ email }, { username }, { phone: data.phone }] },
+      select: { id: true, email: true, username: true, phone: true, role: true },
     })
     if (exists) {
       // Differentiate the error message so the operator/user knows whether
@@ -69,11 +73,18 @@ router.post(
       if (exists.role === 'admin') {
         return res
           .status(409)
-          .json({ error: 'Этот email или логин уже заняты администратором. Войдите под этим аккаунтом.' })
+          .json({ error: 'Этот email, телефон или логин уже заняты администратором. Войдите под этим аккаунтом.' })
       }
+      if (exists.phone === data.phone) {
+        return res.status(409).json({ error: 'Этот телефон уже используется', field: 'phone' })
+      }
+      if (exists.email === email) {
+        return res.status(409).json({ error: 'Этот email уже используется', field: 'email' })
+      }
+      // username collision branch (remaining case)
       return res
         .status(409)
-        .json({ error: 'Пользователь с таким email или username уже существует. Используйте другой.' })
+        .json({ error: 'Этот никнейм уже занят. Используйте другой.', field: 'username' })
     }
 
     // First-run auto-promotion: if NO admin exists in the database yet,
@@ -133,32 +144,47 @@ router.post(
       }
     }
 
-    const { user, assignedRole } = await prisma.$transaction(async (tx) => {
-      const adminCount = await tx.user.count({ where: { role: 'admin', deletedAt: null } })
-      const role: 'admin' | 'user' = adminCount === 0 ? 'admin' : 'user'
-      // Generate a referral code for the new user (username prefix + random suffix)
-      const newRefCode = generateReferralCode(username)
-      const created = await tx.user.create({
-        data: {
-          email,
-          username,
-          phone: data.phone,
-          password,
-          displayName: data.displayName,
-          gender: data.gender,
-          avatar: null,
-          role,
-          referralCode: newRefCode,
-          referredById: referrerId,
-          // v25.6 (auth fix): admins are operator-trusted — auto-verify email
-          // so they're not blocked by EMAIL_VERIFICATION_REQUIRED. Without this,
-          // the first admin (created via registration when adminCount===0) would
-          // be locked out of their own account when email verification is on.
-          emailVerified: role === 'admin' ? new Date() : undefined,
-        },
+    // v25.7 (TZ ЭТАП 2.6): wrap the create in a try/catch for P2002.
+    // The pre-check above is non-atomic — two concurrent registrations can
+    // race past it and one will hit the DB-level @unique constraint.
+    // Previously this surfaced as an unhandled 500. Now it returns 409.
+    let user: User
+    let assignedRole: 'admin' | 'user'
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const adminCount = await tx.user.count({ where: { role: 'admin', deletedAt: null } })
+        const role: 'admin' | 'user' = adminCount === 0 ? 'admin' : 'user'
+        // Generate a referral code for the new user (username prefix + random suffix)
+        const newRefCode = generateReferralCode(username)
+        const created = await tx.user.create({
+          data: {
+            email,
+            username,
+            phone: data.phone,
+            password,
+            displayName: data.displayName,
+            gender: data.gender,
+            avatar: null,
+            role,
+            referralCode: newRefCode,
+            referredById: referrerId,
+            // v25.6 (auth fix): admins are operator-trusted — auto-verify email
+            // so they're not blocked by EMAIL_VERIFICATION_REQUIRED. Without this,
+            // the first admin (created via registration when adminCount===0) would
+            // be locked out of their own account when email verification is on.
+            emailVerified: role === 'admin' ? new Date() : undefined,
+          },
+        })
+        return { user: created, assignedRole: role }
       })
-      return { user: created, assignedRole: role }
-    })
+      user = result.user
+      assignedRole = result.assignedRole
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        return res.status(409).json({ error: 'Телефон, email или никнейм уже заняты' })
+      }
+      throw e
+    }
 
     // v12.6: Award referral bonus to the referrer (outside the user-create
     // transaction so a failure here doesn't roll back registration).
@@ -881,6 +907,14 @@ router.post(
           password,
           displayName: data.displayName,
           role: 'admin',
+          // v25.7 (TZ ЭТАП 2.6): phone is NOT NULL in the schema. The
+          // setup-admin wizard is the operator's first-run flow and doesn't
+          // ask for a phone — we seed it with a unique placeholder following
+          // the same `'pending-' || id` pattern used by migration
+          // v25_7_phone_required. The operator can set their real phone
+          // later via the profile screen. (Username is unique → placeholder
+          // is unique.)
+          phone: `pending-${username}`,
           // v25.6 (auth fix): auto-verify admin email — see /register for rationale.
           emailVerified: new Date(),
         },
@@ -1106,7 +1140,9 @@ router.post(
           where: { id: old.id },
           data: {
             email: `deleted-${old.id}@deleted.local`,
-            phone: null,
+            // v25.7 (TZ ЭТАП 2.6): phone is now NOT NULL — anonymize to a
+            // unique placeholder (matching the email pattern) instead of NULL.
+            phone: `deleted-${old.id}`,
             username: `deleted-${old.id}`,
             displayName: 'Deleted admin',
             avatar: null,
@@ -1123,6 +1159,11 @@ router.post(
           password,
           displayName: data.displayName,
           role: 'admin',
+          // v25.7 (TZ ЭТАП 2.6): phone is NOT NULL in the schema. The
+          // reset-admin wizard doesn't ask for a phone — seed with a unique
+          // placeholder (`pending-<username>`) the same way setup-admin does.
+          // The operator can set their real phone later via the profile screen.
+          phone: `pending-${username}`,
           // v25.6 (auth fix): auto-verify admin email — see /register for rationale.
           emailVerified: new Date(),
         },

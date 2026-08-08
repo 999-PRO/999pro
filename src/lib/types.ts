@@ -113,6 +113,8 @@ export interface Review {
   id: string
   productId: string
   userId: string
+  /** v25.7 (TZ ЭТАП 2.3): null = top-level review; non-null = reply to that review. */
+  parentId?: string | null
   rating: number
   title?: string | null
   content?: string | null
@@ -125,7 +127,15 @@ export interface Review {
     username: string
     displayName?: string | null
     avatar?: string | null
+    /** v25.7: backend now includes role in the review author object so the
+     * frontend can render an "Администратор" badge on admin replies without
+     * an extra API round-trip. */
+    role?: string
   } | null
+  /** v25.7: nested admin replies. Only populated when the backend was asked
+   * to `include: { replies: true }` (currently GET /api/reviews does this).
+   * For replies themselves this field is undefined. */
+  replies?: Review[]
 }
 
 // v12.3.1: Story interface RESTORED (was incorrectly removed with Feed in v12.3).

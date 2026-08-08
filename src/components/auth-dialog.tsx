@@ -16,6 +16,7 @@ import { haptic } from '@/lib/haptic'
 import { sounds } from '@/lib/sounds'
 import { loginSchema } from '@/lib/schemas'
 import { toast } from '@/lib/notifications'
+import type { User } from '@/lib/types'
 import { Loader2, Venus, Mars, Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 // v20: email verification modal shown after registration
@@ -85,7 +86,33 @@ export function AuthDialog({
             return
           }
         }
-        await login(loginField, password)
+        const result = await login(loginField, password)
+        // v25.7 (TZ ЭТАП 2.1): the auth store returns a result OBJECT (not a
+        // User) when the backend demands 2FA — either `totpRequired` (admin
+        // already enrolled) or `totpSetupRequired` (admin must enroll). The
+        // regular AuthDialog has no TOTP input UI; AdminLoginView does. So we
+        // detect the admin 2FA shape here, close this dialog, and dispatch a
+        // `navigate` event that page.tsx listens for → switches to
+        // AdminLoginView. The auth store already stashed `setupToken` /
+        // remembered `user`, so AdminLoginView will resume the wizard at the
+        // correct step (QR setup OR 6-digit code input).
+        if (result && typeof result === 'object' && !('id' in result) && 'user' in result) {
+          const r = result as { user: User; totpRequired?: boolean; totpSetupRequired?: boolean; message?: string }
+          if (r.user?.role === 'admin') {
+            toast.info('Требуется 2FA', {
+              description: 'Перенаправляем в форму входа администратора…',
+              duration: 4000,
+            })
+            onOpenChange(false)
+            haptic.select()
+            // page.tsx listens for `navigate` events and switches the view.
+            window.dispatchEvent(new CustomEvent('navigate', { detail: { view: 'admin-login' } }))
+            return
+          }
+          // Non-admin user somehow hit TOTP — surface a clear message.
+          toast.info('Требуется подтверждение', { description: r.message || 'Обратитесь к администратору.' })
+          return
+        }
         toast.success('Добро пожаловать!')
         haptic.success() // v10-native: haptic on successful login
         sounds.success() // v10-native: sound on successful login
@@ -113,7 +140,7 @@ export function AuthDialog({
           email,
           password,
           confirmPassword,
-          phone: phone || undefined,
+          phone: phone.trim(),
           displayName: displayName || undefined,
           gender: gender || undefined,
           // v12.6: pass referral code from URL ?ref=CODE so the backend
@@ -214,13 +241,18 @@ export function AuthDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="phone">Телефон</Label>
+                  <Label htmlFor="phone">Телефон *</Label>
                   <Input
                     id="phone"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="+79991234567"
                     className="rounded-2xl"
+                    required
+                    pattern="^\+?[\d\s\-()]{7,20}$"
+                    minLength={7}
+                    maxLength={20}
+                    title="Только цифры, пробелы, +, -, скобки. Минимум 7 символов."
                   />
                 </div>
               </div>

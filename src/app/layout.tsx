@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import { NotificationContainer } from '@/components/notification-container'
+// v25.7 (TZ ЭТАП 2.5): global visit tracker — records a page view on every
+// route change. Mounts once at the root layout; invisible (renders null).
+import { VisitTracker } from '@/components/visit-tracker'
 import { ThemeProvider } from '@/components/providers'
 import { AuthInit } from '@/components/auth-init'
 import { PwaInstallPrompt } from '@/components/pwa-install-prompt'
@@ -63,12 +66,15 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
+      { url: '/icons/favicon-16.png', sizes: '16x16', type: 'image/png' },
       { url: '/icons/favicon-32.png', sizes: '32x32', type: 'image/png' },
       { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
       { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
       { url: '/icon-192.svg', type: 'image/svg+xml' },
     ],
-    apple: '/icons/apple-touch-icon.png',
+    apple: [
+      { url: '/icons/apple-touch-icon.png', sizes: '180x180' },
+    ],
     other: [
       { rel: 'mask-icon', url: '/icons/icon-512-maskable.png', color: '#2563eb' },
       // apple-touch-startup-image — one per device class. iOS uses the
@@ -99,9 +105,9 @@ export const metadata: Metadata = {
     url: APP_PUBLIC_URL,
     images: [
       {
-        url: '/icons/screenshot-phone-1.png',
-        width: 1080,
-        height: 1920,
+        url: '/og',
+        width: 1200,
+        height: 630,
         alt: '999 — Три девятки. Маркетплейс нового поколения.',
       },
     ],
@@ -110,7 +116,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: '999 — Три девятки',
     description: 'Современный маркетплейс товаров и услуг с голосовым AI-агентом.',
-    images: ['/icons/screenshot-phone-1.png'],
+    images: ['/og'],
   },
   alternates: {
     canonical: APP_PUBLIC_URL,
@@ -385,6 +391,100 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             and production where backend is on a separate origin. */}
         <link rel="preconnect" href={BACKEND_PUBLIC_ORIGIN} crossOrigin="anonymous" />
         <link rel="dns-prefetch" href="https://images.unsplash.com" />
+        {/* v25.7 (TZ ЭТАП 2.9): search-engine verification meta tags. Emitted
+            only when the corresponding env var is set (so dev/preview builds
+            don't emit empty content attributes). Google Search Console and
+            Yandex Webmaster both verify ownership via a single meta tag with
+            a per-property token. */}
+        {process.env.GOOGLE_SITE_VERIFICATION && (
+          <meta name="google-site-verification" content={process.env.GOOGLE_SITE_VERIFICATION} />
+        )}
+        {process.env.YANDEX_VERIFICATION && (
+          <meta name="yandex-verification" content={process.env.YANDEX_VERIFICATION} />
+        )}
+        {/* v25.7 (TZ ЭТАП 2.9): Organization / LocalBusiness / WebSite JSON-LD.
+            Powers Google's Knowledge Graph card (logo + name + URL) and the
+            LocalBusiness rich result (address, hours, geo). All sensitive
+            fields (phone, email, address, geo) are guarded by env vars so
+            nothing is emitted in dev/preview builds. The `<` → `\u003c` escape
+            prevents `</script>` payloads inside string values from breaking
+            out of the JSON-LD block (defense in depth — current strings are
+            static but the pattern is consistent with /p/[shortId] JSON-LD). */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'Organization',
+              name: '999 — Три девятки',
+              url: APP_PUBLIC_URL,
+              logo: `${APP_PUBLIC_URL}/icons/icon-512.png`,
+            }).replace(/</g, '\\u003c'),
+          }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'LocalBusiness',
+              '@id': `${APP_PUBLIC_URL}/#localbusiness`,
+              name: '999 — Три девятки',
+              image: `${APP_PUBLIC_URL}/icons/screenshot-phone-1.png`,
+              url: APP_PUBLIC_URL,
+              telephone: process.env.NEXT_PUBLIC_BUSINESS_PHONE || undefined,
+              email: process.env.NEXT_PUBLIC_BUSINESS_EMAIL || undefined,
+              address: process.env.NEXT_PUBLIC_BUSINESS_ADDRESS_STREET
+                ? {
+                    '@type': 'PostalAddress',
+                    streetAddress: process.env.NEXT_PUBLIC_BUSINESS_ADDRESS_STREET,
+                    addressLocality: process.env.NEXT_PUBLIC_BUSINESS_ADDRESS_CITY || undefined,
+                    addressRegion: process.env.NEXT_PUBLIC_BUSINESS_ADDRESS_REGION || undefined,
+                    postalCode: process.env.NEXT_PUBLIC_BUSINESS_ADDRESS_ZIP || undefined,
+                    addressCountry: process.env.NEXT_PUBLIC_BUSINESS_ADDRESS_COUNTRY || 'RU',
+                  }
+                : undefined,
+              geo: process.env.NEXT_PUBLIC_BUSINESS_GEO_LAT
+                ? {
+                    '@type': 'GeoCoordinates',
+                    latitude: parseFloat(process.env.NEXT_PUBLIC_BUSINESS_GEO_LAT),
+                    longitude: parseFloat(process.env.NEXT_PUBLIC_BUSINESS_GEO_LNG),
+                  }
+                : undefined,
+              openingHoursSpecification: [
+                {
+                  '@type': 'OpeningHoursSpecification',
+                  dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+                  opens: '09:00',
+                  closes: '21:00',
+                },
+                {
+                  '@type': 'OpeningHoursSpecification',
+                  dayOfWeek: ['Saturday', 'Sunday'],
+                  opens: '10:00',
+                  closes: '20:00',
+                },
+              ],
+              priceRange: '₽₽',
+            }).replace(/</g, '\\u003c'),
+          }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'WebSite',
+              url: APP_PUBLIC_URL,
+              name: '999 — Три девятки',
+              potentialAction: {
+                '@type': 'SearchAction',
+                target: `${APP_PUBLIC_URL}/?view=search&q={search_term_string}`,
+                'query-input': 'required name=search_term_string',
+              },
+            }).replace(/</g, '\\u003c'),
+          }}
+        />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {/* Wave 3 (C-MON-001): Sentry client-side init — no-op without NEXT_PUBLIC_SENTRY_DSN */}
@@ -402,6 +502,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <PwaInstallPrompt />
           <OnboardingOverlay />
           <NotificationContainer />
+          {/* v25.7 (TZ ЭТАП 2.5): records page views for the analytics
+              dashboard. Renders null — no UI. */}
+          <VisitTracker />
         </ThemeProvider>
       </body>
     </html>

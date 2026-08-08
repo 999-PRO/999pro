@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth, requireAdmin, optionalAuth, type AuthedRequest } from '../lib/auth.js'
+import { requireAuth, requireAdmin, requireAdminOnly, optionalAuth, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import { auditLog, auditLogBulk } from '../lib/audit.js'
 import { z } from 'zod'
@@ -112,6 +112,24 @@ router.post('/', publicLeadLimiter, optionalAuth, asyncHandler(async (req: Authe
   // Previously admins got ZERO notification when a lead was created.
   try {
     const { sendPushToUser } = await import('./push.js')
+    // v25.7 (TZ ЭТАП 2.4): emit a socket event to the admins room so Studio
+    // shows an instant in-app toast (push alone only reaches the OS
+    // notification tray — admins with the browser in the foreground would
+    // miss it without a socket event).
+    try {
+      const { getIo } = await import('../socket/handlers.js')
+      const io = getIo()
+      if (io) {
+        io.to('admins').emit('lead:created', {
+          leadId: lead.id,
+          name: lead.name,
+          productTitle: lead.productTitle || null,
+          createdAt: lead.createdAt,
+        })
+      }
+    } catch {
+      // Socket init may fail if the server hasn't started IO yet — non-critical.
+    }
     const admins = await prisma.user.findMany({
       where: { role: 'admin', deletedAt: null },
       select: { id: true },
@@ -301,6 +319,11 @@ router.delete('/:id', requireAuth, requireAdmin, asyncHandler(async (req: Authed
 //  Emits `lead:deleted` socket events to each affected user (if any) so
 //  their "Мои заявки" view updates in real-time. Admin studios also get
 //  notified via the `admins` room.
+//
+//  v25.7 (TZ ЭТАП 2.6): requireAdminOnly — with `clearAll: true` this wipes
+//  ALL leads in one call. Managers should not be able to destroy evidence
+//  of misconduct (spam, fraud, abuse) by clearing the entire lead table.
+//  Only a true admin (not a manager) can perform bulk lead destruction.
 // ============================================================================
 const bulkDeleteSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).max(500).optional(),
@@ -311,7 +334,7 @@ const bulkDeleteSchema = z.object({
   { message: 'One of `ids`, `clearStatus`, or `clearAll` must be provided' },
 )
 
-router.post('/bulk-delete', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+router.post('/bulk-delete', requireAuth, requireAdminOnly, asyncHandler(async (req: AuthedRequest, res) => {
   const data = bulkDeleteSchema.parse(req.body)
 
   // Build the WHERE clause for the deletion

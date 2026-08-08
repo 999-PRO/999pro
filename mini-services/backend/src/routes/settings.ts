@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
+import { requireAuth, requireAdmin, requireAdminOnly, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import { auditLog } from '../lib/audit.js'
 import { logger } from '../lib/logger.js'
@@ -170,11 +170,16 @@ router.get(
   }),
 )
 
-// PUT /api/settings/:key — admin only, upsert
+// PUT /api/settings/:key — admin only (requireAdminOnly), upsert.
+// v25.7 (TZ ЭТАП 2.6): system-wide settings include feature flags
+// (modulesEnabled), splash screen, home layout, branding. Managers must
+// not be able to disable modules or change branding — they could break
+// the storefront, hide evidence of activity, or impersonate the brand.
+// Only a true admin (not a manager) can change system-wide settings.
 router.put(
   '/:key',
   requireAuth,
-  requireAdmin,
+  requireAdminOnly,
   asyncHandler(async (req: AuthedRequest, res) => {
     const key = req.params.key
     if (!KNOWN_SETTING_KEYS.has(key)) {
@@ -252,11 +257,14 @@ router.put(
   }),
 )
 
-// DELETE /api/settings/:key — admin only
+// DELETE /api/settings/:key — admin only (requireAdminOnly).
+// v25.7 (TZ ЭТАП 2.6): same rationale as PUT /:key above — system-wide
+// settings include feature flags, branding, splash screen. Managers must
+// not be able to delete (reset) these. Only a true admin can.
 router.delete(
   '/:key',
   requireAuth,
-  requireAdmin,
+  requireAdminOnly,
   asyncHandler(async (req: AuthedRequest, res) => {
     const key = req.params.key
     if (!KNOWN_SETTING_KEYS.has(key)) {

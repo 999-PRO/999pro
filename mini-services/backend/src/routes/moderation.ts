@@ -122,6 +122,44 @@ router.post(
     })
 
     broadcastChanged('moderation:changed')
+
+    // v25.7 (TZ ЭТАП 2.4): emit a targeted admin-only socket event + push
+    // notification. The previous `broadcastChanged('moderation:changed')`
+    // went to ALL connected clients (including non-admin users), which is
+    // wasteful AND doesn't trigger any in-app toast because the frontend
+    // doesn't subscribe to it. We now ALSO emit `moderation:report-created`
+    // to the `admins` room — the Studio socket subscribes to this event
+    // globally (in providers.tsx) and shows a toast.
+    try {
+      const { getIo } = await import('../socket/handlers.js')
+      const { sendPushToUser } = await import('./push.js')
+      const io = getIo()
+      if (io) {
+        io.to('admins').emit('moderation:report-created', {
+          reportId: report.id,
+          targetType: data.targetType,
+          targetId: data.targetId,
+          reason: data.reason,
+          comment: data.comment || null,
+          createdAt: report.createdAt,
+        })
+      }
+      const admins = await prisma.user.findMany({
+        where: { role: 'admin', deletedAt: null },
+        select: { id: true },
+      })
+      for (const admin of admins) {
+        void sendPushToUser(admin.id, {
+          title: '🚩 Новая жалоба',
+          body: `${data.targetType}: ${data.reason}`,
+          tag: `admin-report-${report.id}`,
+          url: '/studio/?view=moderation',
+        })
+      }
+    } catch {
+      // Non-critical — the report is already saved.
+    }
+
     res.status(201).json({ ok: true, id: report.id })
   }),
 )

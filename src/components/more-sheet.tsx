@@ -29,7 +29,7 @@ import {
   Settings, Info, Star, Truck, CreditCard, Bell,
   Palette, Globe, Shield, LogOut, Share2, MessageSquare, Bookmark,
   FileText, Cookie, UserCheck, Mail, HelpCircle, Building2, Phone, Lock, BookOpen, AlertCircle,
-  ArrowLeft,
+  ArrowLeft, ShieldCheck,
 } from 'lucide-react'
 import { useAuthStore } from '@/lib/auth-store'
 import { useTheme } from 'next-themes'
@@ -66,14 +66,26 @@ interface MenuInfoPage {
 }
 
 // v16.8 (production lockdown): the "Студия" entry is only shown to admins.
-const buildSections = (isAdmin: boolean) => {
+// v25.7 (TZ ЭТАП 2.1): also expose "Вход для администратора" to NON-authed
+// users so they can reach the proper 2FA login flow. Without this entry,
+// admins had to know the direct URL /?view=admin-login — making the proper
+// login flow effectively undiscoverable.
+const buildSections = (isAdmin: boolean, isAuthed: boolean) => {
   const sections: { title: string; items: { id: string; label: string; icon: any; desc: string }[] }[] = []
-  // Studio section — ADMIN ONLY.
+  // Studio section — ADMIN ONLY (when authed).
   if (isAdmin) {
     sections.push({
       title: 'Управление',
       items: [
         { id: 'studio', label: 'Студия', icon: LayoutDashboard, desc: 'Админ-панель' },
+      ],
+    })
+  } else if (!isAuthed) {
+    // Not authed → surface the admin login entry so 2FA login is reachable.
+    sections.push({
+      title: 'Управление',
+      items: [
+        { id: 'admin-login', label: 'Вход для администратора', icon: ShieldCheck, desc: 'Двухфакторная авторизация' },
       ],
     })
   }
@@ -173,6 +185,11 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
     switch (id) {
       case 'studio':
         onNavigate('studio')
+        onOpenChange(false)
+        break
+      case 'admin-login':
+        // v25.7 (TZ ЭТАП 2.1): take the user to the proper 2FA login flow.
+        onNavigate('admin-login')
         onOpenChange(false)
         break
       case 'favorites':
@@ -343,7 +360,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         </div>
 
         {/* Sections */}
-        {buildSections(user?.role === 'admin').map((section) => (
+        {buildSections(user?.role === 'admin', !!user).map((section) => (
           <div key={section.title}>
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
               {section.title}

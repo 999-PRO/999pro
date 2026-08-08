@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
+import { requireAuth, requireAdmin, optionalAuth, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import { auditLog } from '../lib/audit.js'
 import { z } from 'zod'
@@ -17,11 +17,16 @@ const router: Router = Router()
 const userSelect = USER_PUBLIC_SELECT
 
 // Helper: serialise a review with parsed photos + user info.
+// v25.7 (TZ ЭТАП 2.3): include `parentId` and nested `replies` (if loaded).
+// Replies are serialised the same way as top-level reviews, just without
+// their own nested replies (one level of nesting is enough for the admin
+// reply UI).
 function serialiseReview(r: any) {
   return {
     id: r.id,
     productId: r.productId,
     userId: r.userId,
+    parentId: r.parentId ?? null,
     rating: r.rating,
     title: r.title,
     content: r.content,
@@ -35,8 +40,35 @@ function serialiseReview(r: any) {
           username: r.user.username,
           displayName: r.user.displayName,
           avatar: r.user.avatar,
+          role: r.user.role,
         }
       : null,
+    // v25.7: nested admin replies. Only populated when the Prisma query
+    // included `replies` — otherwise undefined (omitted from JSON).
+    replies: Array.isArray(r.replies)
+      ? r.replies.map((reply: any) => ({
+          id: reply.id,
+          productId: reply.productId,
+          userId: reply.userId,
+          parentId: reply.parentId ?? null,
+          rating: reply.rating,
+          title: reply.title,
+          content: reply.content,
+          photos: safeParseJsonArray(reply.photos),
+          isHidden: reply.isHidden,
+          createdAt: reply.createdAt,
+          updatedAt: reply.updatedAt,
+          user: reply.user
+            ? {
+                id: reply.user.id,
+                username: reply.user.username,
+                displayName: reply.user.displayName,
+                avatar: reply.user.avatar,
+                role: reply.user.role,
+              }
+            : null,
+        }))
+      : undefined,
   }
 }
 
@@ -57,8 +89,18 @@ const createReviewSchema = z.object({
   ).max(5).optional(),
 })
 
+// v25.7 (TZ ЭТАП 2.3): schema for admin replies. Replies have NO rating
+// (rating=0) and NO photos — they are text-only admin responses shown
+// under the parent review.
+const createReplySchema = z.object({
+  content: z.string().min(1, 'Текст ответа обязателен').max(5000),
+})
+
 // POST /api/reviews — create a review for a product.
-// One review per user per product (enforced by @@unique constraint).
+// v25.7 (TZ ЭТАП 2.3): the previous DB-level @@unique([productId, userId])
+// constraint was REMOVED to allow admins to post replies on products they
+// may have already reviewed. The "one top-level review per user per product"
+// rule is now enforced here in app code (only when parentId is null).
 router.post(
   '/',
   requireAuth,
@@ -76,6 +118,18 @@ router.post(
     })
     if (!product) {
       return res.status(404).json({ error: 'Product not found' })
+    }
+
+    // v25.7 (TZ ЭТАП 2.3): enforce one-top-level-review-per-user-per-product
+    // in app code (the DB-level unique constraint was removed to allow
+    // admin replies on the same product). Without this check, a user could
+    // bypass the UI and POST multiple top-level reviews via the API.
+    const existingTopLevel = await prisma.review.findFirst({
+      where: { productId, userId: req.user!.id, parentId: null },
+      select: { id: true },
+    })
+    if (existingTopLevel) {
+      return res.status(409).json({ error: 'Вы уже оставили отзыв на этот товар' })
     }
 
     // v16.9 MODERATION — check review title + content before persisting.
@@ -100,6 +154,7 @@ router.post(
         data: {
           productId,
           userId: req.user!.id,
+          parentId: null,
           rating,
           title: title || null,
           content: content || null,
@@ -117,14 +172,151 @@ router.post(
         after: { productId, rating, hasTitle: !!title, hasContent: !!content, photosCount: photos?.length || 0 },
       })
 
+      // v25.7 (TZ ЭТАП 2.4): emit socket + push notification to admins so
+      // they instantly learn about the new review without manual refresh.
+      try {
+        const { getIo } = await import('../socket/handlers.js')
+        const { sendPushToUser } = await import('./push.js')
+        const io = getIo()
+        const authorName = review.user?.displayName || review.user?.username || 'Аноним'
+        if (io) {
+          io.to('admins').emit('review:created', {
+            reviewId: review.id,
+            productId,
+            productTitle: product.title,
+            rating,
+            authorName,
+            content: content?.slice(0, 200) || null,
+            createdAt: review.createdAt,
+          })
+        }
+        const admins = await prisma.user.findMany({
+          where: { role: 'admin', deletedAt: null },
+          select: { id: true },
+        })
+        for (const admin of admins) {
+          void sendPushToUser(admin.id, {
+            title: '★ Новый отзыв!',
+            body: `${authorName}: ${rating}★ ${product.title}`,
+            tag: `admin-review-${review.id}`,
+            url: '/?view=reviews',
+          })
+        }
+      } catch {
+        // Notification failures are non-critical — the review is already saved.
+      }
+
       res.status(201).json(serialiseReview(review))
     } catch (e) {
-      // P2002 = unique constraint violation (user already reviewed this product)
+      // P2002 = unique constraint violation (legacy: user already reviewed
+      // this product). With the constraint removed this shouldn't fire, but
+      // we keep the handler as a safety net.
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         return res.status(409).json({ error: 'Вы уже оставили отзыв на этот товар' })
       }
       throw e
     }
+  }),
+)
+
+// POST /api/reviews/:id/replies — admin posts a reply under a review.
+// v25.7 (TZ ЭТАП 2.3): the reply is stored as a Review row with parentId set.
+// rating=0 (replies don't affect the product's aggregate rating). The reply
+// is included in GET /api/reviews responses via Prisma `include: { replies }`.
+router.post(
+  '/:id/replies',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const parentId = req.params.id
+    const parsed = createReplySchema.safeParse(req.body)
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid payload', issues: parsed.error.issues })
+    }
+    const { content } = parsed.data
+
+    // Verify the parent review exists.
+    const parent = await prisma.review.findUnique({
+      where: { id: parentId },
+      select: { id: true, productId: true, userId: true, content: true },
+    })
+    if (!parent) {
+      return res.status(404).json({ error: 'Родительский отзыв не найден' })
+    }
+
+    // v16.9 MODERATION — check reply content before persisting.
+    const modDecision = await moderateContent(content, {
+      userId: req.user!.id,
+      targetType: 'review',
+    })
+    if (!modDecision.allowed) {
+      return res.status(422).json({
+        error: modDecision.reason,
+        moderationBlocked: true,
+        severity: modDecision.severity,
+        categories: modDecision.categories,
+      })
+    }
+
+    const reply = await prisma.review.create({
+      data: {
+        productId: parent.productId,
+        userId: req.user!.id,
+        parentId,
+        rating: 0, // replies don't have a rating
+        title: null,
+        content,
+        photos: JSON.stringify([]),
+      },
+      include: { user: { select: userSelect } },
+    })
+
+    await auditLog(req, 'review', reply.id, 'review_reply_create', {
+      after: { parentId, productId: parent.productId, hasContent: !!content },
+    })
+
+    // v25.7 (TZ ЭТАП 2.4): notify the original review's author that their
+    // review got a reply (in-app socket event; push is also sent so they
+    // see it even if the app is in the background).
+    try {
+      const { getIo } = await import('../socket/handlers.js')
+        const { sendPushToUser } = await import('./push.js')
+      const io = getIo()
+      const adminName = reply.user?.displayName || reply.user?.username || 'Администратор'
+      if (io) {
+        io.to(`user:${parent.userId}`).emit('review:reply-created', {
+          replyId: reply.id,
+          parentId,
+          productId: parent.productId,
+          authorName: adminName,
+          content: content.slice(0, 200),
+          createdAt: reply.createdAt,
+        })
+        // Also notify other admins (so multiple admins can see the reply).
+        io.to('admins').emit('review:reply-created', {
+          replyId: reply.id,
+          parentId,
+          productId: parent.productId,
+          authorName: adminName,
+          content: content.slice(0, 200),
+          createdAt: reply.createdAt,
+        })
+      }
+      // Push to the original review's author (if they're not the admin who
+      // wrote the reply — avoids self-notification).
+      if (parent.userId !== req.user!.id) {
+        void sendPushToUser(parent.userId, {
+          title: '↩ Ответ на ваш отзыв',
+          body: `${adminName}: ${content.slice(0, 100)}`,
+          tag: `review-reply-${reply.id}`,
+          url: `/?view=reviews`,
+        })
+      }
+    } catch {
+      // Notification failures are non-critical.
+    }
+
+    res.status(201).json(serialiseReview(reply))
   }),
 )
 
@@ -218,7 +410,8 @@ router.delete(
 //            user filters by a specific star).
 router.get(
   '/',
-  asyncHandler(async (req, res) => {
+  optionalAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
     const productId = req.query.productId as string | undefined
     if (!productId) {
       return res.status(400).json({ error: 'productId query param required' })
@@ -233,6 +426,12 @@ router.get(
         ? Math.min(Math.max(Number(starsRaw) || 0, 1), 5)
         : null
 
+    // v25.7 (TZ ЭТАП 2.3): hidden reviews must NOT leak to public callers.
+    // The route is `optionalAuth` (was anonymous), so we may or may not have
+    // a logged-in admin/manager. Only admins/managers see hidden reviews.
+    const includeHidden = req.user?.role === 'admin' || req.user?.role === 'manager'
+    const hiddenFilter = includeHidden ? {} : { isHidden: false }
+
     // Sort: newest (default) | highest | lowest
     const orderBy: Prisma.ReviewOrderByWithRelationInput =
       sort === 'highest' ? { rating: 'desc' } :
@@ -240,12 +439,24 @@ router.get(
       { createdAt: 'desc' }
 
     // Base `where` for the distribution aggregation — always reflects ALL
-    // reviews for the product (no q/stars filter), so the rating breakdown
-    // shown in the UI doesn't change when the user filters.
-    const distWhere: Prisma.ReviewWhereInput = { productId }
+    // non-hidden reviews for the product (no q/stars filter), so the rating
+    // breakdown shown in the UI doesn't change when the user filters.
+    // v25.7: top-level reviews only (parentId=null) — replies have rating=0
+    // and would skew the aggregate.
+    const distWhere: Prisma.ReviewWhereInput = {
+      productId,
+      parentId: null,
+      ...hiddenFilter,
+    }
 
     // Filtered `where` for the actual items list — applies q + stars.
-    const where: Prisma.ReviewWhereInput = { productId }
+    // v25.7: top-level reviews only — replies are loaded via `include` so
+    // they appear nested under their parent, not as separate items.
+    const where: Prisma.ReviewWhereInput = {
+      productId,
+      parentId: null,
+      ...hiddenFilter,
+    }
     if (stars !== null) where.rating = stars
     if (q) {
       // SQLite Prisma `contains` is case-sensitive for Cyrillic, so we
@@ -268,7 +479,18 @@ router.get(
         orderBy,
         take: dbLimit,
         skip: dbSkip,
-        include: { user: { select: userSelect } },
+        // v25.7 (TZ ЭТАП 2.3): include nested admin replies so they appear
+        // under their parent review in the UI. Replies are ordered oldest-first
+        // (chronological conversation order).
+        include: {
+          user: { select: userSelect },
+          replies: {
+            include: { user: { select: userSelect } },
+            orderBy: { createdAt: 'asc' },
+            // v25.7: hidden replies are also filtered for non-admins.
+            where: includeHidden ? undefined : { isHidden: false },
+          },
+        },
       }),
       prisma.review.count({ where }),
       // Aggregate rating distribution: { 1: 3, 2: 1, 3: 0, 4: 5, 5: 12 }
@@ -322,8 +544,12 @@ router.get(
     if (!productId) {
       return res.status(400).json({ error: 'productId query param required' })
     }
-    const review = await prisma.review.findUnique({
-      where: { productId_userId: { productId, userId: req.user!.id } },
+    // v25.7 (TZ ЭТАП 2.3): @@unique([productId, userId]) was removed, so we
+    // can't use findUnique with the composite key. Use findFirst filtered
+    // to top-level reviews (parentId=null) — a user can have replies too,
+    // but /mine is for THEIR review on the product, not their replies.
+    const review = await prisma.review.findFirst({
+      where: { productId, userId: req.user!.id, parentId: null },
       include: { user: { select: userSelect } },
     })
     res.json({ review: review ? serialiseReview(review) : null })

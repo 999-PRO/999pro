@@ -493,6 +493,12 @@ const GRADIENT_CSS: Record<string, string> = {
 function HeroPreview({ hero }: { hero: HeroBlockSetting }) {
   const gradientCss = GRADIENT_CSS[hero.gradient] || GRADIENT_CSS[GRADIENTS[0].id]
   const showImage = !!hero.image
+  // v25.7 (TZ ЭТАП 2.2): align preview with production rendering.
+  // Production (src/components/hero.tsx) hides the text/buttons block when
+  // mode === 'image-only'. Previously the preview always showed it, which
+  // meant the admin could not visually verify what an image-only hero would
+  // look like in the live app.
+  const isImageOnly = hero.mode === 'image-only'
 
   return (
     <div
@@ -515,9 +521,12 @@ function HeroPreview({ hero }: { hero: HeroBlockSetting }) {
           alt=""
           className={cn(
             'absolute inset-0 h-full w-full object-cover',
-            hero.useGradient
-              ? 'opacity-40 mix-blend-overlay'
-              : 'opacity-100',
+            // v25.7 (TZ ЭТАП 2.2): production uses opacity-100 with NO
+            // mix-blend-overlay (the v18.11 change in src/components/hero.tsx
+            // removed the blend). The preview was never updated, so the
+            // admin saw a darker, blended image that did NOT match what
+            // users actually see in the app.
+            'opacity-100',
           )}
         />
       )}
@@ -530,37 +539,43 @@ function HeroPreview({ hero }: { hero: HeroBlockSetting }) {
         </>
       )}
 
-      {/* Dark overlay for text legibility on raw images */}
+      {/* Dark overlay for text legibility on raw images.
+          v25.7 (TZ ЭТАП 2.2): production uses a bottom-only overlay
+          (inset-x-0 bottom-0 h-2/3) so the top of the image stays clear.
+          The preview previously used a full inset-0 overlay which made the
+          entire image darker than what users see. */}
       {!hero.useGradient && showImage && (
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
       )}
 
-      {/* Content */}
-      <div className="relative h-full p-6 md:p-8 flex flex-col justify-center text-white max-w-2xl">
-        {hero.badge && (
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-medium mb-3 w-fit backdrop-blur-sm">
-            <Sparkles className="h-3 w-3" /> {hero.badge}
+      {/* Content — hidden in image-only mode (mirrors hero.tsx line 169). */}
+      {!isImageOnly && (
+        <div className="relative h-full p-6 md:p-8 flex flex-col justify-center text-white max-w-2xl">
+          {hero.badge && (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-medium mb-3 w-fit backdrop-blur-sm">
+              <Sparkles className="h-3 w-3" /> {hero.badge}
+            </div>
+          )}
+          <h2 className="text-2xl md:text-3xl font-extrabold leading-tight mb-2 drop-shadow-sm">
+            {hero.title || 'Заголовок'}
+          </h2>
+          <p className="text-white/90 text-sm md:text-base mb-4 max-w-xl line-clamp-2">
+            {hero.description || 'Описание'}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {hero.primaryButton && (
+              <span className="px-5 py-2 rounded-full bg-white text-slate-900 text-sm font-semibold shadow-lg">
+                {hero.primaryButton.text || 'Кнопка'}
+              </span>
+            )}
+            {hero.secondaryButton && (
+              <span className="px-5 py-2 rounded-full border border-white/40 text-white text-sm font-semibold backdrop-blur-sm">
+                {hero.secondaryButton.text || 'Кнопка'}
+              </span>
+            )}
           </div>
-        )}
-        <h2 className="text-2xl md:text-3xl font-extrabold leading-tight mb-2 drop-shadow-sm">
-          {hero.title || 'Заголовок'}
-        </h2>
-        <p className="text-white/90 text-sm md:text-base mb-4 max-w-xl line-clamp-2">
-          {hero.description || 'Описание'}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {hero.primaryButton && (
-            <span className="px-5 py-2 rounded-full bg-white text-slate-900 text-sm font-semibold shadow-lg">
-              {hero.primaryButton.text || 'Кнопка'}
-            </span>
-          )}
-          {hero.secondaryButton && (
-            <span className="px-5 py-2 rounded-full border border-white/40 text-white text-sm font-semibold backdrop-blur-sm">
-              {hero.secondaryButton.text || 'Кнопка'}
-            </span>
-          )}
         </div>
-      </div>
+      )}
     </div>
   )
 }

@@ -494,6 +494,25 @@ router.post(
     // v12.7: Push notification to ALL admins about the new order.
     try {
       const { sendPushToUser } = await import('./push.js')
+      // v25.7 (TZ ЭТАП 2.4): emit a socket event to the admins room so Studio
+      // shows an instant in-app toast — without this, admins only get the OS
+      // push notification (which they might miss if the browser is in the
+      // foreground and the OS suppresses duplicate notifications).
+      try {
+        const { getIo } = await import('../socket/handlers.js')
+        const io = getIo()
+        if (io) {
+          io.to('admins').emit('order:created', {
+            orderId: order.id,
+            userName: name || req.user!.username,
+            total: grandTotal,
+            deliveryMethod,
+            createdAt: order.createdAt,
+          })
+        }
+      } catch {
+        // Socket init may fail if the server hasn't started IO yet — non-critical.
+      }
       const admins = await prisma.user.findMany({
         where: { role: 'admin', deletedAt: null },
         select: { id: true },

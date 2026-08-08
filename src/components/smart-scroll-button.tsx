@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronUp, ChevronDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 // ============================================================================
 //  SmartScrollButton — a floating ↑/↓ button that remembers scroll position.
@@ -49,11 +50,16 @@ interface SmartScrollButtonProps {
   scrollContainerRef?: React.RefObject<HTMLElement | null>
   /** For inverted containers (flex-col-reverse like chat). "Beginning" = max scrollTop. */
   reverse?: boolean
+  // v25.7 (TZ ЭТАП 2.8): allow callers to override the z-index (and any
+  // other utility classes). The product page sits at z-[350], so the
+  // SmartScrollButton rendered for it must be at z-[360] to appear above.
+  className?: string
 }
 
 export function SmartScrollButton({
   scrollContainerRef,
   reverse = false,
+  className,
 }: SmartScrollButtonProps = {}) {
   const [visible, setVisible] = useState(false)
   const [direction, setDirection] = useState<Direction>('up')
@@ -219,7 +225,12 @@ export function SmartScrollButton({
           // v13.3: centered horizontally (was right-4). x: '-50%' in style
           // keeps it centered; framer-motion composes x with the animated
           // y/scale into a single transform — no conflict.
-          className="fixed left-1/2 z-40 h-11 w-11 rounded-full grid place-items-center glass-strong shadow-lg border border-border/60 active:scale-90 transition-transform"
+          // v25.7 (TZ ЭТАП 2.8): merge caller-provided className so the
+          // product page can bump z-index above its z-[350] layer.
+          className={cn(
+            'fixed left-1/2 z-40 h-11 w-11 rounded-full grid place-items-center glass-strong shadow-lg border border-border/60 active:scale-90 transition-transform',
+            className,
+          )}
           style={{
             // Centered: left 50% + translateX(-50%). framer-motion's `x`
             // motion value composes with `y` and `scale` from animate().

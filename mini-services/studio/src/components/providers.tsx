@@ -1,8 +1,15 @@
 'use client'
 
 import { ThemeProvider as NextThemesProvider } from 'next-themes'
-import { ReactNode, useEffect } from 'react'
+import { ReactNode, useEffect, useCallback } from 'react'
 import { useStudioPush } from '@/hooks/use-studio-push'
+// v25.7 (TZ ЭТАП 2.4): global Studio socket registration. Previously
+// useStudioSocket was only called inside leads-manager.tsx — so admins only
+// got real-time updates while looking at the Leads page. Mounting it globally
+// here means admins get instant in-app toasts for reviews, reports, leads,
+// and orders regardless of which Studio page they're on.
+import { useStudioSocket } from '@/lib/use-studio-socket'
+import { toast } from '@/lib/notifications'
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
@@ -20,6 +27,78 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   // v12.8: Subscribe admin to push notifications (orders, leads, chat)
   useStudioPush()
+
+  // v25.7 (TZ ЭТАП 2.4): global admin-notification handler. Converts socket
+  // events fired by the backend (review:created, moderation:report-created,
+  // lead:created, order:created) into in-app toasts. The callback is stable
+  // (useCallback) so the socket doesn't reconnect on every parent re-render.
+  // Each toast links to the relevant Studio page so the admin can act on it
+  // in one click.
+  const handleStudioEvent = useCallback((type: string, data: unknown) => {
+    const d = (data || {}) as Record<string, unknown>
+    switch (type) {
+      case 'review:created':
+        toast.info('Новый отзыв', {
+          description: `${String(d.authorName ?? 'Аноним')} → ${String(d.productTitle ?? '')} (${Number(d.rating ?? 0)}★)`,
+          duration: 8000,
+          onClick: () => {
+            if (typeof window !== 'undefined') {
+              window.location.assign('/studio/?view=moderation')
+            }
+          },
+        })
+        break
+      case 'review:reply-created':
+        // Only show toast for admins OTHER than the one who wrote the reply
+        // (the author already knows — they just submitted it). Backend emits
+        // to all admins including the author; the author's toast is a minor
+        // annoyance but harmless, and filtering would require shipping the
+        // authorId in the payload (not currently done).
+        toast.info('Новый ответ на отзыв', {
+          description: `${String(d.authorName ?? 'Администратор')}: ${String(d.content ?? '').slice(0, 80)}`,
+          duration: 6000,
+        })
+        break
+      case 'moderation:report-created':
+        toast.warning('Новая жалоба', {
+          description: `${String(d.targetType ?? '')}: ${String(d.reason ?? '')}`,
+          duration: 8000,
+          onClick: () => {
+            if (typeof window !== 'undefined') {
+              window.location.assign('/studio/?view=moderation')
+            }
+          },
+        })
+        break
+      case 'lead:created':
+        toast.info('Новая заявка', {
+          description: `${String(d.name ?? '')}: ${String(d.productTitle ?? 'Без товара')}`,
+          duration: 8000,
+          onClick: () => {
+            if (typeof window !== 'undefined') {
+              window.location.assign('/studio/?view=leads')
+            }
+          },
+        })
+        break
+      case 'order:created':
+        toast.info('Новый заказ', {
+          description: `#${String(d.orderId ?? '').slice(-6)} · ${String(d.userName ?? '')}`,
+          duration: 8000,
+          onClick: () => {
+            if (typeof window !== 'undefined') {
+              window.location.assign('/studio/?view=orders')
+            }
+          },
+        })
+        break
+      // Other events (lead:status-changed, order:status-changed, etc.) are
+      // handled by the dedicated manager pages (leads-manager.tsx, etc.) —
+      // they don't need a global toast because the admin is already on that
+      // page when they care about live status updates.
+    }
+  }, [])
+  useStudioSocket(handleStudioEvent)
 
   return (
     // v13.0 (audit P0 dark/light): enable system theme detection so admins

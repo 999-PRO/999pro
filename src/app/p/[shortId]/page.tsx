@@ -239,6 +239,23 @@ export default async function SharePage({
           __html: JSON.stringify(jsonLd).replace(/</g, '\\u003c'),
         }}
       />
+      {/* v25.7 (TZ ЭТАП 2.9): BreadcrumbList JSON-LD. Google uses this to show
+          a breadcrumb trail in SERP instead of the bare URL — improves CTR.
+          Mirrors the visual breadcrumb (Home → Catalog → Product). */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'BreadcrumbList',
+            itemListElement: [
+              { '@type': 'ListItem', position: 1, name: 'Главная', item: publicUrl },
+              { '@type': 'ListItem', position: 2, name: 'Каталог', item: `${publicUrl}/?view=catalog` },
+              { '@type': 'ListItem', position: 3, name: data.product.title, item: data.shareUrl },
+            ],
+          }).replace(/</g, '\\u003c'),
+        }}
+      />
       <SharePageClient data={data} appPublicUrl={publicUrl} />
     </>
   )

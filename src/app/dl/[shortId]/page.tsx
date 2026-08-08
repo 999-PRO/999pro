@@ -42,8 +42,18 @@
 //  ============================================================================
 
 import { redirect } from 'next/navigation'
+import type { Metadata } from 'next'
 
 export const dynamic = 'force-static'
+
+// v25.7 (TZ ЭТАП 2.9): /dl/[shortId] is a redirect-only route (it forwards to
+// /p/<shortId> for Universal Links). It has no content of its own and would
+// otherwise be indexed as a duplicate of /p/<shortId>. Marking it noindex /
+// nofollow keeps Google from wasting crawl budget on these redirects and
+// avoids duplicate-content signals on the canonical share page.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+}
 
 export default async function DeepLinkPage({
   params,

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
+import { requireAuth, requireAdmin, requireAdminOnly, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import webpush from 'web-push'
 import { logger } from '../lib/logger.js'
@@ -118,8 +118,12 @@ router.post('/unsubscribe', requireAuth, asyncHandler(async (req: AuthedRequest,
 // ============================================================================
 // v24.4: MASS PUSH — broadcast to ALL users with push subscriptions.
 // Used by Studio admins to send announcements (new product, sale, etc.).
+// v25.7 (TZ ЭТАП 2.6): requireAdminOnly — mass push to ALL users is a
+// high-impact action. Managers should not be able to spam every user from
+// a single button; a single typo or grudge could send junk to the entire
+// user base. Only a true admin (not a manager) can broadcast.
 // ============================================================================
-router.post('/broadcast', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
+router.post('/broadcast', requireAuth, requireAdminOnly, asyncHandler(async (req: AuthedRequest, res) => {
   const { title, body, url, icon } = req.body || {}
 
   if (!title || typeof title !== 'string' || title.trim().length === 0) {

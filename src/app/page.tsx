@@ -294,6 +294,10 @@ export default function Home() {
       url.searchParams.set('view', v)
       url.searchParams.delete('product')
       window.history.pushState({}, '', url.toString())
+      // v25.7 (TZ ЭТАП 2.5): notify the VisitTracker that the view changed.
+      // Without this, the tracker only fires on popstate (back/forward) and
+      // misses internal setView() navigations.
+      window.dispatchEvent(new CustomEvent('999pro:view-changed', { detail: { view: v } }))
     }
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'auto' })
   }, [])

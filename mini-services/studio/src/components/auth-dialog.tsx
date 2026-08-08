@@ -181,7 +181,7 @@ export function AuthDialog({
           username,
           email,
           password,
-          phone: phone || undefined,
+          phone: phone.trim(),
           displayName: displayName || undefined,
           gender: gender || undefined,
         })
@@ -243,13 +243,18 @@ export function AuthDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="phone">Телефон</Label>
+                  <Label htmlFor="phone">Телефон *</Label>
                   <Input
                     id="phone"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="+79991234567"
                     className="rounded-2xl"
+                    required
+                    pattern="^\+?[\d\s\-()]{7,20}$"
+                    minLength={7}
+                    maxLength={20}
+                    title="Только цифры, пробелы, +, -, скобки. Минимум 7 символов."
                   />
                 </div>
               </div>

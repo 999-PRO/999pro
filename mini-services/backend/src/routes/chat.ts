@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
+import { requireAuth, requireAdmin, requireAdminOnly, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import { moderateContent } from '../lib/moderation.js'
 import {
@@ -201,7 +201,44 @@ router.get(
       // account, registration just completed), partnerIds is empty and the
       // result is empty. The frontend ChatView handles this by showing the
       // "start new chat" search, which uses the search branch above.
+      //
+      // v25.7 (TZ ЭТАП 2.1): admin-specific branch. A freshly-created admin
+      // has zero ConversationParticipant rows, so the old code returned an
+      // empty list — making the chat screen look "broken" right after login.
+      // Admins need to discover users to start chats, so we return the most
+      // recently active non-admin users. Privacy: admins are trusted to see
+      // isOnline / lastSeen for everyone (matches the existing search branch).
       if (partnerIds.size === 0) {
+        if (isAdmin) {
+          const recent = await prisma.user.findMany({
+            where: { id: { not: meId }, deletedAt: null, role: 'user' },
+            select: {
+              id: true, username: true, displayName: true, avatar: true,
+              isOnline: true, lastSeen: true, role: true,
+            },
+            orderBy: [{ isOnline: 'desc' }, { lastSeen: 'desc' }],
+            take: limit + offset,
+          })
+          const shapedRecent = recent.map((u) => ({
+            id: u.id,
+            username: u.username,
+            displayName: u.displayName,
+            avatar: u.avatar,
+            isOnline: u.isOnline,
+            lastSeen: u.lastSeen,
+            role: u.role,
+            isSupport: false,
+            hasConversation: false,
+            conversationType: null,
+            lastMessageAt: null,
+          }))
+          return res.json({
+            users: shapedRecent.slice(offset, offset + limit),
+            total: shapedRecent.length,
+            limit,
+            offset,
+          })
+        }
         return res.json({ users: [], total: 0, limit, offset })
       }
       where.id = { in: [...partnerIds] }
@@ -622,24 +659,30 @@ router.delete(
 )
 
 // ============================================================================
-// DELETE /api/chat/admin/conversations/:id — admin-only HARD delete of any
-// conversation (including support chats).
+// DELETE /api/chat/admin/conversations/:id — admin-only (requireAdminOnly)
+// HARD delete of any conversation (including support chats).
 // ----------------------------------------------------------------------------
 // Unlike the user-facing DELETE /api/chat/conversations/:id (which only
 // soft-deletes for the caller), this endpoint:
 //   - Hard-deletes the conversation AND all its messages
 //   - Removes ALL participant records (both sides)
 //   - Works on ANY conversation type (direct, support)
-//   - Requires admin role
+//   - Requires admin role (requireAdminOnly)
 //   - Records an audit log entry
 //
 // Use case: admin needs to clean up abusive/spam conversations, or remove
 // a support chat after resolving a user's issue.
+//
+// v25.7 (TZ ЭТАП 2.6): requireAdminOnly (was requireAdmin) — this permanently
+// deletes entire chat history. Could destroy evidence of misconduct
+// (harassment, fraud, abuse between users) that an auditor or law
+// enforcement might need later. Managers should not be able to wipe
+// conversations; only a true admin can.
 // ============================================================================
 router.delete(
   '/admin/conversations/:id',
   requireAuth,
-  requireAdmin,
+  requireAdminOnly,
   asyncHandler(async (req: AuthedRequest, res) => {
     const convId = req.params.id
     const adminId = req.user!.id

@@ -13,7 +13,18 @@ export const registerSchema = z.object({
     // referral codes, so they must be ASCII-safe.
     .regex(/^[a-zA-Z0-9_]+$/, 'Имя пользователя: только латинские буквы, цифры и подчёркивание'),
   email: z.string().email().max(256),
-  phone: z.string().min(6).max(20).optional(),
+  // v25.7 (TZ ЭТАП 2.6): phone is now MANDATORY for regular users. The
+  // frontend form has a `required` attribute on the phone input and a
+  // pattern hint, but the backend is the source of truth — curl callers
+  // cannot bypass this. The regex accepts +, digits, spaces, dashes, and
+  // parentheses; the transform normalises to a canonical digits-only /
+  // +prefix form for storage.
+  phone: z
+    .string()
+    .trim()
+    .min(7, 'Телефон: минимум 7 символов')
+    .max(20, 'Телефон: максимум 20 символов')
+    .regex(/^\+?[\d\s\-()]{7,20}$/, 'Телефон: только цифры, пробелы, +, -, скобки'),
   password: z.string().min(8).max(128),
   // v19.0: password confirmation — must match password
   confirmPassword: z.string().min(8).max(128).optional(),

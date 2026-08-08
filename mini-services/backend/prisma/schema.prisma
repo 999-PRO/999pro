@@ -45,7 +45,12 @@ datasource db {
 model User {
   id          String   @id @default(cuid())
   email       String   @unique
-  phone       String?  @unique
+  // v25.7 (TZ ЭТАП 2.6): phone is now MANDATORY for regular users.
+  // Previously `String? @unique` — registration was possible without a phone.
+  // Now all new users must provide a phone (validated by the registerSchema
+  // in lib/schemas.ts). Existing NULL phones were backfilled to a unique
+  // placeholder `'pending-' || id` by migration v25_7_phone_required.
+  phone       String   @unique
   username    String   @unique
   password    String
   displayName String?
@@ -108,6 +113,8 @@ model User {
   stories           Story[]
   // Personalization signals — feed into the home page "Recommended for you" block.
   productViews      ProductView[]
+  // v25.7 (TZ ЭТАП 2.5): site-wide visit log (analytics dashboard).
+  visits            Visit[]
   searchHistory     SearchHistory[]
   // Smart Share — events created by this user (anonymous events have userId = null)
   shareEvents       ShareEvent[]
@@ -255,6 +262,40 @@ model ProductView {
   @@index([productId, createdAt])
   @@index([userId, createdAt])
   @@index([createdAt])
+}
+
+// ============================================================
+//  VISITS — site-wide page-view tracking (v25.7, TZ ЭТАП 2.5)
+// ----------------------------------------------------------------------------
+//  Records every visit (page view) to the frontend app. Used by
+//  /api/analytics/visits to compute "today / yesterday / week / month /
+//  total" visit counts. Anonymous visits are allowed (userId=null) — the
+//  backend's POST /api/visits endpoint is `optionalAuth` so unauthenticated
+//  users are still tracked.
+//
+//  Recording happens client-side: the frontend's <VisitTracker /> component
+//  fires POST /api/visits once per route change (rate-limited to 1 req /
+//  10s / IP to avoid flooding).
+//
+//  Note: this is page-view-level tracking, not unique-user tracking. The
+//  existing User.isOnline + User.lastSeen fields handle unique-user
+//  presence; Visit handles raw page-view counts.
+// ============================================================
+model Visit {
+  id        String   @id @default(cuid())
+  userId    String?  // null = anonymous visit
+  sessionId String?  // optional: ties pageviews to a session
+  path      String   // e.g. "/", "/?view=catalog", "/studio"
+  userAgent String?
+  ip        String?
+  referrer  String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])             // time-bucketed counts
+  @@index([userId, createdAt])     // per-user visit history
+  @@index([sessionId])
 }
 
 // SearchHistory — every search query a user submits. Used for:
@@ -644,7 +685,13 @@ model Review {
   id        String   @id @default(cuid())
   productId String
   userId    String
-  rating    Int      // 1-5
+  // v25.7 (TZ ЭТАП 2.3): support admin replies to reviews. parentId=null
+  // means this is a top-level review; parentId=<some-review-id> means this
+  // row is a reply to that review. Replies are typically written by admins
+  // (customer support), but the schema permits replies from anyone — the
+  // /api/reviews/:id/replies endpoint enforces admin-only via requireAdmin.
+  parentId  String?
+  rating    Int      // 1-5 for top-level reviews; 0 for replies (no rating)
   title     String?
   content   String?
   photos    String   @default("[]") // JSON array of upload URLs
@@ -654,13 +701,24 @@ model Review {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // v25.7: self-relation for threaded replies. Deleting a parent review
+  // cascades to all its replies (so the admin doesn't end up with orphan
+  // replies attached to a deleted review).
+  parent  Review?  @relation("ReviewReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Review[] @relation("ReviewReplies")
 
-  @@unique([productId, userId]) // one review per user per product
+  // v25.7: REMOVED @@unique([productId, userId]) — it would block admins
+  // from posting multiple replies on the same product (or a top-level
+  // review + replies). The "one top-level review per user per product"
+  // rule is now enforced in app code (POST /api/reviews handler checks
+  // for an existing top-level review when parentId is null).
   @@index([productId, createdAt])
   @@index([productId, isHidden, createdAt])
   @@index([userId])
   @@index([rating])
   @@index([isHidden])
+  // v25.7: fast lookup of all replies for a given parent review.
+  @@index([parentId])
 }
 
 // ============================================================

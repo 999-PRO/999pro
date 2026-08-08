@@ -53,6 +53,11 @@ import { QrModal } from './share/qr-modal'
 // v9-premium: Desktop-only premium 3-column layout (lg+ breakpoint).
 // Mobile/tablet (md and below) keep using the original layout below.
 import { ProductPageDesktop } from './product-page-desktop'
+// v25.7 (TZ ЭТАП 2.8): SmartScrollButton — floating ↑/↓ button inside the
+// product page's own scroll container. The product page is position:fixed
+// with overflow-y:auto, so window.scroll never fires — we must pass the
+// page's own scrollContainerRef so the button listens to the right scroller.
+import { SmartScrollButton } from './smart-scroll-button'
 
 interface ProductPageProps {
   productId: string | null
@@ -245,6 +250,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
             bottom that smoothly transitions into the product description.
             The back/share buttons float over the image (glass style). */}
       {productId && (
+        <>
         <div
           ref={scrollContainerRef}
           data-scroll-lock-ignore
@@ -278,6 +284,14 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                   - Discount badge top-left (above the back button area) */}
               <div
                 className="relative w-full aspect-[3/4] overflow-hidden bg-slate-100 dark:bg-slate-900 select-none"
+                // v25.7 (TZ ЭТАП 2.8): touch-action: 'pan-y' tells the browser
+                // "only vertical panning is allowed on this element". The
+                // JS handlers below still own horizontal swipe detection
+                // (onTouchStart records X, onTouchEnd flips the image if
+                // |dx| > 50). This eliminates the iOS Safari gesture-decision
+                // jank where a near-horizontal finger start would briefly
+                // stall the page's vertical scroll.
+                style={{ touchAction: 'pan-y' }}
                 onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX }}
                 onTouchEnd={(e) => {
                   if (product.images.length <= 1) return
@@ -392,7 +406,13 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
 
               {/* Thumbnails */}
               {product.images.length > 1 && (
-                <div className="flex gap-3 overflow-x-auto no-scrollbar py-4 px-1 -mx-1">
+                <div
+                  className="flex gap-3 overflow-x-auto no-scrollbar py-4 px-1 -mx-1"
+                  // v25.7 (TZ ЭТАП 2.8): allow vertical scroll pass-through so
+                  // the page doesn't get "stuck" when the user starts a swipe
+                  // over the thumbnails strip.
+                  style={{ touchAction: 'pan-x pan-y' }}
+                >
                   {product.images.map((src, i) => (
                     <button
                       key={i}
@@ -599,6 +619,23 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
             </div>
           )}
         </div>
+        {/* v25.7 (TZ ЭТАП 2.8): floating ↑/↓ button inside the product page.
+            - Listens to scrollContainerRef (the product page's own scroll
+              container), NOT window — because the product page is
+              position:fixed with overflow-y:auto, window.scroll never fires.
+            - z-[360] sits ABOVE the product page's z-[350] layer so the
+              button is always visible over the page content.
+            - lg:hidden — the desktop variant (ProductPageDesktop) has its
+              own scroll containers and doesn't need this button.
+            - key={productId} so the button resets its visible/saved-scroll
+              state when the user switches to a similar product (otherwise
+              the button would stay visible after a fresh product loads). */}
+        <SmartScrollButton
+          key={productId}
+          scrollContainerRef={scrollContainerRef}
+          className="!z-[360] lg:hidden"
+        />
+        </>
       )}
 
       {/* Smart Share — premium bottom sheet with 10 share targets, Web Share
@@ -720,7 +757,14 @@ function SimilarProducts({ product }: { product: Product }) {
     <div className="pt-12 pb-4">
       <h2 className="text-sm font-extrabold mb-4 px-1 bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 bg-clip-text text-transparent">Похожие товары</h2>
       <div className="flex gap-3.5 overflow-x-auto no-scrollbar -mx-1 px-1 pb-3 pt-1"
-        style={{ touchAction: 'pan-x' }}
+        // v25.7 (TZ ЭТАП 2.8): 'pan-x pan-y' — allow BOTH horizontal panning
+        // (to scroll the carousel) AND vertical panning (to keep scrolling
+        // the product page). Previously this was 'pan-x' which blocked any
+        // vertical scroll gesture started over the carousel — the user's
+        // thumb naturally rests here while reading the description, so the
+        // page felt "stuck". 'pan-x pan-y' is the W3C-recommended value
+        // for horizontally-scrolling rows that must not block page scroll.
+        style={{ touchAction: 'pan-x pan-y' }}
       >
         {items.map((p) => (
           <a

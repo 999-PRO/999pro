@@ -17,7 +17,7 @@ import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import crypto from 'node:crypto'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
+import { requireAuth, requireAdmin, requireAdminOnly, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import { auditLog } from '../lib/audit.js'
 import { logger } from '../lib/logger.js'
@@ -96,11 +96,15 @@ router.get(
   }),
 )
 
-// PUT /api/security-settings — admin
+// PUT /api/security-settings — admin only (requireAdminOnly).
+// v25.7 (TZ ЭТАП 2.6): managers must NOT be able to change security policy —
+// they could otherwise weaken TOTP enforcement, raise rate limits, lower the
+// password-strength floor, or extend session TTL to make a stolen token last
+// longer. Only a true admin (not a manager) can change security policy.
 router.put(
   '/security-settings',
   requireAuth,
-  requireAdmin,
+  requireAdminOnly,
   asyncHandler(async (req: AuthedRequest, res) => {
     const parsed = securitySettingsSchema.parse(req.body)
     const settings = await prisma.securitySettings.upsert({

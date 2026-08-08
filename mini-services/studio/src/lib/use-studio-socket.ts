@@ -35,7 +35,15 @@ function getSocketUrl(): { url: string; query: Record<string, string> } {
   return { url: '/studio/', query: {} }
 }
 
-type EventType = 'lead:status-changed' | 'lead:deleted' | 'leads:bulk-deleted' | 'order:status-changed'
+type EventType =
+  | 'lead:status-changed' | 'lead:deleted' | 'leads:bulk-deleted' | 'order:status-changed'
+  // v25.7 (TZ ЭТАП 2.4): new event types for admin notifications. These
+  // fire when a user submits a new review, a new moderation report, a
+  // new lead, or a new order — so the admin gets an instant in-app toast
+  // in Studio without manual refresh.
+  | 'lead:created' | 'order:created'
+  | 'review:created' | 'review:reply-created'
+  | 'moderation:report-created'
 
 // v13.1 (audit P1-3 fix): removed the unused `channel` parameter. It was
 // documented as filtering events by channel name but the implementation
@@ -88,7 +96,14 @@ export function useStudioSocket(onEvent?: (type: EventType, data: unknown) => vo
     })
 
     // Listen for real-time events — use ref so callback is always current
-    const events: EventType[] = ['lead:status-changed', 'lead:deleted', 'leads:bulk-deleted', 'order:status-changed']
+    // v25.7 (TZ ЭТАП 2.4): expanded event list to include new admin-notification
+    // events. The global listener in providers.tsx converts these to toasts.
+    const events: EventType[] = [
+      'lead:status-changed', 'lead:deleted', 'leads:bulk-deleted', 'order:status-changed',
+      'lead:created', 'order:created',
+      'review:created', 'review:reply-created',
+      'moderation:report-created',
+    ]
     events.forEach((evt) => {
       socket.on(evt, (data: unknown) => {
         onEventRef.current?.(evt, data)

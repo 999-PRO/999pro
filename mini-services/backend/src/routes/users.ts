@@ -28,7 +28,11 @@ const router = Router()
 
 const FAR_FUTURE = new Date('2099-12-31T23:59:59Z')
 
-// POST /api/users/managers — admin creates a new manager account.
+// POST /api/users/managers — admin only (requireAdminOnly).
+// v25.7 (TZ ЭТАП 2.6): managers must NOT be able to create other privileged
+// accounts — that would be privilege escalation (a manager could create a
+// second manager account, share credentials, and bypass audit attribution).
+// Only a true admin (not a manager) can mint new manager accounts.
 const createManagerSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Username must be alphanumeric + underscore'),
   email: z.string().email().max(200),
@@ -40,7 +44,7 @@ const createManagerSchema = z.object({
 router.post(
   '/managers',
   requireAuth,
-  requireAdmin,
+  requireAdminOnly,
   asyncHandler(async (req: AuthedRequest, res) => {
     const parsed = createManagerSchema.safeParse(req.body)
     if (!parsed.success) {
@@ -67,7 +71,13 @@ router.post(
         email,
         password: hashedPassword,
         displayName: displayName || null,
-        phone: phone || null,
+        // v25.7 (TZ ЭТАП 2.6): phone is now NOT NULL in the schema. The
+        // createManagerSchema keeps phone OPTIONAL for the manager-creation
+        // API contract — when the operator doesn't supply one, we seed a
+        // unique placeholder (`pending-<username>`) following the same
+        // pattern as migration v25_7_phone_required. The new manager can set
+        // their real phone later via the profile screen.
+        phone: phone || `pending-${username}`,
         role: 'manager',
       },
       select: { id: true, username: true, email: true, displayName: true, role: true, createdAt: true },
@@ -315,7 +325,9 @@ router.delete(
       where: { id: user.id },
       data: {
         email: `deleted-${user.id}@deleted.local`,
-        phone: null,
+        // v25.7 (TZ ЭТАП 2.6): phone is NOT NULL — anonymize to a unique
+        // placeholder (matching the email pattern) instead of NULL.
+        phone: `deleted-${user.id}`,
         username: `deleted-${user.id}`,
         displayName: 'Deleted user',
         avatar: null,
@@ -401,7 +413,7 @@ router.get(
 )
 
 // ============================================================================
-// DELETE /api/users/:id — admin-only soft-delete of any user.
+// DELETE /api/users/:id — admin-only (requireAdminOnly) soft-delete of any user.
 // ----------------------------------------------------------------------------
 // Allows an admin to delete (soft-delete) any user account from Studio.
 // Mirrors the self-delete behaviour of DELETE /api/users/me:
@@ -413,15 +425,22 @@ router.get(
 //     referential integrity (other users' chat history, financial records)
 //
 // SAFEGUARDS:
-//   - Admin role required (requireAdmin middleware)
+//   - Admin role required (requireAdminOnly middleware)
 //   - Admin cannot delete themselves via this endpoint (use /me instead)
 //   - Already-deleted users return 404 (idempotent)
 //   - Audit log entry records the admin who performed the deletion
+//
+// v25.7 (TZ ЭТАП 2.6): requireAdminOnly (was requireAdmin) — deleting user
+// accounts is high-impact (anonymises PII, kicks sessions, destroys the
+// target's ability to log in). This matches the severity of
+// PATCH /api/users/:id/role, which is already requireAdminOnly. Managers
+// should not be able to silently remove accounts — they could delete
+// complainants, witnesses, or audit trails.
 // ============================================================================
 router.delete(
   '/:id',
   requireAuth,
-  requireAdmin,
+  requireAdminOnly,
   asyncHandler(async (req: AuthedRequest, res) => {
     const targetId = req.params.id
     const adminId = req.user!.id
@@ -456,7 +475,9 @@ router.delete(
       where: { id: user.id },
       data: {
         email: `deleted-${user.id}@deleted.local`,
-        phone: null,
+        // v25.7 (TZ ЭТАП 2.6): phone is NOT NULL — anonymize to a unique
+        // placeholder (matching the email pattern) instead of NULL.
+        phone: `deleted-${user.id}`,
         username: `deleted-${user.id}`,
         displayName: 'Deleted user',
         avatar: null,
