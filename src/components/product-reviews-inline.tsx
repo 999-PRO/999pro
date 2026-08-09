@@ -217,9 +217,16 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
           </Button>
         )
       ) : (
-        <div className="glass rounded-2xl p-3 mb-3 text-center text-xs text-muted-foreground">
-          Войдите, чтобы оставить отзыв и оценить товар
-        </div>
+        <button
+          onClick={() => {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('999pro:open-auth'))
+            }
+          }}
+          className="w-full rounded-2xl h-11 mb-3 gradient-brand text-white font-semibold inline-flex items-center justify-center gap-2"
+        >
+          Войдите, чтобы оставить отзыв
+        </button>
       )}
 
       {/* Sort tabs — only shown when there are reviews. This controls the

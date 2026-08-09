@@ -404,7 +404,16 @@ function ProductReviews({
                 <MessageSquarePlus className="h-4 w-4 mr-1.5" /> Оставить отзыв
               </Button>
             ) : (
-              <p className="text-xs text-muted-foreground">Войдите, чтобы оставить отзыв</p>
+              <button
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('999pro:open-auth'))
+                  }
+                }}
+                className="rounded-full gradient-brand text-white font-semibold h-11 px-6 inline-flex items-center gap-2"
+              >
+                Войти, чтобы оставить отзыв
+              </button>
             )}
           </div>
         ) : (

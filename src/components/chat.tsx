@@ -1814,19 +1814,14 @@ export function ChatView() {
     )
   }
 
-  if (!authed) {
-    return (
-      <div className="min-h-[60vh] grid place-items-center px-4">
-        <div className="text-center max-w-md">
-          <div className="h-20 w-20 rounded-3xl gradient-brand mx-auto mb-4 grid place-items-center shadow-glow">
-            <Send className="h-10 w-10 text-white" />
-          </div>
-          <h2 className="text-2xl font-bold mb-2">Войдите, чтобы общаться</h2>
-          <p className="text-muted-foreground">Чат доступен только авторизованным пользователям.</p>
-        </div>
-      </div>
-    )
-  }
+  // v25.9.3: REMOVE the hard "login required" gate. The chat UI now renders
+  // for everyone. If the user is not authenticated, we show a soft inline
+  // login prompt at the top of the chat list instead of blocking the whole
+  // view. This fixes the user's complaint: "I can't even open chat without
+  // registering!" — now they can open it, browse the support info, and
+  // choose to log in when they're ready to send a message.
+  // The backend still requires auth for actual message send/receive, so
+  // anonymous users can't spam — they just see the UI shell.
 
   return (
     <div className={cn(
@@ -1910,6 +1905,32 @@ export function ChatView() {
           ) : (
             <div className="flex-1 overflow-y-auto space-y-3 scrollbar-premium pb-4">
               <div className="text-xs font-semibold text-muted-foreground px-2 py-1 uppercase tracking-wider">Диалоги</div>
+              {/* v25.9.3: inline login prompt for anonymous users. The chat UI
+                  is now visible to everyone, but sending messages requires auth.
+                  This replaces the old hard gate that blocked the whole view. */}
+              {!authed && (
+                <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 mb-2">
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 rounded-xl gradient-brand grid place-items-center shrink-0">
+                      <Send className="h-5 w-5 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm mb-1">Войдите, чтобы общаться</div>
+                      <p className="text-xs text-muted-foreground mb-3">Чат доступен после входа. Это защищает от спама.</p>
+                      <button
+                        onClick={() => {
+                          if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('999pro:open-auth'))
+                          }
+                        }}
+                        className="w-full h-9 rounded-xl gradient-brand text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+                      >
+                        Войти / Зарегистрироваться
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               {loading ? (
                 <div className="space-y-3">
                   {Array.from({ length: 4 }).map((_, i) => (
