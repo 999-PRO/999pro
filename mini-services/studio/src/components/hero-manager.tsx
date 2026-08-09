@@ -58,7 +58,13 @@ export function HeroManager() {
   const [hero, setHero] = useState<HeroBlockSetting>(DEFAULT_HERO)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-useEffect(() => {
+
+  // v25.9.6: ALL hooks must be called BEFORE any early return — otherwise
+  // React throws "Rendered more hooks than during the previous render" when
+  // the loading state flips from true to false (the component re-renders with
+  // a different number of hooks). This was the root cause of the HeroBlock
+  // crash ("Повторите..." error boundary) in Studio.
+  useEffect(() => {
     api
       .get<{ value: HeroBlockSetting | null }>('/api/settings/heroBlock', { auth: true })
       .then((d) => {
@@ -89,15 +95,8 @@ useEffect(() => {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="px-4 md:px-6 py-6 page-top-padding">
-        <div className="h-64 rounded-2xl skeleton" />
-      </div>
-    )
-  }
-
-  // v24.3: AI assistant handlers for Hero Block
+  // v24.3: AI assistant handlers for Hero Block — declared BEFORE the loading
+  // early-return so the hook order is stable across renders.
   const getHeroAIData = useCallback(() => ({
     badge: hero.badge,
     title: hero.title,
@@ -128,6 +127,17 @@ useEffect(() => {
         break
     }
   }, [])
+
+  // v25.9.6: loading return is AFTER all hooks (useState, useEffect, useCallback)
+  // so the hook order is stable across renders. Previously this was BEFORE
+  // useCallback, causing "Rendered more hooks than during the previous render".
+  if (loading) {
+    return (
+      <div className="px-4 md:px-6 py-6 page-top-padding">
+        <div className="h-64 rounded-2xl skeleton" />
+      </div>
+    )
+  }
 
   return (
     <div className="px-4 md:px-6 py-6 pb-28 page-top-padding max-w-3xl">

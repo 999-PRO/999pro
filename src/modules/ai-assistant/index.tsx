@@ -12,12 +12,13 @@
 // ============================================================================
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, X, Send, Loader2, AlertCircle,
   Mic, MicOff, Volume2, VolumeX, ImageIcon, Plus,
   MessageSquare, History, ChevronLeft, Pin, PinOff, Power, Keyboard,
-  ArrowUp,
+  ArrowUp, Trash2,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -84,6 +85,11 @@ export function AIAssistant({
   const [uploading, setUploading] = useState(false)
   const [pendingImages, setPendingImages] = useState<string[]>([])
   const [interimText, setInterimText] = useState('')
+  // v25.9.8: animated product gallery for the empty state. Real products are
+  // fetched from /api/products/smart/blocks when the AI panel opens. The
+  // gallery auto-rotates every 3.5s. Cards are clickable (opens product).
+  const [galleryProducts, setGalleryProducts] = useState<any[]>([])
+  const [galleryIdx, setGalleryIdx] = useState(0)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -112,14 +118,30 @@ export function AIAssistant({
       }
     }
     const closeHandler = () => session.setOpen(false)
+    // v25.9.6: when a product is opened (from anywhere — AI card click, chat,
+    // orders, etc.), close the AI overlay so the product is visible. The AI
+    // session state (messages, conversationId) is preserved in the Zustand
+    // store, so the user can return to AI and continue the conversation.
+    const productOpenHandler = () => {
+      if (!inline) {
+        session.setOpen(false)
+        stopSpeaking()
+        continuousVoiceRef.current = false
+        if (recognitionRef.current) {
+          try { recognitionRef.current.stop() } catch {}
+        }
+      }
+    }
     window.addEventListener('open-ai-assistant', openHandler)
     window.addEventListener('close-ai-assistant', closeHandler)
+    window.addEventListener('999pro:open-product', productOpenHandler)
     return () => {
       window.removeEventListener('open-ai-assistant', openHandler)
       window.removeEventListener('close-ai-assistant', closeHandler)
+      window.removeEventListener('999pro:open-product', productOpenHandler)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context])
+  }, [context, inline])
 
   // ----- 2. Fetch AI status -----
   useEffect(() => {
@@ -127,6 +149,31 @@ export function AIAssistant({
       api.get<AIStatus>('/api/ai/status').then(setStatus).catch(() => {})
     }
   }, [session.open, status])
+
+  // v25.9.8: fetch real products for the animated gallery in the empty state.
+  // Uses /api/products/smart/blocks (same as home page) so cards are real.
+  useEffect(() => {
+    if (!session.open || galleryProducts.length > 0) return
+    api
+      .get<{ blocks: Array<{ id: string; items: any[] }> }>('/api/products/smart/blocks', {
+        query: { limit: 8, seed: Math.floor(Math.random() * 1000000) },
+      })
+      .then((data) => {
+        const items = data.blocks.flatMap((b) => b.items).slice(0, 8)
+        if (items.length > 0) setGalleryProducts(items)
+      })
+      .catch(() => {/* non-critical — gallery just stays empty */})
+  }, [session.open, galleryProducts.length])
+
+  // v25.9.8: auto-rotate the gallery every 3.5s (only in empty state).
+  useEffect(() => {
+    const hasMsgs = session.messages.length > 0
+    if (!session.open || hasMsgs || galleryProducts.length === 0) return
+    const t = setInterval(() => {
+      setGalleryIdx((i) => (i + 1) % Math.max(1, galleryProducts.length))
+    }, 3500)
+    return () => clearInterval(t)
+  }, [session.open, session.messages.length, galleryProducts.length])
 
   // ----- 3. Auto-scroll to bottom on new message (works for long convos) -----
   useEffect(() => {
@@ -168,34 +215,37 @@ export function AIAssistant({
     }
   }, [session.open])
 
-  // ----- 6. Proactive greeting (only once, doesn't block product cards) -----
-  useEffect(() => {
-    if (!session.open || !status) return
-    if (session.messages.length > 0 || session.greetingShown) return
+  // ----- 6. Proactive greeting (shown ONLY in empty state, NOT as a message) -----
+  // v25.9.8: previously the greeting was added as an assistant message to
+  // session.messages. This caused two problems:
+  //   1. The empty state (with example prompts + product gallery) disappeared
+  //      the moment the greeting was added — "на секунду показывает быстрые
+  //      команды" then they vanish.
+  //   2. The greeting persisted in history forever, cluttering the conversation.
+  // Now the greeting is computed but NOT added to messages. It's rendered
+  // directly in the empty state (renderEmptyState) so the user sees:
+  //   - greeting text
+  //   - animated product gallery
+  //   - example prompts
+  // ...all together, persistently, until they send their first message.
+  const greetingText = useMemo(() => {
+    if (!status) return ''
     const hour = new Date().getHours()
     const timeOfDay =
       hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер'
     const roleGreeting = isAdmin
-      ? `${timeOfDay}! Я Агент 999 — ваш деловой помощник. Могу показать аналитику, помочь с контентом, найти заказы или клиентов.`
-      : `${timeOfDay}! Я Агент 999 — помогу подобрать товар, оформить заказ или отвечу на вопросы. Что вас интересует?`
+      ? `${timeOfDay}! Я Агент 999 — ваш деловой помощник.`
+      : `${timeOfDay}! Я Агент 999 — помогу подобрать товар, оформить заказ или ответить на вопросы.`
     const ctxHint =
       context === 'catalog'
-        ? ' Вижу, вы в каталоге — могу показать популярные товары или подобрать по бюджету.'
+        ? ' Вижу, вы в каталоге — могу показать популярные товары.'
         : context === 'cart'
           ? ' У вас есть товары в корзине — могу помочь оформить заказ.'
           : context === 'orders'
             ? ' Могу проверить статус вашего заказа.'
             : ''
-    const greeting = (status.greeting || roleGreeting) + ctxHint
-    session.addMessage({
-      id: `greeting-${Date.now()}`,
-      role: 'assistant',
-      content: greeting,
-      ts: Date.now(),
-    })
-    session.setGreetingShown(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.open, status, context, isAdmin])
+    return (status.greeting || roleGreeting) + ctxHint
+  }, [status, context, isAdmin])
 
   // ----- 7. Handle send -----
   const handleSend = useCallback(
@@ -295,22 +345,41 @@ export function AIAssistant({
     async (file: File) => {
       if (uploading || pendingImages.length >= 4) return
       setUploading(true)
+      setError(null)
       try {
         const form = new FormData()
         form.append('file', file)
-        const token = useAuthStore.getState().token
+        // v25.9.7: read token from both the auth store AND localStorage (the
+        // store may not have hydrated yet on first mount). Upload requires
+        // auth — without a valid token the backend returns 401.
+        const token = useAuthStore.getState().token || (() => {
+          try {
+            const raw = localStorage.getItem('999pro-auth')
+            return raw ? JSON.parse(raw)?.state?.token || null : null
+          } catch { return null }
+        })()
+        if (!token) {
+          setError('Войдите, чтобы загружать изображения')
+          setUploading(false)
+          return
+        }
         const resp = await fetch('/api/upload', {
           method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: { Authorization: `Bearer ${token}` },
           body: form,
         })
-        if (!resp.ok) throw new Error('Upload failed')
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}))
+          throw new Error(errData?.error || `Upload failed (${resp.status})`)
+        }
         const data = await resp.json()
         if (data?.url) {
           setPendingImages((arr) => [...arr, data.url])
+        } else {
+          throw new Error('Сервер не вернул URL изображения')
         }
-      } catch {
-        setError('Не удалось загрузить изображение')
+      } catch (e: any) {
+        setError(e?.message || 'Не удалось загрузить изображение')
       } finally {
         setUploading(false)
       }
@@ -605,6 +674,28 @@ export function AIAssistant({
         >
           <History className="h-4 w-4" />
         </button>
+        {/* v25.9.8: "Очистить диалог" button — clears the current conversation's
+            messages from the local session (keeps the conversationId so the
+            server-side history is preserved). Only shown when there are messages. */}
+        {hasMessages && (
+          <button
+            onClick={() => {
+              if (confirm('Очистить текущий диалог? Сообщения будут удалены из текущей сессии.')) {
+                session.clearMessages()
+                setError(null)
+                stopSpeaking()
+                continuousVoiceRef.current = false
+                if (recognitionRef.current) {
+                  try { recognitionRef.current.stop() } catch {}
+                }
+              }
+            }}
+            className="h-9 w-9 grid place-items-center rounded-full hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+            title="Очистить диалог"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
         <button
           onClick={() => {
             const next = !session.enabled
@@ -637,28 +728,120 @@ export function AIAssistant({
     </div>
   )
 
+  // v25.9.8: Animated product gallery — horizontal marquee of real products.
+  // Auto-rotates every 3.5s. Cards are clickable (opens product overlay).
+  const renderProductGallery = () => {
+    if (galleryProducts.length === 0) return null
+    // Show 3 cards at a time on desktop, 2 on mobile, offset by galleryIdx.
+    const visibleCount = typeof window !== 'undefined' && window.innerWidth >= 640 ? 3 : 2
+    const cards = []
+    for (let i = 0; i < visibleCount; i++) {
+      const idx = (galleryIdx + i) % galleryProducts.length
+      cards.push(galleryProducts[idx])
+    }
+    return (
+      <div className="w-full max-w-2xl mb-6">
+        <div className="flex gap-3 justify-center">
+          <AnimatePresence mode="wait">
+            {cards.map((p, i) => (
+              <motion.button
+                key={`${p.id}-${galleryIdx}-${i}`}
+                initial={{ opacity: 0, x: 40, scale: 0.95 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: -40, scale: 0.95 }}
+                transition={{ duration: 0.4, ease: 'easeOut', delay: i * 0.05 }}
+                onClick={() => p.id && openProduct(p.id)}
+                className="flex-1 max-w-[180px] text-left rounded-2xl overflow-hidden bg-card/80 backdrop-blur-md border border-border/50 hover:border-primary/40 hover:shadow-glow transition-all group"
+                style={{ minHeight: '200px' }}
+              >
+                <div className="aspect-square bg-muted overflow-hidden">
+                  {p.image || p.images?.[0] ? (
+                    <img
+                      src={p.image || p.images?.[0]}
+                      alt={p.title}
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-full grid place-items-center bg-gradient-to-br from-indigo-500/10 via-violet-500/10 to-fuchsia-500/10">
+                      <ImageIcon className="h-8 w-8 text-muted-foreground/50" />
+                    </div>
+                  )}
+                </div>
+                <div className="p-2.5">
+                  <div className="text-xs font-semibold text-foreground line-clamp-2 leading-tight min-h-[2rem]">
+                    {p.title}
+                  </div>
+                  {p.price != null && (
+                    <div className="text-sm font-bold text-primary mt-1">
+                      от {Number(p.price).toLocaleString('ru-RU')} ₽
+                    </div>
+                  )}
+                </div>
+              </motion.button>
+            ))}
+          </AnimatePresence>
+        </div>
+        {/* Indicator dots */}
+        <div className="flex justify-center gap-1.5 mt-3">
+          {galleryProducts.slice(0, 6).map((_, i) => (
+            <div
+              key={i}
+              className={cn(
+                'h-1.5 rounded-full transition-all',
+                i === galleryIdx % 6 ? 'w-6 bg-primary' : 'w-1.5 bg-muted-foreground/30',
+              )}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   const renderEmptyState = () => (
     <div className="flex flex-col items-center justify-center min-h-full text-center px-4 py-8">
-      <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 grid place-items-center shadow-glow mb-4">
-        <Sparkles className="h-7 w-7 text-white" />
-      </div>
-      <h3 className="text-xl font-bold mb-1 text-foreground">
+      {/* Premium AI orb with breathing animation */}
+      <motion.div
+        animate={{
+          scale: [1, 1.08, 1],
+          boxShadow: [
+            '0 0 20px 0px rgba(99, 102, 241, 0.3)',
+            '0 0 40px 8px rgba(139, 92, 246, 0.5)',
+            '0 0 20px 0px rgba(99, 102, 241, 0.3)',
+          ],
+        }}
+        transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
+        className="h-20 w-20 rounded-3xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 grid place-items-center shadow-glow mb-5"
+      >
+        <Sparkles className="h-9 w-9 text-white" />
+      </motion.div>
+
+      <h3 className="text-2xl font-bold mb-2 text-foreground">
         {status?.assistantName || 'Агент 999'}
       </h3>
-      <p className="text-sm text-muted-foreground mb-6 max-w-md">
-        {isAdmin
+      {/* v25.9.8: greeting shown here (NOT as a message) — stays until first user message */}
+      <p className="text-sm text-muted-foreground mb-6 max-w-md leading-relaxed">
+        {greetingText || (isAdmin
           ? 'Ваш деловой помощник — аналитика, заказы, клиенты и контент.'
-          : 'Помогу подобрать товар, оформить заказ или ответить на вопросы.'}
+          : 'Помогу подобрать товар, оформить заказ или ответить на вопросы.')}
       </p>
+
+      {/* v25.9.8: Animated product gallery — real products from catalog */}
+      {renderProductGallery()}
+
+      {/* Quick prompts — stay visible until the user sends a message */}
       <div className="grid gap-2 w-full max-w-md">
-        {examplePrompts.map((prompt) => (
-          <button
+        {examplePrompts.map((prompt, i) => (
+          <motion.button
             key={prompt}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 + i * 0.08, duration: 0.3 }}
             onClick={() => handleSend(prompt)}
             className="text-left px-4 py-3 rounded-xl bg-muted/40 hover:bg-accent border border-border/40 text-sm text-foreground transition-colors"
           >
             {prompt}
-          </button>
+          </motion.button>
         ))}
       </div>
     </div>
@@ -1085,7 +1268,13 @@ export function AIAssistant({
     )
   }
 
-  return (
+  // v25.9.7: render the popup overlay via a PORTAL to document.body. Previously
+  // the overlay was rendered inside AppShell's layout div, which has CSS
+  // properties (flex, overflow) that break `position: fixed` — the overlay
+  // appeared "behind" the main content on desktop. By portaling to body, the
+  // overlay escapes any parent stacking context and always renders on top.
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <AnimatePresence>
       {session.open && session.enabled && (
         <motion.div
@@ -1102,8 +1291,6 @@ export function AIAssistant({
             exit={{ y: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             onClick={(e) => e.stopPropagation()}
-            // v25.9.4: full-screen on mobile, near-full-screen on desktop.
-            // Safe-area insets are handled by the header (top) and composer (bottom).
             className="w-full sm:max-w-3xl h-[100dvh] sm:h-[90vh] sm:rounded-3xl bg-background border border-border/60 shadow-2xl flex flex-col overflow-hidden relative"
           >
             {renderHeader()}
@@ -1117,7 +1304,8 @@ export function AIAssistant({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 

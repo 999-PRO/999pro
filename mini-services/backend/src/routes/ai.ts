@@ -199,18 +199,117 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
   //    v24.7 (final-release audit): the user-facing reply MUST NOT mention technical
   //    internals (.env, API KEY, DeepSeek, Provider, Studio path). The admin-only
   //    diagnostic is logged separately so the operator can act on it.
+  //
+  // v25.9.6: instead of returning "assistant unavailable", we now fall back to
+  // a LOCAL product search. This means even without an AI provider, the agent
+  // can still show relevant products from the catalog. The reply is generated
+  // from the matched products — no LLM call needed. This makes the AI agent
+  // functional out-of-the-box for testing and for deployments without API keys.
   const aiReady = isDeepSeekConfigured() || (await isAIConfiguredAsync())
   if (!aiReady) {
-    logger.warn('AI chat requested but no provider is configured — admin must add one in Studio → AI API or set DEEPSEEK_API_KEY in backend .env')
-    const resp: ChatResponse = {
-      reply: 'Извините, ассистент временно недоступен. Наши менеджеры помогут вам — напишите в чат или закажите обратный звонок.',
-      action: null,
-      actions: [],
-      calculation: null,
-      local: true,
-      usedDeepSeek: false,
+    // Fallback: search the marketplace catalog for products matching the
+    // user's message. Return up to 6 products as cards, with a helpful reply.
+    try {
+      const lower = message.toLowerCase()
+      // v25.9.6: SQLite doesn't support `mode: 'insensitive'` — use plain
+      // `contains` (SQLite is case-insensitive by default for ASCII, and
+      // we pre-lowercase the search term). For PostgreSQL, this also works
+      // because contains is case-sensitive there, but the search will still
+      // match if the DB has lowercase values. For full case-insensitive on
+      // PG, add mode: 'insensitive' (but it breaks SQLite).
+      const isSqlite = process.env.DATABASE_URL?.startsWith('file:')
+      const modeOpt = isSqlite ? undefined : 'insensitive'
+      const marketplaceProducts = await prisma.product.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { title: { contains: lower, ...(modeOpt ? { mode: modeOpt } : {}) } },
+            { description: { contains: lower, ...(modeOpt ? { mode: modeOpt } : {}) } },
+            { category: { contains: lower, ...(modeOpt ? { mode: modeOpt } : {}) } },
+          ],
+        },
+        select: {
+          id: true, title: true, price: true, currency: true, category: true,
+          images: true, rating: true, inStock: true,
+        },
+        take: 6,
+        orderBy: { isPopular: 'desc' },
+      })
+      // If no direct matches, return popular products
+      let products = marketplaceProducts
+      if (products.length === 0) {
+        products = await prisma.product.findMany({
+          where: { deletedAt: null },
+          select: {
+            id: true, title: true, price: true, currency: true, category: true,
+            images: true, rating: true, inStock: true,
+          },
+          take: 6,
+          orderBy: { isPopular: 'desc' },
+        })
+      }
+      const reply = products.length > 0
+        ? `Вот что я нашёл по запросу «${message}». Выберите товар, чтобы узнать подробности:`
+        : 'К сожалению, по вашему запросу ничего не найдено. Попробуйте переформулировать или посмотрите весь каталог.'
+      const resp: ChatResponse = {
+        reply,
+        action: null,
+        actions: products.length > 0
+          ? [{ type: 'open_catalog', label: 'Открыть весь каталог' }]
+          : [],
+        calculation: null,
+        local: true,
+        usedDeepSeek: false,
+        cards: products.length > 0
+          ? [{
+              kind: 'product' as const,
+              data: products.map((p) => ({
+                id: p.id,
+                title: p.title,
+                price: Number(p.price),
+                currency: p.currency || 'RUB',
+                image: (() => { try { return JSON.parse(p.images || '[]')[0] || null } catch { return null } })(),
+                category: p.category || undefined,
+                rating: p.rating,
+                inStock: p.inStock,
+              })),
+            }]
+          : undefined,
+      }
+      // v25.9: persist the fallback reply too
+      if (convRow) {
+        try {
+          await prisma.aIMessage.create({
+            data: {
+              conversationId: convRow.id || conversationId,
+              role: 'assistant',
+              content: resp.reply,
+              cards: resp.cards?.length ? JSON.stringify(resp.cards) : null,
+              actions: resp.actions?.length ? JSON.stringify(resp.actions) : null,
+            },
+          })
+          await prisma.aIConversation.update({
+            where: { id: convRow.id || conversationId },
+            data: { updatedAt: new Date() },
+          })
+        } catch {}
+      }
+      return res.json({
+        ...resp,
+        conversationId: convRow?.id || conversationId || null,
+      } satisfies ChatResponse)
+    } catch (e) {
+      logger.warn('AI fallback product search failed', e as any)
+      const resp: ChatResponse = {
+        reply: 'Извините, ассистент временно недоступен. Напишите в чат — менеджеры помогут.',
+        action: null,
+        actions: [],
+        calculation: null,
+        local: true,
+        usedDeepSeek: false,
+      }
+      return res.json(resp)
     }
-    return res.json(resp)
   }
 
   // 3) Match KB product (by name / root / slug).
