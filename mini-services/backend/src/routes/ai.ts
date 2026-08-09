@@ -207,10 +207,166 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
   // functional out-of-the-box for testing and for deployments without API keys.
   const aiReady = isDeepSeekConfigured() || (await isAIConfiguredAsync())
   if (!aiReady) {
+    // v25.9.10: ADMIN ANALYTICS FALLBACK — when an admin asks about orders,
+    // revenue, statistics, etc., return REAL data from the database. This
+    // works even without DeepSeek configured. The data comes from the same
+    // Order/Product models that the /api/analytics endpoint uses.
+    const isAdminUser = req.user?.role === 'admin' || req.user?.role === 'manager'
+    if (isAdminUser) {
+      const lower = message.toLowerCase()
+      const isAnalyticsQuery = /(заказ|выручк|продаж|статистик|аналитик|чек|популярн|категори|товар.*прода|сколько.*заказ|сколько.*заработ|доход|прибыл)/i.test(lower)
+      if (isAnalyticsQuery) {
+        try {
+          const now = new Date()
+          const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+          const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+          const weekStart = new Date(todayStart)
+          weekStart.setDate(weekStart.getDate() - 7)
+          const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+          const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+          const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1)
+
+          const [totalOrders, todayOrders, weekOrders, monthOrders, prevMonthOrders,
+            todayRevenueAgg, weekRevenueAgg, monthRevenueAgg, prevMonthRevenueAgg,
+            totalRevenueAgg, statusBreakdown, popularProducts] = await Promise.all([
+            prisma.order.count(),
+            prisma.order.count({ where: { createdAt: { gte: todayStart, lt: todayEnd } } }),
+            prisma.order.count({ where: { createdAt: { gte: weekStart } } }),
+            prisma.order.count({ where: { createdAt: { gte: monthStart } } }),
+            prisma.order.count({ where: { createdAt: { gte: prevMonthStart, lt: prevMonthEnd } } }),
+            prisma.order.aggregate({ where: { createdAt: { gte: todayStart, lt: todayEnd }, status: { not: 'cancelled' } }, _sum: { total: true } }),
+            prisma.order.aggregate({ where: { createdAt: { gte: weekStart }, status: { not: 'cancelled' } }, _sum: { total: true } }),
+            prisma.order.aggregate({ where: { createdAt: { gte: monthStart }, status: { not: 'cancelled' } }, _sum: { total: true } }),
+            prisma.order.aggregate({ where: { createdAt: { gte: prevMonthStart, lt: prevMonthEnd }, status: { not: 'cancelled' } }, _sum: { total: true } }),
+            prisma.order.aggregate({ where: { status: { not: 'cancelled' } }, _sum: { total: true } }),
+            prisma.order.groupBy({ by: ['status'], _count: { status: true } }),
+            prisma.orderItem.groupBy({
+              by: ['productId'],
+              _sum: { quantity: true },
+              orderBy: { _sum: { quantity: 'desc' } },
+              take: 5,
+            }),
+          ])
+
+          // Fetch product titles for popular products
+          const popularProductIds = popularProducts.map(p => p.productId)
+          const productDetails = await prisma.product.findMany({
+            where: { id: { in: popularProductIds } },
+            select: { id: true, title: true, price: true },
+          })
+          const productMap = new Map(productDetails.map(p => [p.id, p]))
+          const popularList = popularProducts.map(op => {
+            const p = productMap.get(op.productId)
+            return p ? `${p.title} — ${op._sum.quantity} шт.` : null
+          }).filter(Boolean)
+
+          const todayRevenue = todayRevenueAgg._sum.total ? Number(todayRevenueAgg._sum.total) : 0
+          const weekRevenue = weekRevenueAgg._sum.total ? Number(weekRevenueAgg._sum.total) : 0
+          const monthRevenue = monthRevenueAgg._sum.total ? Number(monthRevenueAgg._sum.total) : 0
+          const prevMonthRevenue = prevMonthRevenueAgg._sum.total ? Number(prevMonthRevenueAgg._sum.total) : 0
+          const totalRevenue = totalRevenueAgg._sum.total ? Number(totalRevenueAgg._sum.total) : 0
+          const avgCheck = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0
+          const monthGrowth = prevMonthOrders > 0 ? Math.round(((monthOrders - prevMonthOrders) / prevMonthOrders) * 100) : 0
+          const revenueGrowth = prevMonthRevenue > 0 ? Math.round(((monthRevenue - prevMonthRevenue) / prevMonthRevenue) * 100) : 0
+
+          // Build a detailed, factual reply — NO invented numbers.
+          const statusList = statusBreakdown.map(s => `${s.status}: ${s._count.status}`).join(', ')
+          const popularStr = popularList.length > 0 ? popularList.join('\n') : 'Нет данных о популярных товарах'
+
+          const reply = `📊 Аналитика за текущий период:\n\n` +
+            `Заказы:\n` +
+            `• Всего: ${totalOrders}\n` +
+            `• Сегодня: ${todayOrders}\n` +
+            `• За неделю: ${weekOrders}\n` +
+            `• За месяц: ${monthOrders} (прошлый месяц: ${prevMonthOrders}, рост: ${monthGrowth >= 0 ? '+' : ''}${monthGrowth}%)\n\n` +
+            `Выручка:\n` +
+            `• Сегодня: ${todayRevenue.toLocaleString('ru-RU')} ₽\n` +
+            `• За неделю: ${weekRevenue.toLocaleString('ru-RU')} ₽\n` +
+            `• За месяц: ${monthRevenue.toLocaleString('ru-RU')} ₽ (прошлый месяц: ${prevMonthRevenue.toLocaleString('ru-RU')} ₽, рост: ${revenueGrowth >= 0 ? '+' : ''}${revenueGrowth}%)\n` +
+            `• Всего: ${totalRevenue.toLocaleString('ru-RU')} ₽\n\n` +
+            `Средний чек: ${avgCheck.toLocaleString('ru-RU')} ₽\n\n` +
+            `Статусы заказов: ${statusList}\n\n` +
+            `Популярные товары:\n${popularStr}`
+
+          const resp: ChatResponse = {
+            reply,
+            action: null,
+            actions: [{ type: 'open_analytics', label: 'Открыть аналитику' }],
+            calculation: null,
+            local: true,
+            usedDeepSeek: false,
+          }
+          // Persist the fallback reply
+          if (convRow) {
+            try {
+              await prisma.aIMessage.create({
+                data: {
+                  conversationId: convRow.id || conversationId,
+                  role: 'assistant',
+                  content: resp.reply,
+                  actions: JSON.stringify(resp.actions),
+                },
+              })
+              await prisma.aIConversation.update({
+                where: { id: convRow.id || conversationId },
+                data: { updatedAt: new Date() },
+              })
+            } catch {}
+          }
+          return res.json({
+            ...resp,
+            conversationId: convRow?.id || conversationId || null,
+          } satisfies ChatResponse)
+        } catch (e) {
+          logger.warn('Admin analytics fallback failed', e as any)
+          // Fall through to product search fallback below
+        }
+      }
+    }
+
     // Fallback: search the marketplace catalog for products matching the
     // user's message. Return up to 6 products as cards, with a helpful reply.
     try {
       const lower = message.toLowerCase()
+
+      // v25.9.12: CONTACTS fallback — if the user asks for contacts, return
+      // real contact data from Studio settings (phone, WhatsApp, Telegram,
+      // email) as a contacts card. This works without DeepSeek configured.
+      if (/(контакт|телефон|email|почт|адрес|связаться|whatsapp|вацап|вотсап|telegram|телеграм|позвонить|написать)/i.test(lower)) {
+        const contacts = await getContactsArray()
+        if (contacts.length > 0) {
+          const reply = `Вот наши контакты. Вы можете позвонить, написать в WhatsApp/Telegram или на почту — просто нажмите на карточку:`
+          const resp: ChatResponse = {
+            reply,
+            action: null,
+            actions: [],
+            calculation: null,
+            local: true,
+            usedDeepSeek: false,
+            cards: [{ kind: 'contacts' as const, data: contacts }],
+          }
+          if (convRow) {
+            try {
+              await prisma.aIMessage.create({
+                data: {
+                  conversationId: convRow.id || conversationId,
+                  role: 'assistant',
+                  content: resp.reply,
+                  cards: JSON.stringify(resp.cards),
+                },
+              })
+              await prisma.aIConversation.update({
+                where: { id: convRow.id || conversationId },
+                data: { updatedAt: new Date() },
+              })
+            } catch {}
+          }
+          return res.json({
+            ...resp,
+            conversationId: convRow?.id || conversationId || null,
+          } satisfies ChatResponse)
+        }
+      }
       // v25.9.6: SQLite doesn't support `mode: 'insensitive'` — use plain
       // `contains` (SQLite is case-insensitive by default for ASCII, and
       // we pre-lowercase the search term). For PostgreSQL, this also works

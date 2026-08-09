@@ -72,20 +72,15 @@ interface MenuInfoPage {
 // login flow effectively undiscoverable.
 const buildSections = (isAdmin: boolean, isAuthed: boolean) => {
   const sections: { title: string; items: { id: string; label: string; icon: any; desc: string }[] }[] = []
-  // Studio section — ADMIN ONLY (when authed).
+  // v25.9.10: Studio section — ADMIN ONLY. Removed the "Вход для администратора"
+  // entry that was shown to non-authed guests. The admin login flow is still
+  // accessible via the regular login dialog (Profile → Войти) — admins enter
+  // their credentials and the backend handles TOTP setup if needed.
   if (isAdmin) {
     sections.push({
       title: 'Управление',
       items: [
         { id: 'studio', label: 'Студия', icon: LayoutDashboard, desc: 'Админ-панель' },
-      ],
-    })
-  } else if (!isAuthed) {
-    // Not authed → surface the admin login entry so 2FA login is reachable.
-    sections.push({
-      title: 'Управление',
-      items: [
-        { id: 'admin-login', label: 'Вход для администратора', icon: ShieldCheck, desc: 'Двухфакторная авторизация' },
       ],
     })
   }
@@ -185,11 +180,6 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
     switch (id) {
       case 'studio':
         onNavigate('studio')
-        onOpenChange(false)
-        break
-      case 'admin-login':
-        // v25.7 (TZ ЭТАП 2.1): take the user to the proper 2FA login flow.
-        onNavigate('admin-login')
         onOpenChange(false)
         break
       case 'favorites':

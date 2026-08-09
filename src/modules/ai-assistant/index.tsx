@@ -17,7 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, X, Send, Loader2, AlertCircle,
   Mic, MicOff, Volume2, VolumeX, ImageIcon, Plus,
-  MessageSquare, History, ChevronLeft, Pin, PinOff, Power, Keyboard,
+  MessageSquare, History, ChevronLeft, Pin, PinOff, Keyboard,
   ArrowUp, Trash2,
 } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -82,8 +82,6 @@ export function AIAssistant({
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [listening, setListening] = useState(false)
   const [speaking, setSpeaking] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [pendingImages, setPendingImages] = useState<string[]>([])
   const [interimText, setInterimText] = useState('')
   // v25.9.8: animated product gallery for the empty state. Real products are
   // fetched from /api/products/smart/blocks when the AI panel opens. The
@@ -93,7 +91,6 @@ export function AIAssistant({
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const recognitionRef = useRef<any>(null)
   // v25.9.4: continuous voice mode flag — when true, after AI replies the
   // mic auto-restarts so the user can speak again without tapping. This is
@@ -112,10 +109,12 @@ export function AIAssistant({
   // ----- 1. Open/close events -----
   useEffect(() => {
     const openHandler = () => {
-      if (useAISession.getState().enabled) {
-        session.setOpen(true)
-        if (context) session.setLastContext(context)
-      }
+      // v25.9.10: REMOVED the `enabled` gate — the AI should ALWAYS open when
+      // the user clicks the button. Previously, if the user had toggled the
+      // Power button off (enabled=false), clicking the AI button did nothing
+      // — this was the root cause of "AI doesn't open on desktop".
+      session.setOpen(true)
+      if (context) session.setLastContext(context)
     }
     const closeHandler = () => session.setOpen(false)
     // v25.9.6: when a product is opened (from anywhere — AI card click, chat,
@@ -260,7 +259,6 @@ export function AIAssistant({
         id: `u-${Date.now()}`,
         role: 'user',
         content: text,
-        images: pendingImages.length ? pendingImages : undefined,
         ts: Date.now(),
       }
       session.addMessage(userMsg)
@@ -273,8 +271,6 @@ export function AIAssistant({
         ts: Date.now(),
       })
       setLoading(true)
-      const imagesToSend = pendingImages
-      setPendingImages([])
 
       try {
         let convId = session.conversationId
@@ -295,13 +291,13 @@ export function AIAssistant({
           json: {
             message: text,
             context,
-            images: imagesToSend.length ? imagesToSend : undefined,
             conversationId: convId || undefined,
             history: session.messages
               .slice(-10)
               .filter((m) => m.id !== placeholderId && m.id !== userMsg.id)
               .map((m) => ({ role: m.role, content: m.content })),
           },
+          auth: true,
         })
         session.updateLastAssistantMessage({
           id: placeholderId,
@@ -313,8 +309,10 @@ export function AIAssistant({
         if (r.conversationId && r.conversationId !== session.conversationId) {
           session.setConversationId(r.conversationId)
         }
-        // v25.9.4: continuous voice — if voice mode is on, auto-speak the reply
-        // AND auto-restart listening after the speech ends.
+        // v25.9.12: CONTINUOUS VOICE — always auto-speak the reply when in
+        // voice mode, then restart listening after speech ends. This creates
+        // a seamless conversation loop: user speaks → AI replies → AI speaks
+        // → mic auto-restarts → user speaks again. No manual tapping needed.
         if (
           session.mode === 'voice' &&
           typeof window !== 'undefined' &&
@@ -323,9 +321,22 @@ export function AIAssistant({
           speak(r.reply, () => {
             // onend callback — restart listening if continuous mode is active
             if (continuousVoiceRef.current && session.open) {
-              setTimeout(() => startListening(), 300)
+              setTimeout(() => {
+                // Only restart if not already listening (avoids double-start)
+                if (continuousVoiceRef.current && session.open && !listening) {
+                  startListening()
+                }
+              }, 300)
             }
           })
+        } else if (continuousVoiceRef.current && session.open) {
+          // v25.9.12: even in text mode, if continuous voice is active (user
+          // started voice but switched to text), restart listening after reply.
+          setTimeout(() => {
+            if (continuousVoiceRef.current && session.open && !listening) {
+              startListening()
+            }
+          }, 500)
         }
       } catch (e: any) {
         session.updateLastAssistantMessage({
@@ -337,66 +348,7 @@ export function AIAssistant({
         setLoading(false)
       }
     },
-    [input, loading, context, session, pendingImages, user],
-  )
-
-  // ----- 8. Image upload -----
-  const handleUploadImage = useCallback(
-    async (file: File) => {
-      if (uploading || pendingImages.length >= 4) return
-      setUploading(true)
-      setError(null)
-      try {
-        // v25.9.9: client-side validation — check file type and size BEFORE
-        // uploading. This gives the user immediate feedback without a round-trip.
-        if (!file.type.startsWith('image/')) {
-          setError('Можно загружать только изображения (JPG, PNG, WebP, GIF)')
-          setUploading(false)
-          return
-        }
-        if (file.size > 50 * 1024 * 1024) {
-          setError('Файл слишком большой (максимум 50 МБ)')
-          setUploading(false)
-          return
-        }
-        const form = new FormData()
-        form.append('file', file)
-        // v25.9.7: read token from both the auth store AND localStorage (the
-        // store may not have hydrated yet on first mount). Upload requires
-        // auth — without a valid token the backend returns 401.
-        const token = useAuthStore.getState().token || (() => {
-          try {
-            const raw = localStorage.getItem('999pro-auth')
-            return raw ? JSON.parse(raw)?.state?.token || null : null
-          } catch { return null }
-        })()
-        if (!token) {
-          setError('Войдите, чтобы загружать изображения')
-          setUploading(false)
-          return
-        }
-        const resp = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body: form,
-        })
-        if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({}))
-          throw new Error(errData?.error || `Загрузка не удалась (${resp.status})`)
-        }
-        const data = await resp.json()
-        if (data?.url) {
-          setPendingImages((arr) => [...arr, data.url])
-        } else {
-          throw new Error('Сервер не вернул URL изображения')
-        }
-      } catch (e: any) {
-        setError(e?.message || 'Не удалось загрузить изображение')
-      } finally {
-        setUploading(false)
-      }
-    },
-    [uploading, pendingImages.length],
+    [input, loading, context, session, user],
   )
 
   // ----- 9. Voice input (STT) with continuous mode support -----
@@ -406,15 +358,19 @@ export function AIAssistant({
       return
     }
     if (listening) {
-      // Manual stop — also disables continuous mode
+      // v25.9.12: Manual stop — user explicitly tapped the mic to stop.
+      // Disable continuous mode so auto-restart doesn't fire.
       continuousVoiceRef.current = false
       try { recognitionRef.current?.stop() } catch {}
       recognitionRef.current = null
       setListening(false)
       return
     }
-    // Start listening — enable continuous mode if voice mode is on
-    continuousVoiceRef.current = session.mode === 'voice'
+    // v25.9.12: Start listening — continuous mode is ALWAYS enabled when the
+    // user starts voice input. The mic will auto-restart after each AI reply
+    // (via speak onend callback) and after silence (via rec.onend fallback).
+    // The only way to stop is to tap the mic button again.
+    continuousVoiceRef.current = true
     const SR =
       (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
     const rec = new SR()
@@ -431,14 +387,14 @@ export function AIAssistant({
       }
       if (interim) setInterimText(interim)
       if (final) {
-        setInput((prev) => (prev ? prev + ' ' : '') + final.trim())
+        const finalText = final.trim()
         setInterimText('')
-        // v25.9.4: auto-send after a short pause if continuous voice mode
-        if (continuousVoiceRef.current) {
-          const finalText = (input ? input + ' ' : '') + final.trim()
-          if (finalText.trim()) {
-            setTimeout(() => handleSend(finalText), 200)
-          }
+        // v25.9.12: auto-send immediately in continuous mode — don't wait.
+        if (continuousVoiceRef.current && finalText) {
+          setInput('')
+          handleSend(finalText)
+        } else {
+          setInput((prev) => (prev ? prev + ' ' : '') + finalText)
         }
       }
     }
@@ -446,7 +402,10 @@ export function AIAssistant({
       if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
         setError('Нет доступа к микрофону. Разрешите доступ в настройках браузера.')
         continuousVoiceRef.current = false
-      } else if (e?.error !== 'no-speech' && e?.error !== 'aborted') {
+      } else if (e?.error === 'no-speech') {
+        // v25.9.12: "no-speech" is normal in continuous mode — the user just
+        // paused. Don't show an error; the onend handler will restart listening.
+      } else if (e?.error !== 'aborted') {
         setError('Ошибка распознавания речи: ' + (e?.error || 'unknown'))
       }
       setListening(false)
@@ -456,24 +415,39 @@ export function AIAssistant({
       setListening(false)
       recognitionRef.current = null
       setInterimText('')
-      // v25.9.4: in continuous mode, if the user hasn't manually stopped,
-      // restart listening after a brief pause (the auto-send in onresult
-      // will trigger the AI reply, which then triggers speak, which then
-      // restarts listening via the speak onend callback).
-      if (continuousVoiceRef.current && session.open && !loading) {
+      // v25.9.12: CONTINUOUS MODE — auto-restart listening after a brief
+      // pause unless the user manually stopped (continuousVoiceRef = false)
+      // or the AI is currently loading/speaking. The speak() onend callback
+      // also restarts listening, but this fallback handles the case where
+      // there was no AI reply (e.g. user paused without speaking).
+      if (continuousVoiceRef.current && session.open && !loading && !speaking) {
         setTimeout(() => {
-          if (continuousVoiceRef.current && session.open && !listening) {
-            // Don't auto-restart here — the speak() onend callback handles it.
-            // This is a fallback in case there was no AI reply to speak.
+          if (continuousVoiceRef.current && session.open && !loading && !speaking) {
+            // Restart recognition — create a fresh SR instance because the
+            // old one cannot be reused after onend.
+            try {
+              const SR2 =
+                (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
+              const rec2 = new SR2()
+              rec2.lang = 'ru-RU'
+              rec2.continuous = false
+              rec2.interimResults = true
+              rec2.onresult = rec.onresult
+              rec2.onerror = rec.onerror
+              rec2.onend = rec.onend
+              rec2.start()
+              recognitionRef.current = rec2
+              setListening(true)
+            } catch {}
           }
-        }, 500)
+        }, 300)
       }
     }
     rec.start()
     recognitionRef.current = rec
     setListening(true)
     setError(null)
-  }, [speechSupported, listening, session.mode, session.open, input, loading, handleSend])
+  }, [speechSupported, listening, session.open, loading, speaking, handleSend])
 
   // ----- 10. Voice output (TTS) with onend callback for continuous mode -----
   const speak = useCallback((text: string, onend?: () => void) => {
@@ -713,24 +687,27 @@ export function AIAssistant({
             <Trash2 className="h-4 w-4" />
           </button>
         )}
+        {/* v25.9.10: "Новый чат" button — creates a fresh AI conversation.
+            Clears the current messages and conversationId so the next message
+            starts a new thread. The old conversation is preserved in the DB
+            (if the user was authenticated) and can be accessed via History. */}
         <button
           onClick={() => {
-            const next = !session.enabled
-            session.setEnabled(next)
-            if (!next) {
-              session.setOpen(false)
-              stopSpeaking()
-              continuousVoiceRef.current = false
-              try { recognitionRef.current?.stop() } catch {}
+            session.clearMessages()
+            session.setConversationId(null)
+            session.setGreetingShown(false)
+            setError(null)
+            stopSpeaking()
+            continuousVoiceRef.current = false
+            if (recognitionRef.current) {
+              try { recognitionRef.current.stop() } catch {}
             }
           }}
-          className={cn(
-            'h-9 w-9 grid place-items-center rounded-full transition-colors',
-            session.enabled ? 'text-emerald-500 hover:bg-accent' : 'text-muted-foreground bg-muted hover:bg-accent',
-          )}
-          title={session.enabled ? 'AI включен' : 'AI выключен'}
+          className="h-9 px-3 grid place-items-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-semibold gap-1.5 flex"
+          title="Новый чат"
         >
-          <Power className="h-4 w-4" />
+          <Plus className="h-4 w-4" />
+          <span className="hidden sm:inline">Новый чат</span>
         </button>
         {!inline && (
           <button
@@ -923,6 +900,89 @@ export function AIAssistant({
     )
   }
 
+  // v25.9.12: Contact cards — beautiful clickable cards for phone, WhatsApp,
+  // Telegram, email. Clicking opens the appropriate app (tel:, https://wa.me,
+  // https://t.me, mailto:). Uses real contact data from Studio settings.
+  const renderContactsCard = (cards: any[]) => {
+    const contactCards = cards.filter((c) => c.kind === 'contacts')
+    if (contactCards.length === 0) return null
+    const contacts: Array<{ label: string; type: string; value: string }> = contactCards[0].data
+    if (!Array.isArray(contacts) || contacts.length === 0) return null
+
+    const getHref = (c: { type: string; value: string }) => {
+      const v = c.value.trim()
+      switch (c.type) {
+        case 'phone':
+          return `tel:${v.replace(/[^\d+]/g, '')}`
+        case 'whatsapp': {
+          // WhatsApp: accept phone numbers or wa.me links
+          const digits = v.replace(/[^\d]/g, '')
+          if (digits.length >= 10) return `https://wa.me/${digits}`
+          return v.startsWith('http') ? v : `https://${v}`
+        }
+        case 'telegram': {
+          // Telegram: accept @username or t.me links
+          const username = v.replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '')
+          return `https://t.me/${username}`
+        }
+        case 'email':
+          return `mailto:${v}`
+        default:
+          return v
+      }
+    }
+
+    const getIcon = (type: string) => {
+      switch (type) {
+        case 'phone': return '📞'
+        case 'whatsapp': return '💬'
+        case 'telegram': return '✈️'
+        case 'email': return '✉️'
+        default: return '📋'
+      }
+    }
+
+    const getColor = (type: string) => {
+      switch (type) {
+        case 'phone': return 'from-emerald-500 to-teal-600'
+        case 'whatsapp': return 'from-green-500 to-emerald-600'
+        case 'telegram': return 'from-sky-500 to-blue-600'
+        case 'email': return 'from-indigo-500 to-violet-600'
+        default: return 'from-slate-500 to-slate-600'
+      }
+    }
+
+    return (
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {contacts.map((c, idx) => (
+          <a
+            key={idx}
+            href={getHref(c)}
+            target={c.type === 'whatsapp' || c.type === 'telegram' ? '_blank' : undefined}
+            rel={c.type === 'whatsapp' || c.type === 'telegram' ? 'noopener noreferrer' : undefined}
+            className="flex items-center gap-3 p-3 rounded-2xl bg-card border border-border/60 hover:border-primary/40 hover:shadow-glow transition-all group no-underline"
+          >
+            <div
+              className={cn(
+                'h-10 w-10 rounded-xl grid place-items-center text-white shrink-0 shadow-md bg-gradient-to-br',
+                getColor(c.type),
+              )}
+            >
+              <span className="text-lg">{getIcon(c.type)}</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">{c.label}</div>
+              <div className="text-sm font-semibold text-foreground truncate group-hover:text-primary transition-colors">
+                {c.value}
+              </div>
+            </div>
+            <ArrowUp className="h-4 w-4 text-muted-foreground group-hover:text-primary rotate-45 transition-transform shrink-0" />
+          </a>
+        ))}
+      </div>
+    )
+  }
+
   const renderMessage = (msg: AIMessage, i: number) => {
     if (msg.role === 'user') {
       return (
@@ -962,6 +1022,7 @@ export function AIAssistant({
                 <AIResponseRenderer text={msg.content} />
               </div>
               {msg.cards && msg.cards.length > 0 && renderProductFeed(msg.cards)}
+              {msg.cards && msg.cards.length > 0 && renderContactsCard(msg.cards)}
               {msg.actions && msg.actions.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {msg.actions.map((a, idx) => (
@@ -1006,6 +1067,12 @@ export function AIAssistant({
   const renderChatArea = () => (
     <div
       ref={scrollRef}
+      // v25.9.11: CRITICAL — data-scroll-lock-ignore tells use-scroll-lock.ts
+      // NOT to preventDefault on wheel/touchmove events inside this container.
+      // Without this attribute, the scroll-lock hook (active when AI overlay is
+      // open) blocks ALL wheel and touch scrolling — this was the root cause of
+      // "AI chat doesn't scroll on desktop wheel or mobile touch".
+      data-scroll-lock-ignore
       className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-4 space-y-4 ai-chat-scroll"
       style={{
         minHeight: 0,
@@ -1057,21 +1124,6 @@ export function AIAssistant({
       className="px-3 sm:px-4 py-3 border-t border-border/60 bg-card/95 backdrop-blur-xl shrink-0"
       style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
     >
-      {pendingImages.length > 0 && (
-        <div className="flex gap-1.5 mb-2">
-          {pendingImages.map((url, i) => (
-            <div key={i} className="relative">
-              <img src={url} alt="" className="h-14 w-14 rounded-lg object-cover border border-border/60" />
-              <button
-                onClick={() => setPendingImages((arr) => arr.filter((_, idx) => idx !== i))}
-                className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground grid place-items-center text-xs"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
       {isVoiceMode && (
         <div className="mb-2 flex items-center justify-center gap-1 h-8">
           {listening ? (
@@ -1094,7 +1146,7 @@ export function AIAssistant({
             ))
           ) : (
             <span className="text-xs text-muted-foreground">
-              {continuousVoiceRef.current ? 'Непрерывный режим — нажмите 🎤 чтобы остановить' : 'Нажмите 🎤 чтобы говорить'}
+              {continuousVoiceRef.current ? 'Непрерывный режим — говорите свободно. Нажмите 🎤 чтобы остановить.' : 'Нажмите 🎤 чтобы начать голосовой диалог'}
             </span>
           )}
         </div>
@@ -1109,30 +1161,6 @@ export function AIAssistant({
         }}
         className="flex items-center gap-2"
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            const files = e.target.files
-            if (!files) return
-            for (const f of Array.from(files).slice(0, 4 - pendingImages.length)) {
-              handleUploadImage(f)
-            }
-            if (fileInputRef.current) fileInputRef.current.value = ''
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading || pendingImages.length >= 4}
-          className="h-11 w-11 shrink-0 rounded-full grid place-items-center text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 transition-colors bg-card border border-border/60"
-          title="Загрузить изображение — найти похожие товары"
-        >
-          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
-        </button>
         {isVoiceMode && (
           <button
             type="button"
@@ -1158,7 +1186,7 @@ export function AIAssistant({
         />
         <button
           type="submit"
-          disabled={loading || (!input.trim() && pendingImages.length === 0)}
+          disabled={loading || !input.trim()}
           className="h-11 w-11 shrink-0 rounded-full bg-primary text-primary-foreground grid place-items-center hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           title="Отправить"
         >
@@ -1212,7 +1240,7 @@ export function AIAssistant({
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto py-2 ai-chat-scroll">
+          <div className="flex-1 overflow-y-auto py-2 ai-chat-scroll" data-scroll-lock-ignore>
             {!user ? (
               <div className="px-4 py-6 text-center text-sm text-muted-foreground">
                 Войдите, чтобы сохранять историю разговоров
@@ -1306,7 +1334,7 @@ export function AIAssistant({
   if (typeof document === 'undefined') return null
   return createPortal(
     <AnimatePresence>
-      {session.open && session.enabled && (
+      {session.open && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

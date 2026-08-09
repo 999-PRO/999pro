@@ -12,8 +12,8 @@ import { useAudioPlayer } from '@/lib/audio-player-manager'
 import { MediaHubIcon } from '@/components/icons/media-hub-icon'
 // v19.0: module access filtering
 import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
-// v25.9: AI session store — check the on/off toggle before showing the AI button.
-import { useAISession } from '@/modules/ai-assistant/ai-session-store'
+// v25.9.10: removed useAISession import — no longer needed since the Power
+// toggle was removed from the AI header.
 
 // ============================================================================
 //  BottomNav — mobile primary navigation (v25.5, TZ-3 task #10)
@@ -49,7 +49,8 @@ export function BottomNav({
   const unreadTotal = useNotificationsStore((s) => s.unread.total)
   const audioIsPlaying = useAudioPlayer((s) => s.isPlaying)
   const modules = useModuleAccess()
-  const aiEnabled = useAISession((s) => s.enabled)
+  // v25.9.10: removed `aiEnabled` check — the AI should always be accessible
+  // from the nav button. The Power toggle was removed from the AI header.
 
   // v25.5: Build the COMPLETE list of nav items dynamically, then filter by
   // module access. Each item gets `flex-1` so they redistribute evenly when
@@ -59,7 +60,7 @@ export function BottomNav({
   const showProfile = isModuleEnabled(modules, 'profile')
   // v25.9: AI button respects both the module-access setting (Studio can
   // disable AI assistant globally) and the user's on/off toggle.
-  const showAI = isModuleEnabled(modules, 'ai-assistant') && aiEnabled
+  const showAI = isModuleEnabled(modules, 'ai-assistant')
 
   // v10-native: update the app icon badge when unread count changes.
   useEffect(() => {
