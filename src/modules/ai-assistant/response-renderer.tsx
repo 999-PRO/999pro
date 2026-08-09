@@ -169,7 +169,7 @@ function renderBlock(block: RenderedBlock, index: number) {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="text-white/85 leading-relaxed text-sm sm:text-base mt-2 first:mt-0"
+          className="text-foreground/85 leading-relaxed text-sm sm:text-base mt-2 first:mt-0"
         >
           {renderInlineContent(block.content!)}
         </motion.p>
@@ -190,7 +190,7 @@ function renderBlock(block: RenderedBlock, index: number) {
                 className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0"
                 style={{ background: 'linear-gradient(135deg, #818cf8, #a78bfa)' }}
               />
-              <span className="text-white/80 text-sm leading-relaxed">
+              <span className="text-foreground/80 text-sm leading-relaxed">
                 {renderInlineContent(item)}
               </span>
             </div>
@@ -232,9 +232,9 @@ function renderBlock(block: RenderedBlock, index: number) {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay, duration: 0.4 }}
-          className="flex items-center justify-between gap-3 py-1.5 border-b border-white/5 last:border-0"
+          className="flex items-center justify-between gap-3 py-1.5 border-b border-border/40 last:border-0"
         >
-          <span className="text-white/50 text-xs uppercase tracking-wide">{block.label}</span>
+          <span className="text-muted-foreground text-xs uppercase tracking-wide">{block.label}</span>
           {block.price ? (
             <span
               className="text-lg font-bold"
@@ -248,7 +248,7 @@ function renderBlock(block: RenderedBlock, index: number) {
               {block.price.toLocaleString('ru-RU')} ₽
             </span>
           ) : (
-            <span className="text-white/90 text-sm font-medium">{block.value}</span>
+            <span className="text-foreground/90 text-sm font-medium">{block.value}</span>
           )}
         </motion.div>
       )

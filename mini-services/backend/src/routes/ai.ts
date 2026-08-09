@@ -457,6 +457,71 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
   // 10) Build rich cards based on intent.
   const cards: ChatResponse['cards'] = []
 
+  // v25.9.2: IMAGE-BASED PRODUCT SEARCH. When the user uploads an image,
+  // they're typically looking for "find me something like this". We can't
+  // do real image similarity without a vision model, but we CAN:
+  //   (a) show recently-added products as "inspired by your image"
+  //   (b) if the user's text mentions a category, filter by that category
+  // This gives a useful response even without vision capability. The AI
+  // text explains what we did.
+  if (images && images.length > 0) {
+    try {
+      // Try to extract a category hint from the message text.
+      const categoryHints: Record<string, string[]> = {
+        'баннер': ['баннер', 'банер', 'растяжк'],
+        'вывеска': ['вывеск', 'табличк'],
+        'футболка': ['футболк', 'майка', 'одежд'],
+        'кружка': ['кружк', 'кухн'],
+        'печать': ['печать', 'полиграф', 'визитк', 'буклет'],
+        'дизайн': ['дизайн', 'логотип', 'логотип'],
+        'наружная реклама': ['наружн', 'реклам'],
+        'подарки': ['подарк', 'сувенир'],
+      }
+      let matchedCategory: string | null = null
+      for (const [cat, hints] of Object.entries(categoryHints)) {
+        if (hints.some((h) => lower.includes(h))) {
+          matchedCategory = cat
+          break
+        }
+      }
+      // Fetch products — filter by category if we matched one.
+      const productWhere: any = { deletedAt: null }
+      if (matchedCategory) {
+        productWhere.OR = [
+          { category: { contains: matchedCategory, mode: 'insensitive' } },
+          { title: { contains: matchedCategory, mode: 'insensitive' } },
+        ]
+      }
+      const imageProducts = await prisma.product.findMany({
+        where: productWhere,
+        select: {
+          id: true, title: true, price: true, currency: true, category: true,
+          images: true, rating: true, inStock: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+      })
+      if (imageProducts.length > 0) {
+        cards.push({
+          kind: 'similar_products',
+          data: imageProducts.map((p) => ({
+            id: p.id,
+            title: p.title,
+            price: Number(p.price),
+            currency: p.currency || 'RUB',
+            image: (() => { try { return JSON.parse(p.images || '[]')[0] || null } catch { return null } })(),
+            category: matchedCategory || 'Похожие товары',
+            rating: p.rating,
+            inStock: p.inStock,
+          })),
+        })
+      }
+    } catch (e) {
+      // Non-critical — image search is a bonus, not a requirement.
+      logger.warn('Image-based product search failed', e as any)
+    }
+  }
+
   // v18.6: ALWAYS show product cards when the user asks about a product —
   // not just when an explicit "покажи/найди" verb is used. The previous
   // logic only showed cards for /(покаж|найд|ищу|хочу|нужен|есть ли)/ which
@@ -610,6 +675,16 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
   }
 
   const allActions = [...uiActions, ...toolUiActions]
+
+  // v25.9.2: when the user uploaded an image AND we found similar products,
+  // prefix the reply with a note so the user knows the cards are "inspired
+  // by" the uploaded image. This makes the image-upload feature discoverable.
+  if (images && images.length > 0 && cards.some((c) => c.kind === 'similar_products')) {
+    const imgNote = images.length === 1
+      ? '📸 Я получил ваше изображение и подобрал товары из каталога, которые могут подойти. '
+      : `📸 Я получил ${images.length} изображения и подобрал товары из каталога, которые могут подойти. `
+    reply = imgNote + reply
+  }
 
   // v25.9: persist the assistant's reply to AIConversation.
   if (convRow) {

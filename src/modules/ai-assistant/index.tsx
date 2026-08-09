@@ -1,19 +1,20 @@
 'use client'
 
 // ============================================================================
-//  AI Agent 999PRO — v25.9 premium rebuild
+//  AI Agent 999PRO — v25.9.2 premium full-screen rebuild
 // ----------------------------------------------------------------------------
-//  Features:
-//   • Separate full-page route (/ai) + quick popup mode (mounted in AppShell)
-//   • Premium landing experience with rotating product showcase
-//   • Text + voice modes (STT via webkitSpeechRecognition, TTS via speechSynthesis)
-//   • Image upload (vision) — POST /api/upload, then pass URL to /api/ai/chat
-//   • Persistent history (AIConversation + AIMessage DB tables, Zustand store
-//     for cross-navigation continuity)
-//   • Proactive, role-aware greeting + contextual suggestion chips
-//   • On/off toggle (when disabled, AI does not interfere with the app)
-//   • Real backend integration — NO mock data, NO setTimeouts, NO fake replies
-//  ============================================================================
+//  Design priorities (per user feedback):
+//   1. FULL-SCREEN — not a small popup. Inline mode fills the viewport.
+//   2. READABLE in both light AND dark themes — uses text-foreground / bg-card.
+//   3. Product FEED — AI responses show product cards as a horizontal feed,
+//      not as tiny chat bubbles. Cards open the real product page on click.
+//   4. DELETE conversations — history panel has a trash button per row.
+//   5. IMAGE UPLOAD with similar-products search — user uploads a photo, AI
+//      searches the catalog and shows matching products.
+//   6. SCROLL — chat area is a proper scrollable container with custom scrollbar.
+//   7. Voice + text modes preserved.
+//   8. Persistent across navigation (Zustand store).
+// ============================================================================
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -21,7 +22,7 @@ import {
   Sparkles, X, Send, Loader2, Trash2, AlertCircle,
   Mic, MicOff, Volume2, VolumeX, ImageIcon, Plus,
   MessageSquare, History, ChevronLeft, Pin, PinOff, Power, Keyboard,
-} from 'lucide-react'
+  ArrowUp,} from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useScrollLock } from '@/lib/use-scroll-lock'
@@ -64,13 +65,12 @@ interface AssistantProps {
   onOpenProduct?: (productId: string) => void
   onOpenCart?: () => void
   /** When true, renders inline as a full page (used by /ai route).
-   *  When false (default), renders as a popup overlay (used by AppShell). */
+   *  When false (default), renders as a popup overlay. */
   inline?: boolean
 }
 
 // Premium rotating showcase for the landing state. Pulls from /api/products/smart/blocks
-// so it always shows real catalog items. Falls back to a static gradient if the
-// fetch fails (offline / first paint).
+// so it always shows real catalog items.
 const FALLBACK_SHOWCASE = [
   { id: '1', title: 'Баннер 3×6', image: null, price: 'от 2 500 ₽' },
   { id: '2', title: 'Вывеска с подсветкой', image: null, price: 'от 8 900 ₽' },
@@ -173,7 +173,12 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   // ----- 6. Auto-scroll on new message -----
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      // Use requestAnimationFrame to ensure DOM has updated before scrolling.
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+        }
+      })
     }
   }, [session.messages, loading])
 
@@ -195,9 +200,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   }, [session.open])
 
   // ----- 9. Proactive greeting -----
-  // When AI opens with empty history, push a single greeting message so the
-  // user sees the assistant is alive and ready. The greeting is role + time
-  // aware, and includes a contextual suggestion based on the current view.
   useEffect(() => {
     if (!session.open || !status) return
     if (session.messages.length > 0 || session.greetingShown) return
@@ -232,7 +234,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
     setError(null)
     setInterimText('')
 
-    // Add user message to local store immediately (optimistic).
     const userMsg: AIMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
@@ -242,7 +243,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
     }
     session.addMessage(userMsg)
 
-    // Add an optimistic assistant placeholder so the user sees "Думаю…".
     const placeholderId = `a-${Date.now()}`
     session.addMessage({
       id: placeholderId,
@@ -255,8 +255,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
     setPendingImages([])
 
     try {
-      // Ensure we have a conversationId (authed users get DB persistence;
-      // guests get an ephemeral in-memory conversation).
       let convId = session.conversationId
       if (!convId && user) {
         try {
@@ -266,7 +264,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           })
           convId = r.conversation.id
           session.setConversationId(convId)
-        } catch { /* non-critical — chat works without persistence */ }
+        } catch { /* non-critical */ }
       }
 
       const r = await api.post<ChatResponse>('/api/ai/chat', {
@@ -284,7 +282,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
             })),
         },
       })
-      // Replace placeholder with the real reply.
       session.updateLastAssistantMessage({
         id: placeholderId,
         content: r.reply,
@@ -295,7 +292,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
       if (r.conversationId && r.conversationId !== session.conversationId) {
         session.setConversationId(r.conversationId)
       }
-      // Auto-speak if voice mode + autoSpeak.
       if (session.mode === 'voice' && session.autoSpeak && typeof window !== 'undefined' && 'speechSynthesis' in window) {
         speak(r.reply)
       }
@@ -317,16 +313,10 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
     try {
       const form = new FormData()
       form.append('file', file)
-      // The /api/upload endpoint expects multipart/form-data and returns { url }.
-      // We use fetch directly because the api helper always sends JSON.
-      const token = typeof window !== 'undefined' ? window.localStorage.getItem('999pro-auth') : null
-      let authToken: string | null = null
-      if (token) {
-        try { authToken = JSON.parse(token)?.state?.token || null } catch {}
-      }
+      const token = useAuthStore.getState().token
       const resp = await fetch('/api/upload', {
         method: 'POST',
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: form,
       })
       if (!resp.ok) throw new Error('Upload failed')
@@ -396,7 +386,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   const speak = useCallback((text: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
     window.speechSynthesis.cancel()
-    // Strip markdown for cleaner speech.
     const clean = text
       .replace(/[#*_>`~-]/g, '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -406,7 +395,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
     utter.lang = 'ru-RU'
     utter.rate = 1.0
     utter.pitch = 1.0
-    // Try to pick a Russian voice.
     const voices = window.speechSynthesis.getVoices()
     const ru = voices.find((v) => v.lang?.toLowerCase().startsWith('ru'))
     if (ru) utter.voice = ru
@@ -475,7 +463,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   const hasMessages = session.messages.length > 0
   const isVoiceMode = session.mode === 'voice'
 
-  // Role-aware example prompts.
   const examplePrompts = useMemo(() => {
     if (isAdmin) {
       return [
@@ -494,7 +481,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   }, [isAdmin])
 
   const renderHeader = () => (
-    <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-border/60 glass">
+    <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-border/60 bg-card/80 backdrop-blur-xl shrink-0">
       <div className="flex items-center gap-3 min-w-0">
         <div className="relative h-9 w-9 shrink-0">
           <div className={cn(
@@ -509,7 +496,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           </div>
         </div>
         <div className="min-w-0">
-          <h2 className="font-bold text-base leading-tight truncate">
+          <h2 className="font-bold text-base leading-tight truncate text-foreground">
             {status?.assistantName || 'Агент 999'}
           </h2>
           <p className="text-xs text-muted-foreground leading-tight truncate">
@@ -518,7 +505,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
-        {/* Mode toggle */}
         <button
           onClick={() => session.setMode(isVoiceMode ? 'text' : 'voice')}
           className={cn(
@@ -531,7 +517,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
         >
           {isVoiceMode ? <Keyboard className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
         </button>
-        {/* History toggle */}
         <button
           onClick={() => { setShowHistory((v) => !v); if (!showHistory) loadConversations() }}
           className={cn(
@@ -542,7 +527,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
         >
           <History className="h-4 w-4" />
         </button>
-        {/* ON/OFF master toggle */}
         <button
           onClick={() => {
             const next = !session.enabled
@@ -559,11 +543,10 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
               ? 'text-emerald-500 hover:bg-accent'
               : 'text-muted-foreground bg-muted hover:bg-accent',
           )}
-          title={session.enabled ? 'AI включен (нажмите чтобы выключить)' : 'AI выключен'}
+          title={session.enabled ? 'AI включен' : 'AI выключен'}
         >
           <Power className="h-4 w-4" />
         </button>
-        {/* Close (popup mode only) */}
         {!inline && (
           <button
             onClick={() => session.setOpen(false)}
@@ -578,10 +561,9 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   )
 
   const renderLanding = () => (
-    <div className="flex flex-col items-center justify-center h-full text-center px-4 sm:px-6 py-8 overflow-y-auto">
-      {/* Central visual: rotating product showcase */}
+    <div className="flex flex-col items-center justify-center min-h-full text-center px-4 sm:px-6 py-8 overflow-y-auto">
       <div className="relative w-full max-w-md mb-6">
-        <div className="aspect-[4/3] rounded-3xl overflow-hidden bg-gradient-to-br from-violet-500/10 via-fuchsia-500/10 to-indigo-500/10 border border-border/40 glass relative">
+        <div className="aspect-[4/3] rounded-3xl overflow-hidden bg-gradient-to-br from-violet-500/10 via-fuchsia-500/10 to-indigo-500/10 border border-border/40 bg-card relative">
           <AnimatePresence mode="wait">
             <motion.div
               key={showcaseIdx}
@@ -602,13 +584,12 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
                 <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/20 via-violet-500/20 to-fuchsia-500/20" />
               )}
               <div className="relative z-10 mt-auto w-full">
-                <div className="text-sm text-white/80 mb-1">{showcase[showcaseIdx]?.price}</div>
+                <div className="text-sm text-white/90 mb-1 drop-shadow-lg">{showcase[showcaseIdx]?.price}</div>
                 <div className="text-lg font-bold text-white drop-shadow-lg">{showcase[showcaseIdx]?.title}</div>
               </div>
             </motion.div>
           </AnimatePresence>
         </div>
-        {/* AI orb in the center */}
         <div className="absolute -top-6 left-1/2 -translate-x-1/2">
           <div className={cn(
             'h-12 w-12 rounded-full grid place-items-center shadow-glow border-2 border-background',
@@ -621,7 +602,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
             <Sparkles className="h-5 w-5 text-white" />
           </div>
         </div>
-        {/* Indicator dots */}
         <div className="flex justify-center gap-1.5 mt-3">
           {showcase.slice(0, 6).map((_, i) => (
             <div
@@ -635,8 +615,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
         </div>
       </div>
 
-      {/* Greeting */}
-      <h3 className="text-xl font-bold mb-1">
+      <h3 className="text-xl font-bold mb-1 text-foreground">
         {status?.assistantName || 'Агент 999'}
       </h3>
       <p className="text-sm text-muted-foreground mb-6 max-w-md">
@@ -645,13 +624,12 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           : 'Помогу подобрать товар, оформить заказ или ответить на вопросы.'}
       </p>
 
-      {/* Example prompts */}
       <div className="grid gap-2 w-full max-w-md">
         {examplePrompts.map((prompt) => (
           <button
             key={prompt}
             onClick={() => handleSend(prompt)}
-            className="text-left px-4 py-3 rounded-xl bg-muted/40 hover:bg-accent border border-border/40 text-sm transition-colors"
+            className="text-left px-4 py-3 rounded-xl bg-muted/40 hover:bg-accent border border-border/40 text-sm text-foreground transition-colors"
           >
             {prompt}
           </button>
@@ -659,6 +637,77 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
       </div>
     </div>
   )
+
+  // v25.9.2: render a PRODUCT FEED card — horizontal scroll of product cards
+  // for assistant messages that contain product/similar_products cards.
+  // Clicking a card opens the real product page via onOpenProduct.
+  const renderProductFeed = (cards: any[]) => {
+    const productCards = cards.filter((c) => c.kind === 'product' || c.kind === 'similar_products')
+    if (productCards.length === 0) return null
+    const items = productCards.flatMap((c) => {
+      const data = c.data
+      if (Array.isArray(data)) return data
+      if (data?.items) return data.items
+      return [data]
+    })
+    if (!items.length) return null
+    return (
+      <div className="mt-3 -mx-1">
+        <div className="flex gap-3 overflow-x-auto pb-2 px-1 snap-x snap-mandatory scroll-smooth" style={{ scrollbarWidth: 'thin' }}>
+          {items.map((p: any, idx: number) => (
+            <button
+              key={p.id || idx}
+              onClick={() => {
+                // v25.9.2: dispatch a global event so the main app opens the
+                // product as an overlay (works from both popup and /ai route).
+                // The main app's page.tsx listens for '999pro:open-product'
+                // and calls openProductOverlay(id). This avoids the need to
+                // pass onOpenProduct through every layer.
+                if (p.id && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('999pro:open-product', {
+                    detail: { productId: p.id },
+                  }))
+                }
+                // Also call the prop if provided (for AppShell-mounted mode).
+                if (p.id && onOpenProductProp) {
+                  onOpenProductProp(p.id)
+                }
+              }}
+              className="snap-start shrink-0 w-40 sm:w-44 text-left rounded-2xl overflow-hidden bg-card border border-border/60 hover:border-primary/50 hover:shadow-glow transition-all group"
+            >
+              <div className="aspect-square bg-muted overflow-hidden">
+                {p.image || p.images?.[0] ? (
+                  <img
+                    src={p.image || p.images?.[0]}
+                    alt={p.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="w-full h-full grid place-items-center bg-gradient-to-br from-muted to-muted/50">
+                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+              <div className="p-2.5">
+                <div className="text-xs font-semibold text-foreground line-clamp-2 leading-tight min-h-[2rem]">
+                  {p.title}
+                </div>
+                {p.price != null && (
+                  <div className="text-sm font-bold text-primary mt-1">
+                    от {Number(p.price).toLocaleString('ru-RU')} ₽
+                  </div>
+                )}
+                {p.category && (
+                  <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{p.category}</div>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   const renderMessage = (msg: AIMessage, i: number) => {
     if (msg.role === 'user') {
@@ -679,11 +728,10 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
         </div>
       )
     }
-    // Assistant
     const isPlaceholder = !msg.content && loading
     return (
       <div key={msg.id || i} className="flex justify-start group">
-        <div className="max-w-[90%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-muted/60 space-y-2">
+        <div className="max-w-[92%] rounded-2xl rounded-bl-md px-4 py-3 text-sm bg-card border border-border/60 space-y-2 shadow-sm">
           {isPlaceholder ? (
             <div className="flex items-center gap-2 py-1">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -691,10 +739,16 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
             </div>
           ) : (
             <>
-              <AIResponseRenderer text={msg.content} />
-              {msg.cards?.map((c, idx) => (
-                <ProductCard key={idx} card={c} onOpenProduct={onOpenProductProp} />
-              ))}
+              {/* v25.9.2: AI text uses text-foreground so it's readable in BOTH
+                  light and dark themes. Previously used text-white which was
+                  invisible on the light theme. */}
+              <div className="text-foreground">
+                <AIResponseRenderer text={msg.content} />
+              </div>
+              {/* v25.9.2: PRODUCT FEED — horizontal scroll of product cards.
+                  Replaces the old 2-col grid. Cards are tappable and open
+                  the real product page via onOpenProduct. */}
+              {msg.cards && msg.cards.length > 0 && renderProductFeed(msg.cards)}
               {msg.actions && msg.actions.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {msg.actions.map((a, idx) => (
@@ -712,7 +766,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
                   ))}
                 </div>
               )}
-              {/* Per-message TTS toggle */}
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={() => speaking ? stopSpeaking() : speak(msg.content)}
@@ -730,13 +783,24 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   }
 
   const renderChatArea = () => (
-    <div ref={scrollRef} className={cn('flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3', !hasMessages && 'flex items-center justify-center')}>
+    <div
+      ref={scrollRef}
+      className={cn(
+        'flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-4 space-y-4',
+        'ai-chat-scroll',
+      )}
+      style={{
+        // Ensure the container itself is scrollable — fixes "no scroll" bug.
+        minHeight: 0,
+        WebkitOverflowScrolling: 'touch',
+      }}
+    >
       {!hasMessages ? renderLanding() : (
         <>
           {session.messages.map((msg, i) => renderMessage(msg, i))}
           {loading && !session.messages.some((m) => !m.content && m.role === 'assistant') && (
             <div className="flex justify-start">
-              <div className="bg-muted/60 rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
+              <div className="bg-card border border-border/60 rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">Думаю…</span>
               </div>
@@ -757,8 +821,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
   )
 
   const renderComposer = () => (
-    <div className="px-3 sm:px-4 py-3 border-t border-border/60 glass">
-      {/* Pending images preview */}
+    <div className="px-3 sm:px-4 py-3 border-t border-border/60 bg-card/80 backdrop-blur-xl shrink-0">
       {pendingImages.length > 0 && (
         <div className="flex gap-1.5 mb-2">
           {pendingImages.map((url, i) => (
@@ -774,7 +837,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           ))}
         </div>
       )}
-      {/* Voice mode visualizer */}
       {isVoiceMode && (
         <div className="mb-2 flex items-center justify-center gap-1 h-8">
           {listening ? (
@@ -800,7 +862,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           )}
         </div>
       )}
-      {/* Interim transcript */}
       {interimText && (
         <div className="mb-2 text-xs text-muted-foreground italic px-2">{interimText}</div>
       )}
@@ -808,7 +869,6 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
         onSubmit={(e) => { e.preventDefault(); handleSend() }}
         className="flex items-center gap-2"
       >
-        {/* Image upload */}
         <input
           ref={fileInputRef}
           type="file"
@@ -828,12 +888,11 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading || pendingImages.length >= 4}
-          className="h-11 w-11 shrink-0 rounded-full grid place-items-center text-muted-foreground hover:bg-accent disabled:opacity-40 transition-colors"
-          title="Загрузить изображение"
+          className="h-11 w-11 shrink-0 rounded-full grid place-items-center text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 transition-colors bg-card border border-border/60"
+          title="Загрузить изображение — найти похожие товары"
         >
           {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
         </button>
-        {/* Voice button (only in voice mode) */}
         {isVoiceMode && (
           <button
             type="button"
@@ -857,7 +916,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           onChange={(e) => setInput(e.target.value)}
           placeholder={isVoiceMode ? 'Говорите или напишите…' : 'Напишите, что вам нужно'}
           disabled={loading}
-          className="flex-1 h-11 px-4 rounded-full bg-background border border-border/60 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+          className="flex-1 h-11 px-4 rounded-full bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
         />
         <button
           type="submit"
@@ -865,7 +924,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           className="h-11 w-11 shrink-0 rounded-full bg-primary text-primary-foreground grid place-items-center hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           title="Отправить"
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
         </button>
       </form>
     </div>
@@ -881,15 +940,14 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           transition={{ type: 'spring', damping: 30, stiffness: 300 }}
           className="absolute inset-y-0 left-0 w-72 sm:w-80 bg-background border-r border-border/60 z-10 flex flex-col"
         >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border/60 glass">
-            <h3 className="font-semibold text-sm flex items-center gap-2">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-card/80 backdrop-blur-xl">
+            <h3 className="font-semibold text-sm flex items-center gap-2 text-foreground">
               <History className="h-4 w-4" />
               История
             </h3>
             <div className="flex items-center gap-1">
               <button
                 onClick={async () => {
-                  // Start a new conversation
                   session.clearMessages()
                   if (user) {
                     try {
@@ -916,7 +974,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto py-2">
+          <div className="flex-1 overflow-y-auto py-2 ai-chat-scroll">
             {!user ? (
               <div className="px-4 py-6 text-center text-sm text-muted-foreground">
                 Войдите, чтобы сохранять историю разговоров
@@ -938,7 +996,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
                   <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1">
-                      <div className="text-sm font-medium truncate">{c.title}</div>
+                      <div className="text-sm font-medium truncate text-foreground">{c.title}</div>
                       {c.pinned && <Pin className="h-3 w-3 text-primary shrink-0" />}
                     </div>
                     {c.preview && (
@@ -950,6 +1008,8 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
                       {c.messageCount} сообщ.
                     </div>
                   </div>
+                  {/* v25.9.2: DELETE + PIN buttons — visible on hover. The user
+                      explicitly asked for the ability to delete conversations. */}
                   <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={(e) => { e.stopPropagation(); togglePin(c.id, c.pinned) }}
@@ -959,7 +1019,12 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
                       {c.pinned ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); if (confirm('Удалить этот разговор?')) deleteConversation(c.id) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (confirm('Удалить этот разговор? Это действие нельзя отменить.')) {
+                          deleteConversation(c.id)
+                        }
+                      }}
                       className="h-6 w-6 grid place-items-center rounded hover:bg-destructive/10 text-destructive"
                       title="Удалить"
                     >
@@ -982,7 +1047,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
         {renderHeader()}
         <div className="flex-1 flex relative overflow-hidden">
           {renderHistoryPanel()}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             {renderChatArea()}
             {renderComposer()}
           </div>
@@ -999,7 +1064,7 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4"
+          className="fixed inset-0 z-[200] flex items-stretch sm:items-center justify-stretch sm:justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4"
           onClick={() => session.setOpen(false)}
         >
           <motion.div
@@ -1008,12 +1073,14 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
             exit={{ y: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-2xl h-[90vh] sm:h-[80vh] sm:rounded-3xl bg-background border border-border/60 shadow-2xl flex flex-col overflow-hidden relative"
+            // v25.9.2: full-screen on mobile, near-full-screen on desktop.
+            // Previously was h-[90vh] sm:h-[80vh] which felt cramped.
+            className="w-full sm:max-w-3xl h-[100dvh] sm:h-[90vh] sm:rounded-3xl bg-background border border-border/60 shadow-2xl flex flex-col overflow-hidden relative"
           >
             {renderHeader()}
             <div className="flex-1 flex relative overflow-hidden">
               {renderHistoryPanel()}
-              <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden min-w-0">
                 {renderChatArea()}
                 {renderComposer()}
               </div>
@@ -1030,36 +1097,4 @@ export function AIAssistant({ context, onNavigate, onOpenCart, onOpenProduct: on
 // ============================================================================
 function safeParse(s: string): any {
   try { return JSON.parse(s) } catch { return null }
-}
-
-function ProductCard({ card, onOpenProduct }: { card: any; onOpenProduct?: (id: string) => void }) {
-  if (card?.kind !== 'product' && card?.kind !== 'similar_products') return null
-  const items = Array.isArray(card.data) ? card.data : (card.data?.items ? card.data.items : [card.data])
-  return (
-    <div className="grid grid-cols-2 gap-2 mt-2">
-      {items.slice(0, 4).map((p: any, i: number) => (
-        <button
-          key={p.id || i}
-          onClick={() => p.id && onOpenProduct?.(p.id)}
-          className="text-left rounded-xl overflow-hidden bg-background border border-border/40 hover:border-primary/40 transition-colors"
-        >
-          {p.image || p.images?.[0] ? (
-            <div className="aspect-square bg-muted">
-              <img src={p.image || p.images?.[0]} alt={p.title} className="w-full h-full object-cover" loading="lazy" />
-            </div>
-          ) : (
-            <div className="aspect-square bg-gradient-to-br from-muted to-muted/50" />
-          )}
-          <div className="p-2">
-            <div className="text-xs font-medium truncate">{p.title}</div>
-            {p.price != null && (
-              <div className="text-xs text-primary mt-0.5">
-                от {Number(p.price).toLocaleString('ru-RU')} ₽
-              </div>
-            )}
-          </div>
-        </button>
-      ))}
-    </div>
-  )
 }

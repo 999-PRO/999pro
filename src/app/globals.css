@@ -512,6 +512,29 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+  /* v25.9.2: ai-chat-scroll — theme-aware scrollbar for the AI Agent chat
+     area and history panel. Uses CSS variables so it adapts to light/dark
+     themes automatically. */
+  .ai-chat-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .ai-chat-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .ai-chat-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 4px;
+  }
+  .ai-chat-scroll::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+  .ai-chat-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+    -webkit-overflow-scrolling: touch;
+  }
+
   /* custom-scroll — thin, dark-themed scrollbar for overlay panels (dark bg) */
   .custom-scroll::-webkit-scrollbar {
     width: 6px;

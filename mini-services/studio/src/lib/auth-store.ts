@@ -265,6 +265,20 @@ export const useAuthStore = create<AuthState>()(
         isAuthenticated: s.isAuthenticated,
         isAdmin: s.isAdmin,
       }) as Pick<AuthState, 'user' | 'token' | 'setupToken' | 'isAuthenticated' | 'isAdmin'>,
+      // v25.9.1: re-derive isAuthenticated from (token && user) on hydration
+      // — fixes the "admin logged in but Studio says 'register'" bug.
+      merge: (persistedState, currentState) => {
+        const ps = (persistedState || {}) as Partial<AuthState>
+        const token = ps.token ?? currentState.token
+        const user = ps.user ?? currentState.user
+        const derived = !!token && !!user
+        return {
+          ...currentState,
+          ...ps,
+          isAuthenticated: derived,
+          isAdmin: derived && user?.role === 'admin',
+        }
+      },
     },
   ),
 )

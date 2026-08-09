@@ -364,6 +364,14 @@ export const useAuthStore = create<AuthState>()(
       // (sets isAuthenticated=false). So the worst case is a 200ms window
       // where the UI shows the authenticated state before being logged out
       // — acceptable trade-off for working comments.
+      //
+      // v25.9.1 (admin chat/reviews fix): the previous `partialize` dropped
+      // `isAuthenticated` on hydration in some edge cases (Zustand persist
+      // merges shallowly, so nested updates could lose the flag). The
+      // companion `merge` function below forces `isAuthenticated` to be
+      // re-derived from `(token && user)` on every hydration — this is the
+      // single source of truth. The persisted `isAuthenticated` is kept as
+      // a hint but the merge overrides it.
       partialize: (s) => ({
         user: s.user,
         token: s.token,
@@ -375,6 +383,29 @@ export const useAuthStore = create<AuthState>()(
         // verification modal doesn't lose the stashed token.
         pendingVerificationToken: s.pendingVerificationToken,
       }) as Pick<AuthState, 'user' | 'token' | 'isAuthenticated' | 'setupToken' | 'pendingVerificationToken'>,
+      // v25.9.1: custom merge — re-derive `isAuthenticated` from token+user
+      // so the flag is always consistent with the actual session state.
+      // This fixes the "admin logged in but chat/reviews say 'register'"
+      // bug where `isAuthenticated` was false even though token+user were
+      // present in the store after a page reload.
+      merge: (persistedState, currentState) => {
+        const ps = (persistedState || {}) as Partial<AuthState>
+        const token = ps.token ?? currentState.token
+        const user = ps.user ?? currentState.user
+        const setupToken = ps.setupToken ?? currentState.setupToken
+        // Authenticated = has a real JWT (not just setupToken). setupToken
+        // alone means mid-TOTP-setup — admin can call TOTP endpoints but
+        // NOT chat/reviews endpoints.
+        const derived = !!token && !!user
+        return {
+          ...currentState,
+          ...ps,
+          // Override the persisted flag with the derived value. If fetchMe
+          // later fails with 401, the store will logout (set false).
+          isAuthenticated: derived,
+          isInitialized: currentState.isInitialized,
+        }
+      },
     },
   ),
 )
