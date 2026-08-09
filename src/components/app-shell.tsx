@@ -181,7 +181,6 @@ export function AppShell({
       <AIAssistant
         context={view}
         onNavigate={onNavigate}
-        onOpenProduct={(id) => onNavigate(`product:${id}`)}
         onOpenCart={() => setCartOpen(true)}
       />
       </div>

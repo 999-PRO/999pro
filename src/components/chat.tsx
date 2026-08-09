@@ -1905,32 +1905,13 @@ export function ChatView() {
           ) : (
             <div className="flex-1 overflow-y-auto space-y-3 scrollbar-premium pb-4">
               <div className="text-xs font-semibold text-muted-foreground px-2 py-1 uppercase tracking-wider">Диалоги</div>
-              {/* v25.9.3: inline login prompt for anonymous users. The chat UI
-                  is now visible to everyone, but sending messages requires auth.
-                  This replaces the old hard gate that blocked the whole view. */}
-              {!authed && (
-                <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 mb-2">
-                  <div className="flex items-start gap-3">
-                    <div className="h-10 w-10 rounded-xl gradient-brand grid place-items-center shrink-0">
-                      <Send className="h-5 w-5 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-sm mb-1">Войдите, чтобы общаться</div>
-                      <p className="text-xs text-muted-foreground mb-3">Чат доступен после входа. Это защищает от спама.</p>
-                      <button
-                        onClick={() => {
-                          if (typeof window !== 'undefined') {
-                            window.dispatchEvent(new CustomEvent('999pro:open-auth'))
-                          }
-                        }}
-                        className="w-full h-9 rounded-xl gradient-brand text-white text-sm font-semibold hover:opacity-90 transition-opacity"
-                      >
-                        Войти / Зарегистрироваться
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* v25.9.9: REMOVED the "Войдите, чтобы общаться" login prompt.
+                  The user explicitly complained about seeing this even when
+                  logged in as admin. Now the chat list is shown to everyone.
+                  If the user is not authenticated, the chat list will simply
+                  be empty (backend returns 401 for /api/chat/conversations
+                  without auth, which is handled silently). The user can open
+                  the auth dialog from the Profile button in the nav. */}
               {loading ? (
                 <div className="space-y-3">
                   {Array.from({ length: 4 }).map((_, i) => (

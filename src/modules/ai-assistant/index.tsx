@@ -347,6 +347,18 @@ export function AIAssistant({
       setUploading(true)
       setError(null)
       try {
+        // v25.9.9: client-side validation — check file type and size BEFORE
+        // uploading. This gives the user immediate feedback without a round-trip.
+        if (!file.type.startsWith('image/')) {
+          setError('Можно загружать только изображения (JPG, PNG, WebP, GIF)')
+          setUploading(false)
+          return
+        }
+        if (file.size > 50 * 1024 * 1024) {
+          setError('Файл слишком большой (максимум 50 МБ)')
+          setUploading(false)
+          return
+        }
         const form = new FormData()
         form.append('file', file)
         // v25.9.7: read token from both the auth store AND localStorage (the
@@ -370,7 +382,7 @@ export function AIAssistant({
         })
         if (!resp.ok) {
           const errData = await resp.json().catch(() => ({}))
-          throw new Error(errData?.error || `Upload failed (${resp.status})`)
+          throw new Error(errData?.error || `Загрузка не удалась (${resp.status})`)
         }
         const data = await resp.json()
         if (data?.url) {
@@ -568,19 +580,17 @@ export function AIAssistant({
   // ----- 12. Open product — closes AI overlay first, then dispatches event -----
   const openProduct = useCallback((productId: string) => {
     if (!productId) return
-    // v25.9.4: close the AI overlay so the product overlay is visible behind.
-    // Without this, the AI overlay (z-200) covers the product overlay (z-50).
-    if (!inline) {
-      session.setOpen(false)
-    }
-    // Stop any ongoing speech/listening
+    // v25.9.9: Stop any ongoing speech/listening FIRST.
     stopSpeaking()
     continuousVoiceRef.current = false
     if (recognitionRef.current) {
       try { recognitionRef.current.stop() } catch {}
     }
-    // Dispatch the global event — main app's page.tsx listens and opens the
-    // product overlay. On /ai route, the page navigates back to /?product=id.
+    // v25.9.9: dispatch the open-product event IMMEDIATELY (before closing AI).
+    // The main app's page.tsx listens for this event and opens the product
+    // overlay (z-350) which is ABOVE the AI overlay (z-200). This way the
+    // product appears on top instantly — no white screen, no race condition.
+    // The AI overlay is then closed AFTER the event so it doesn't interfere.
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('999pro:open-product', { detail: { productId } }),
@@ -588,6 +598,13 @@ export function AIAssistant({
     }
     // Also call the prop for AppShell-mounted mode
     onOpenProductProp?.(productId)
+    // Now close the AI overlay (after the product event has been dispatched).
+    // The product overlay (z-350) will be rendered on top of the AI overlay
+    // during the AI's exit animation, then the AI overlay disappears.
+    if (!inline) {
+      // Use setTimeout(0) to ensure the event is processed by page.tsx first.
+      setTimeout(() => session.setOpen(false), 0)
+    }
   }, [inline, session, stopSpeaking, onOpenProductProp])
 
   // ----- Render -----
@@ -992,7 +1009,20 @@ export function AIAssistant({
       className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-4 space-y-4 ai-chat-scroll"
       style={{
         minHeight: 0,
+        // v25.9.9: critical for mobile scroll — without these, iOS Safari
+        // and some Android browsers don't allow vertical drag-scrolling inside
+        // a flex container. `WebkitOverflowScrolling: 'touch'` enables momentum
+        // scrolling on iOS. `touchAction: 'pan-y'` tells the browser to handle
+        // vertical pans as scroll (not as page-level gestures). `overscrollBehavior:
+        // 'contain'` prevents scroll chaining to the parent when the chat area
+        // reaches its scroll boundary.
         WebkitOverflowScrolling: 'touch',
+        touchAction: 'pan-y',
+        overscrollBehavior: 'contain',
+        // `flex: 1` + `minHeight: 0` is the standard recipe for a scrollable
+        // flex child — without minHeight:0 the flex item grows to fit content
+        // and never overflows, so overflow-y:auto has nothing to scroll.
+        flex: '1 1 0%',
       }}
     >
       {!hasMessages ? renderEmptyState() : (
