@@ -831,6 +831,88 @@ export function registerChatHandlers(io: IoServer) {
       },
     )
 
+    // ====== Edit message (v25.9 — previously missing) ======
+    // Allows the sender to edit their own text message within a 48-hour window.
+    // Broadcasts `message:edited` to all conversation participants so the UI
+    // updates in real-time on every device. The `editedAt` column is set so
+    // the message bubble shows an "edited" indicator.
+    socket.on(
+      'message:edit',
+      async (payload: { messageId: string; conversationId: string; content: string }) => {
+        try {
+          if (!payload?.messageId || !payload?.conversationId) return
+          if (typeof payload.content !== 'string') return
+          const trimmed = payload.content.trim()
+          if (!trimmed) {
+            socket.emit('error', { event: 'message:edit', error: 'Content required' })
+            return
+          }
+          if (trimmed.length > 4000) {
+            socket.emit('error', { event: 'message:edit', error: 'Message too long' })
+            return
+          }
+          if (!(await isParticipant(payload.conversationId, userId))) {
+            socket.emit('error', { event: 'message:edit', error: 'Not a participant' })
+            return
+          }
+          const msg = await prisma.message.findUnique({
+            where: { id: payload.messageId },
+            select: { id: true, senderId: true, conversationId: true, createdAt: true, deletedForAll: true, mediaType: true },
+          })
+          if (!msg || msg.conversationId !== payload.conversationId) {
+            socket.emit('error', { event: 'message:edit', error: 'Message not found' })
+            return
+          }
+          if (msg.deletedForAll) {
+            socket.emit('error', { event: 'message:edit', error: 'Message deleted' })
+            return
+          }
+          // Only the sender can edit their own message.
+          if (msg.senderId !== userId) {
+            socket.emit('error', { event: 'message:edit', error: 'Only sender can edit' })
+            return
+          }
+          // 48-hour edit window.
+          const ageMs = Date.now() - msg.createdAt.getTime()
+          if (ageMs > 48 * 60 * 60 * 1000) {
+            socket.emit('error', { event: 'message:edit', error: 'Edit window expired' })
+            return
+          }
+          // Run moderation on the new content (same as send).
+          try {
+            const mod = await moderateContent(trimmed, {
+              userId,
+              targetType: 'message',
+              conversationId: payload.conversationId,
+            })
+            if (!mod.allowed) {
+              socket.emit('message:blocked', {
+                tempId: payload.messageId,
+                reason: mod.reason,
+                severity: mod.severity,
+                categories: mod.categories,
+              })
+              return
+            }
+          } catch { /* non-critical */ }
+          const updated = await prisma.message.update({
+            where: { id: msg.id },
+            data: { content: trimmed, editedAt: new Date() },
+            include: {
+              sender: { select: userSelect },
+              replyTo: { include: { sender: { select: userSelect } } },
+              forwardedFrom: { include: { sender: { select: userSelect } } },
+            },
+          })
+          const formatted = serialiseMessage(updated, '')
+          // Broadcast to ALL participants (including sender — sender's other tabs need to update).
+          io.to(`conversation:${payload.conversationId}`).emit('message:edited', formatted)
+        } catch (e: any) {
+          socket.emit('error', { event: 'message:edit', error: e?.message || 'Failed to edit message' })
+        }
+      },
+    )
+
     // ========================================================================
     // WEBRTC CALL SIGNALING
     // Socket.IO is used ONLY for signaling (offer/answer/ICE). The actual

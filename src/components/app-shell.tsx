@@ -174,10 +174,14 @@ export function AppShell({
       {/* v18.5: AI Assistant — premium floating button + overlay. Available
           on every view (home, catalog, chat, audio hub, video hub, media hub,
           studio, profile, settings, …). Pass the current view as context so
-          DeepSeek gets page-aware hints. */}
+          DeepSeek gets page-aware hints.
+          v25.9: AI now uses the Zustand session store, so the conversation
+          persists across navigation. The popup stays mounted in AppShell;
+          a dedicated /ai route also exists for full-page access. */}
       <AIAssistant
         context={view}
         onNavigate={onNavigate}
+        onOpenProduct={(id) => onNavigate(`product:${id}`)}
         onOpenCart={() => setCartOpen(true)}
       />
       </div>

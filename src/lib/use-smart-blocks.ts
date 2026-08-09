@@ -35,6 +35,21 @@ function notify() {
   for (const sub of subscribers) sub()
 }
 
+// v25.9 fix: invalidate the desktop smart-blocks cache when Studio broadcasts
+// `999pro:products-changed`. Previously, desktop home SmartSections kept showing
+// stale products for up to 60 seconds after a Studio save because the cache had
+// no invalidation hook. Mobile's <SmartBlocks> already invalidated correctly.
+if (typeof window !== 'undefined') {
+  const invalidate = () => {
+    cache.data = null
+    cache.fetchedAt = 0
+    cache.error = null
+    // Trigger a fresh fetch so subscribers immediately see updated products.
+    fetchBlocks().catch(() => {/* error already in cache */})
+  }
+  window.addEventListener('999pro:products-changed', invalidate)
+}
+
 function fetchBlocks(): Promise<SmartBlocksData> {
   // If we have fresh data, return it immediately.
   const now = Date.now()

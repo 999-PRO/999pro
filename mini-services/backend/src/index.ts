@@ -479,12 +479,19 @@ app.use('/api', (req, res, next) => {
     res.set('Pragma', 'no-cache')
     res.set('Expires', '0')
   } else if (url.startsWith('/api/products/smart/')) {
-    res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
+    // v25.9: no-cache so Studio-driven product changes appear immediately.
+    res.set('Cache-Control', 'no-cache, must-revalidate')
   } else if (url.startsWith('/api/products')) {
-    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
+    // v25.9: no-cache so Studio-driven product changes appear immediately.
+    // Previously this was max-age=60 (1 min) which meant catalog updates
+    // took up to 1 minute to appear after a Studio save. Combined with
+    // realtime socket invalidation on the client, this now reflects instantly.
+    res.set('Cache-Control', 'no-cache, must-revalidate')
   // v12.3.1: /api/stories cache rule RESTORED (Stories module is back).
+  // v25.9: switched from max-age=60 to no-cache so Studio changes appear
+  // instantly — same fix as /api/products above.
   } else if (url.startsWith('/api/stories')) {
-    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
+    res.set('Cache-Control', 'no-cache, must-revalidate')
   } else if (url.startsWith('/api/banners')) {
     // v24.3: no-cache so banner changes in Studio appear immediately.
     // Previously this was max-age=300 (5 min browser cache) which meant
@@ -492,9 +499,10 @@ app.use('/api', (req, res, next) => {
     // content should never be aggressively cached.
     res.set('Cache-Control', 'no-cache, must-revalidate')
   } else if (url.startsWith('/api/info-pages')) {
-    // Public info pages — cache for 5 min, but allow stale-while-revalidate
-    // so updates in Studio appear quickly without forcing a full refetch.
-    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
+    // v25.9: no-cache so info-page edits in Studio appear immediately.
+    // Previously this was max-age=300 (5 min) which meant edits to legal,
+    // privacy, about pages took up to 5 minutes to reflect on the site.
+    res.set('Cache-Control', 'no-cache, must-revalidate')
   } else if (url.startsWith('/api/settings/')) {
     // v8-audit-fix: no-cache so changes in Studio appear immediately in the app
     res.set('Cache-Control', 'no-cache, must-revalidate')

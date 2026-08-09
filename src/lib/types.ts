@@ -245,6 +245,9 @@ export interface Message {
   // messages. When set, the message will be auto-deleted for everyone at
   // this timestamp by the backend scheduler.
   selfDestructAt?: string | null
+  // v25.9: editedAt — when set (ISO string), the message was edited by its
+  // sender. UI shows an "изменено" indicator next to the timestamp.
+  editedAt?: string | null
   // v18.6: optimistic-upload flags. When `isUploading` is true, the message
   // is shown in the chat list immediately with a spinner badge; the mediaUrl
   // points to a local blob: URL while the real upload is in flight. Once the

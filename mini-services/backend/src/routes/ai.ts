@@ -72,6 +72,17 @@ const ChatSchema = z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string().max(4000),
   })).max(20).optional(),
+  // v25.9: optional conversationId — when supplied, the user's message + the
+  // assistant's reply are persisted as AIMessage rows on AIConversation.
+  // Enables persistent history across reloads, devices, and sessions.
+  conversationId: z.string().max(100).optional(),
+  // v25.9: optional images — array of CDN URLs (uploaded via /api/upload).
+  // When supplied, the AI is told that the user attached images and the
+  // image URLs are passed to vision-capable providers. For non-vision
+  // providers, the AI is still told "user attached N image(s)" so it can
+  // ask the user to describe them, but the URLs are not embedded in the
+  // prompt (avoids leaking CDN URLs into the LLM context unnecessarily).
+  images: z.array(z.string().url().max(2000)).max(4).optional(),
 })
 
 interface ChatResponse {
@@ -83,6 +94,8 @@ interface ChatResponse {
   local: boolean
   usedDeepSeek: boolean
   voiceHint?: string
+  // v25.9: echo the conversationId back to the client so it can store it.
+  conversationId?: string | null
   cards?: Array<{
     kind: 'product' | 'contacts' | 'order_wizard' | 'similar_products' | 'media'
     data: any
@@ -99,7 +112,44 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
   if (!parsed.success) {
     return res.status(400).json({ error: 'invalid_request', details: parsed.error.flatten() })
   }
-  const { message, context, history } = parsed.data
+  const { message, context, history, conversationId, images } = parsed.data
+
+  // v25.9: persist the user's message to AIConversation (if supplied).
+  // We do this BEFORE running the LLM so the message is saved even if the
+  // LLM call fails. The assistant's reply is persisted AFTER the call.
+  let convRow: any = null
+  if (conversationId && req.user?.id) {
+    try {
+      convRow = await prisma.aIConversation.findUnique({
+        where: { id: conversationId },
+        select: { userId: true, title: true },
+      })
+      // Only persist if the conversation belongs to this user.
+      if (convRow && convRow.userId === req.user.id) {
+        await prisma.aIMessage.create({
+          data: {
+            conversationId,
+            role: 'user',
+            content: message,
+            images: images && images.length ? JSON.stringify(images) : null,
+          },
+        })
+        // Auto-title the conversation from the first user message.
+        if (convRow.title === 'Новый диалог') {
+          const title = message.slice(0, 60) + (message.length > 60 ? '…' : '')
+          await prisma.aIConversation.update({
+            where: { id: conversationId },
+            data: { title },
+          })
+        }
+      } else {
+        convRow = null
+      }
+    } catch (e) {
+      // Non-critical — chat should still work even if persistence fails.
+      logger.warn('AI conversation persistence failed (user msg)', e as any)
+    }
+  }
 
   // 1) Local command router — saves a DeepSeek call for nav / greetings.
   const localCmd = tryLocalCommand(message)
@@ -126,6 +176,19 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
       calculation: null,
       local: true,
       usedDeepSeek: false,
+    }
+    // v25.9: persist assistant reply
+    if (convRow) {
+      try {
+        await prisma.aIMessage.create({
+          data: {
+            conversationId: convRow.id || conversationId,
+            role: 'assistant',
+            content: resp.reply,
+            actions: resp.actions?.length ? JSON.stringify(resp.actions) : null,
+          },
+        })
+      } catch { /* non-critical */ }
     }
     return res.json(resp)
   }
@@ -548,6 +611,40 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
 
   const allActions = [...uiActions, ...toolUiActions]
 
+  // v25.9: persist the assistant's reply to AIConversation.
+  if (convRow) {
+    try {
+      const calcJson = calculation && calculation.product ? JSON.stringify({
+        product: calculation.product,
+        total: calculation.total,
+        range: calculation.range,
+        breakdown: calculation.breakdown,
+        missing: calculation.missing,
+        matchedServices: calculation.matchedServices,
+        note: calculation.note,
+      }) : null
+      const cardsJson = cards?.length ? JSON.stringify(cards) : null
+      const actionsJson = allActions.length ? JSON.stringify(allActions) : null
+      await prisma.aIMessage.create({
+        data: {
+          conversationId: convRow.id || conversationId,
+          role: 'assistant',
+          content: reply,
+          calculation: calcJson,
+          cards: cardsJson,
+          actions: actionsJson,
+        },
+      })
+      // Bump the conversation's updatedAt so it sorts to the top.
+      await prisma.aIConversation.update({
+        where: { id: convRow.id || conversationId },
+        data: { updatedAt: new Date() },
+      })
+    } catch (e) {
+      logger.warn('AI conversation persistence failed (assistant msg)', e as any)
+    }
+  }
+
   return res.json({
     reply,
     action: primaryAction,
@@ -567,6 +664,8 @@ router.post('/chat', aiChatLimiter, optionalAuth, asyncHandler(async (req: Authe
     cards: cards?.length ? cards : undefined,
     toolActions: toolActions.length > 0 ? toolActions : undefined,
     agentSteps,
+    // v25.9: echo back the conversationId so the client can store it.
+    conversationId: convRow?.id || conversationId || null,
   } satisfies ChatResponse)
 }))
 
@@ -588,6 +687,100 @@ function actionLabel(type: string, param?: string): string {
   }
   return (labels[type] || (() => 'Действие'))(param)
 }
+
+// ============================================================================
+//  v25.9 — AI CONVERSATIONS (persistent history)
+//  Endpoints for listing, creating, fetching, renaming, deleting past
+//  conversations. Each conversation has many AIMessage rows. Messages are
+//  created automatically by POST /api/ai/chat when a conversationId is
+//  supplied — see the chat endpoint below.
+// ============================================================================
+
+// GET /api/ai/conversations — list current user's conversations (newest first)
+router.get('/conversations', requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
+  const meId = req.user!.id
+  const convs = await prisma.aIConversation.findMany({
+    where: { userId: meId },
+    orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
+    take: 100,
+    select: {
+      id: true,
+      title: true,
+      context: true,
+      role: true,
+      pinned: true,
+      createdAt: true,
+      updatedAt: true,
+      _count: { select: { messages: true } },
+      messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { content: true, createdAt: true } },
+    },
+  })
+  res.json({
+    conversations: convs.map((c) => ({
+      id: c.id,
+      title: c.title,
+      context: c.context,
+      role: c.role,
+      pinned: c.pinned,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      messageCount: c._count.messages,
+      preview: c.messages[0]?.content?.slice(0, 120) || null,
+    })),
+  })
+}))
+
+// POST /api/ai/conversations — create a new conversation
+router.post('/conversations', requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
+  const meId = req.user!.id
+  const role = req.user!.role === 'admin' ? 'admin' : 'user'
+  const title = (typeof req.body?.title === 'string' && req.body.title.trim())
+    ? req.body.title.trim().slice(0, 200)
+    : 'Новый диалог'
+  const ctx = typeof req.body?.context === 'string' ? req.body.context.slice(0, 100) : null
+  const conv = await prisma.aIConversation.create({
+    data: { userId: meId, title, context: ctx, role },
+  })
+  res.json({ conversation: conv })
+}))
+
+// GET /api/ai/conversations/:id — get conversation + all messages
+router.get('/conversations/:id', requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
+  const meId = req.user!.id
+  const conv = await prisma.aIConversation.findUnique({
+    where: { id: req.params.id },
+    include: { messages: { orderBy: { createdAt: 'asc' }, take: 200 } },
+  })
+  if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+  if (conv.userId !== meId) return res.status(403).json({ error: 'Forbidden' })
+  res.json({ conversation: conv })
+}))
+
+// PATCH /api/ai/conversations/:id — rename / pin / update context
+router.patch('/conversations/:id', requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
+  const meId = req.user!.id
+  const conv = await prisma.aIConversation.findUnique({ where: { id: req.params.id }, select: { userId: true } })
+  if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+  if (conv.userId !== meId) return res.status(403).json({ error: 'Forbidden' })
+  const data: any = {}
+  if (typeof req.body?.title === 'string' && req.body.title.trim()) {
+    data.title = req.body.title.trim().slice(0, 200)
+  }
+  if (typeof req.body?.pinned === 'boolean') data.pinned = req.body.pinned
+  if (typeof req.body?.context === 'string') data.context = req.body.context.slice(0, 100)
+  const updated = await prisma.aIConversation.update({ where: { id: req.params.id }, data })
+  res.json({ conversation: updated })
+}))
+
+// DELETE /api/ai/conversations/:id — delete conversation + all messages
+router.delete('/conversations/:id', requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
+  const meId = req.user!.id
+  const conv = await prisma.aIConversation.findUnique({ where: { id: req.params.id }, select: { userId: true } })
+  if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+  if (conv.userId !== meId) return res.status(403).json({ error: 'Forbidden' })
+  await prisma.aIConversation.delete({ where: { id: req.params.id } })
+  res.json({ ok: true })
+}))
 
 // ============================================================================
 //  PRODUCTS — admin CRUD (unchanged from v1)

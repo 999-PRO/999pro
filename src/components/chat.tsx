@@ -259,6 +259,23 @@ export function ChatView() {
     y: number
     message: Message | null
   }>({ open: false, x: 0, y: 0, message: null })
+  // v25.9: editing message — when set, the composer switches to edit mode
+  // for the referenced message. The user can save (PATCH) or cancel.
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null)
+  // When edit mode is entered, pre-fill the textarea with the message content
+  // and focus it so the user can immediately start editing.
+  useEffect(() => {
+    if (editingMessage) {
+      setText(editingMessage.content || '')
+      setTimeout(() => {
+        textareaRef.current?.focus()
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto'
+          textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
+        }
+      }, 50)
+    }
+  }, [editingMessage])
 
   // Call state lives in the global CallManager (mounted in AppShell) so that
   // calls work from any view, not just chat. ChatView only triggers outgoing
@@ -580,7 +597,7 @@ export function ChatView() {
   // Socket.IO — message handlers (call events are handled globally by CallManager)
   const {
     isConnected, send, startTyping, stopTyping, startVoiceRecording, stopVoiceRecording, markRead,
-    deleteMessage, forwardMessage: socketForward,
+    deleteMessage, editMessage, forwardMessage: socketForward,
   } = useSocket({
     conversationId: activeConv?.id,
     // v25.4 (chat audit GAP-1): always enable socket when authed so the
@@ -670,6 +687,26 @@ export function ChatView() {
         )
       }
     },
+    // v25.9: edit support — when another participant (or our other tab) edits
+    // a message, update it in place. The editedAt timestamp is included so the
+    // message bubble can show an "изменено" indicator.
+    onMessageEdited: (m) => {
+      setMessages((cur) =>
+        cur.map((x) =>
+          x.id === m.id
+            ? { ...x, ...m, editedAt: m.editedAt ?? new Date().toISOString() }
+            : x,
+        ),
+      )
+      // Also update the conversation list preview if this was the last message.
+      setConversations((cur) =>
+        cur.map((c) =>
+          c.id === m.conversationId && c.lastMessage?.id === m.id
+            ? { ...c, lastMessage: { ...c.lastMessage, content: m.content } }
+            : c,
+        ),
+      )
+    },
     onMessageForwarded: (payload) => {
       toast.success(`Переслано в ${payload.count} чат(ов)`)
       refreshConversations()
@@ -744,6 +781,16 @@ export function ChatView() {
         if (cur.some((c) => c.id === newConv.id)) return cur
         return [newConv, ...cur]
       })
+    },
+    // v25.9: when a conversation is hard-deleted (admin deleted it, or both
+    // participants soft-deleted), remove it from the chat list immediately.
+    onConversationDeleted: (payload) => {
+      if (!payload?.conversationId) return
+      setConversations((cur) => cur.filter((c) => c.id !== payload.conversationId))
+      // If the deleted conversation was active, close it.
+      if (activeConv?.id === payload.conversationId) {
+        setActiveConv(null)
+      }
     },
   })
 
@@ -846,8 +893,36 @@ export function ChatView() {
 
   const sendText = () => {
     if (!activeConv || !text.trim()) return
-    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const content = text.trim()
+
+    // v25.9: edit mode — if editingMessage is set, call editMessage instead
+    // of send. The backend validates ownership + 48h window + moderation,
+    // then broadcasts `message:edited` to all participants. The local state
+    // is updated via the onMessageEdited handler.
+    if (editingMessage) {
+      if (content === (editingMessage.content || '')) {
+        // No change — just cancel.
+        setEditingMessage(null)
+        setText('')
+        return
+      }
+      // Optimistic local update so the user sees the change immediately.
+      setMessages((cur) =>
+        cur.map((m) =>
+          m.id === editingMessage.id
+            ? { ...m, content, editedAt: new Date().toISOString() }
+            : m,
+        ),
+      )
+      editMessage(editingMessage.id, activeConv.id, content)
+      setEditingMessage(null)
+      setText('')
+      if (textareaRef.current) textareaRef.current.style.height = 'auto'
+      haptic.tap()
+      return
+    }
+
+    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     // v16.2: Capture replyTo BEFORE clearing, then clear IMMEDIATELY so any
     // early-return or throw between here and the end of the function cannot
     // leave the reply panel open. The optimistic message + socket payload
@@ -2253,6 +2328,27 @@ export function ChatView() {
               <ReplyPreview message={replyTo} onClose={() => setReplyTo(null)} />
             )}
 
+            {/* v25.9: Edit preview — when editingMessage is set, the composer
+                switches to edit mode. Shows the message being edited with a
+                Save/Cancel UI. The textarea below is pre-filled with the
+                message content; submitting calls editMessage instead of send. */}
+            {editingMessage && (
+              <div className="px-3 pt-2">
+                <div className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2 flex items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground min-w-0 flex-1">
+                    <span className="font-medium text-foreground">Редактирование:</span>{' '}
+                    <span className="truncate">{(editingMessage.content || '').slice(0, 80)}</span>
+                  </div>
+                  <button
+                    onClick={() => setEditingMessage(null)}
+                    className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-accent"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* v16.9.4: Audio Hub draft preview — карточка выбранного трека
                 над полем ввода. Не отправляется автоматически. */}
             {audioDraftTrack && (
@@ -2687,7 +2783,15 @@ export function ChatView() {
         }}
         isFavorite={contextMenu.message ? favorites.isFavorite(contextMenu.message.id) : false}
         onPin={() => toast.info('📌 Закрепление сообщений скоро будет доступно')}
-        onEdit={() => toast.info('✏️ Редактирование сообщений скоро будет доступно')}
+        onEdit={() => {
+          if (contextMenu.message) {
+            // Only allow editing own text messages within 48h (backend will
+            // re-validate, but we skip the menu entry for non-own messages
+            // via canEdit in MessageContextMenu).
+            setEditingMessage(contextMenu.message)
+            setContextMenu((c) => ({ ...c, open: false }))
+          }
+        }}
         onDownload={() => {
           if (contextMenu.message?.mediaUrl) {
             const a = document.createElement('a')

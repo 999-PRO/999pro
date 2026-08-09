@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { Home, LayoutGrid, User, MoreHorizontal, MessageCircle } from 'lucide-react'
+import { Home, LayoutGrid, User, MoreHorizontal, MessageCircle, Sparkles } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useCartStore } from '@/lib/cart-store'
@@ -12,6 +12,8 @@ import { useAudioPlayer } from '@/lib/audio-player-manager'
 import { MediaHubIcon } from '@/components/icons/media-hub-icon'
 // v19.0: module access filtering
 import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
+// v25.9: AI session store — check the on/off toggle before showing the AI button.
+import { useAISession } from '@/modules/ai-assistant/ai-session-store'
 
 // ============================================================================
 //  BottomNav — mobile primary navigation (v25.5, TZ-3 task #10)
@@ -47,6 +49,7 @@ export function BottomNav({
   const unreadTotal = useNotificationsStore((s) => s.unread.total)
   const audioIsPlaying = useAudioPlayer((s) => s.isPlaying)
   const modules = useModuleAccess()
+  const aiEnabled = useAISession((s) => s.enabled)
 
   // v25.5: Build the COMPLETE list of nav items dynamically, then filter by
   // module access. Each item gets `flex-1` so they redistribute evenly when
@@ -54,6 +57,9 @@ export function BottomNav({
   const visibleNav = NAV.filter((item) => isModuleEnabled(modules, item.id))
   const showMediaHub = isModuleEnabled(modules, 'media-hub')
   const showProfile = isModuleEnabled(modules, 'profile')
+  // v25.9: AI button respects both the module-access setting (Studio can
+  // disable AI assistant globally) and the user's on/off toggle.
+  const showAI = isModuleEnabled(modules, 'ai-assistant') && aiEnabled
 
   // v10-native: update the app icon badge when unread count changes.
   useEffect(() => {
@@ -187,6 +193,33 @@ export function BottomNav({
                 )}
               </motion.span>
               <span className="font-medium leading-none">Media</span>
+            </button>
+          )}
+
+          {/* v25.9: AI Agent — separate, prominent button. Available on mobile
+              (was previously desktop-only, which is why "AI missing on mobile"
+              was reported). Respects module-access + user on/off toggle. */}
+          {showAI && (
+            <button
+              onClick={() => {
+                haptic.tap()
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('open-ai-assistant'))
+                }
+              }}
+              className="relative flex flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] transition-colors mobile-nav-item flex-1 min-w-0"
+              aria-label="AI Агент"
+            >
+              <span
+                className="relative grid place-items-center h-9 w-11 rounded-full transition-all"
+                style={{
+                  background:
+                    'linear-gradient(135deg, rgba(99,102,241,0.35) 0%, rgba(168,85,247,0.30) 50%, rgba(217,70,239,0.35) 100%)',
+                }}
+              >
+                <Sparkles className="h-5 w-5 text-indigo-500 dark:text-indigo-300" />
+              </span>
+              <span className="font-medium leading-none">AI</span>
             </button>
           )}
 

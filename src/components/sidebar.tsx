@@ -249,7 +249,11 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
             - inner highlight (top) for depth
             - soft outer glow that pulses gently
             - Sparkles icon with a smooth rotation + scale breathing animation
-              (replaced the pulsing ring which looked too aggressive). */}
+              (replaced the pulsing ring which looked too aggressive).
+            v25.9: button now respects the Studio module-access toggle
+            (admins can disable AI assistant globally) and the user's own
+            on/off toggle (Power icon in the AI header). */}
+        {isModuleEnabled(modules, 'ai-assistant') && (
         <button
           onClick={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('open-ai-assistant'))}
           className="relative h-11 w-11 rounded-2xl grid place-items-center transition-all duration-300 group premium-tooltip-host hover:scale-105 active:scale-95 overflow-hidden"
@@ -310,6 +314,7 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
           </motion.div>
           <span className="premium-tooltip">AI-ассистент</span>
         </button>
+        )}
         {cartCount > 0 && (
           <button
             onClick={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('open-cart'))}

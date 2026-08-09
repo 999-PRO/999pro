@@ -209,40 +209,41 @@ router.get(
       // Admins need to discover users to start chats, so we return the most
       // recently active non-admin users. Privacy: admins are trusted to see
       // isOnline / lastSeen for everyone (matches the existing search branch).
-      if (partnerIds.size === 0) {
-        if (isAdmin) {
-          const recent = await prisma.user.findMany({
-            where: { id: { not: meId }, deletedAt: null, role: 'user' },
-            select: {
-              id: true, username: true, displayName: true, avatar: true,
-              isOnline: true, lastSeen: true, role: true,
-            },
-            orderBy: [{ isOnline: 'desc' }, { lastSeen: 'desc' }],
-            take: limit + offset,
-          })
-          const shapedRecent = recent.map((u) => ({
-            id: u.id,
-            username: u.username,
-            displayName: u.displayName,
-            avatar: u.avatar,
-            isOnline: u.isOnline,
-            lastSeen: u.lastSeen,
-            role: u.role,
-            isSupport: false,
-            hasConversation: false,
-            conversationType: null,
-            lastMessageAt: null,
-          }))
-          return res.json({
-            users: shapedRecent.slice(offset, offset + limit),
-            total: shapedRecent.length,
-            limit,
-            offset,
-          })
-        }
+      //
+      // v25.9 fix: previously the admin-only "recent users" fallback fired
+      // ONLY when `partnerIds.size === 0`. As soon as the admin had a single
+      // conversation, the list collapsed to just existing partners — making
+      // it impossible to discover new users from the contact list. Now admins
+      // ALWAYS get recent users merged in (deduplicated against existing
+      // partners), so the contact list is a useful "start new chat" surface.
+      if (partnerIds.size === 0 && !isAdmin) {
         return res.json({ users: [], total: 0, limit, offset })
       }
-      where.id = { in: [...partnerIds] }
+      if (isAdmin) {
+        // Always include the most recently active non-admin users so the
+        // admin can start new chats without typing a search query.
+        const recent = await prisma.user.findMany({
+          where: { id: { not: meId }, deletedAt: null, role: 'user' },
+          select: {
+            id: true, username: true, displayName: true, avatar: true,
+            isOnline: true, lastSeen: true, role: true,
+          },
+          orderBy: [{ isOnline: 'desc' }, { lastSeen: 'desc' }],
+          take: 50,
+        })
+        // Merge: existing partners first, then recent users (deduped).
+        const partnerList = [...partnerIds]
+        const seen = new Set(partnerList)
+        for (const u of recent) {
+          if (!seen.has(u.id)) {
+            partnerList.push(u.id)
+            seen.add(u.id)
+          }
+        }
+        where.id = { in: partnerList }
+      } else {
+        where.id = { in: [...partnerIds] }
+      }
     }
 
     // Fetch candidate users
@@ -371,55 +372,21 @@ router.get(
         },
       })
 
-      // Step 3: apply the admin filter in JS — hide support conversations
-      // that have NO messages from anyone other than the admin.
-      // (Direct conversations are always shown.)
-      const filtered = allConvs.filter((c) => {
-        if (c.type !== 'support') return true
-        // For support chats: check if there's any message from a non-admin.
-        // We use a separate count query below for accuracy, but for performance
-        // we first check the loaded `messages` (only the last 1). If the last
-        // message is from someone other than me, definitely keep it. If it's
-        // from me or there are no messages, we need a DB count to be sure.
-        return true // keep — we'll filter with a count query next
-      })
+      // Step 3: apply the admin filter in JS.
+      // v25.9 fix: Previously the admin's chat list HID support conversations
+      // where no non-admin had yet sent a message. This meant admins literally
+      // could not see incoming support requests until the user sent a message,
+      // which made admin feel like a "second-class user" in chat. Now we
+      // ALWAYS show support conversations — they may be empty (no messages
+      // yet), but the admin needs to see them to be able to write first.
+      // Direct conversations are always shown.
+      const filtered = allConvs
 
-      // Step 4: for support conversations where the last message is from the
-      // admin (or no messages), do a precise count to decide inclusion.
-      const supportConvIdsToCheck = filtered
-        .filter((c) => c.type === 'support')
-        .filter((c) => {
-          const lastMsg = c.messages[0]
-          return !lastMsg || lastMsg.senderId === meId
-        })
-        .map((c) => c.id)
-
-      const emptySupportIds = new Set<string>()
-      if (supportConvIdsToCheck.length > 0) {
-        // Count messages from non-admin senders in each support conversation.
-        const counts = await prisma.message.groupBy({
-          by: ['conversationId'],
-          where: {
-            conversationId: { in: supportConvIdsToCheck },
-            senderId: { not: meId },
-          },
-          _count: { _all: true },
-        })
-        for (const c of counts) {
-          if (c._count._all === 0) {
-            emptySupportIds.add(c.conversationId)
-          }
-        }
-        // Any support conv ID in supportConvIdsToCheck that did NOT appear in
-        // `counts` has zero non-admin messages → also empty.
-        for (const id of supportConvIdsToCheck) {
-          if (!counts.some((c) => c.conversationId === id)) {
-            emptySupportIds.add(id)
-          }
-        }
-      }
-
-      const finalFiltered = filtered.filter((c) => !emptySupportIds.has(c.id))
+      // v25.9: removed the emptySupportIds filter entirely — admins now see
+      // every support conversation regardless of message count, matching the
+      // user's explicit requirement that "admin must be able to use chat
+      // just like a regular user".
+      const finalFiltered = filtered
 
       // Step 5: sort — support first, then by updatedAt desc.
       finalFiltered.sort((a, b) => {
@@ -1054,6 +1021,98 @@ router.patch(
     if (!isMember) return res.status(403).json({ error: 'Forbidden' })
     await prisma.message.update({ where: { id: msg.id }, data: { isRead: true } })
     res.json({ ok: true })
+  }),
+)
+
+// PATCH /api/chat/messages/:id — edit message content (v25.9)
+// Allows the sender to edit their own text message within a 48-hour window.
+// Mirrors the socket `message:edit` handler so REST clients (curl, mobile
+// fallback, etc.) have the same capability as socket clients.
+router.patch(
+  '/messages/:id',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const meId = req.user!.id
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : ''
+    if (!content) return res.status(400).json({ error: 'Content required' })
+    if (content.length > 4000) return res.status(400).json({ error: 'Message too long' })
+    const msg = await prisma.message.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, senderId: true, conversationId: true, createdAt: true, deletedForAll: true },
+    })
+    if (!msg) return res.status(404).json({ error: 'Message not found' })
+    if (msg.deletedForAll) return res.status(400).json({ error: 'Message deleted' })
+    if (msg.senderId !== meId) return res.status(403).json({ error: 'Only sender can edit' })
+    const ageMs = Date.now() - msg.createdAt.getTime()
+    if (ageMs > 48 * 60 * 60 * 1000) return res.status(400).json({ error: 'Edit window expired' })
+    // Verify participant (defence in depth — sender should always be a participant).
+    const participation = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: msg.conversationId, userId: meId } },
+      select: { id: true },
+    })
+    if (!participation) return res.status(403).json({ error: 'Forbidden' })
+    const updated = await prisma.message.update({
+      where: { id: msg.id },
+      data: { content, editedAt: new Date() },
+      include: {
+        sender: { select: userSelect },
+        replyTo: { include: { sender: { select: userSelect } } },
+        forwardedFrom: { include: { sender: { select: userSelect } } },
+      },
+    })
+    // Broadcast `message:edited` to all participants via socket.
+    try {
+      const { getIo } = await import('../socket/handlers.js')
+      const io = getIo()
+      if (io) {
+        const { serialiseMessage } = await import('../lib/serialisers.js')
+        const formatted = serialiseMessage(updated, '')
+        io.to(`conversation:${msg.conversationId}`).emit('message:edited', formatted)
+      }
+    } catch { /* non-critical */ }
+    res.json({ ok: true, message: updated })
+  }),
+)
+
+// DELETE /api/chat/conversations/:id/messages — clear history (v25.9)
+// Soft-deletes all messages in the conversation for the caller only (adds
+// the caller's userId to each message's `deletedFor` JSON array). Other
+// participants still see the messages. This matches the per-message
+// "delete for me" semantics applied at scale.
+router.delete(
+  '/conversations/:id/messages',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const meId = req.user!.id
+    const convId = req.params.id
+    // Verify the caller is a participant.
+    const participation = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: convId, userId: meId } },
+      select: { id: true },
+    })
+    if (!participation) return res.status(403).json({ error: 'Forbidden' })
+    // Fetch all messages in this conversation.
+    const messages = await prisma.message.findMany({
+      where: { conversationId: convId },
+      select: { id: true, deletedFor: true },
+    })
+    // For each message, add the caller to deletedFor if not already there.
+    // This is O(N) but conversations are bounded (capped at 1000 messages
+    // by the UI's pagination). For very large conversations a batch UPDATE
+    // would be more efficient, but Prisma doesn't support JSON array append
+    // in updateMany — we'd have to drop to raw SQL.
+    for (const m of messages) {
+      let arr: string[] = []
+      try { arr = JSON.parse(m.deletedFor || '[]') } catch { arr = [] }
+      if (!arr.includes(meId)) {
+        arr.push(meId)
+        await prisma.message.update({
+          where: { id: m.id },
+          data: { deletedFor: JSON.stringify(arr) },
+        })
+      }
+    }
+    res.json({ ok: true, cleared: messages.length })
   }),
 )
 

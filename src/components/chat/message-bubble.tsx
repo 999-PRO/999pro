@@ -279,6 +279,8 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
               isOwn ? 'bg-black/40 text-white' : 'bg-black/50 text-white'
             )}>
               {formatTime(message.createdAt)}
+              {/* v25.9: "изменено" indicator on image messages too. */}
+              {message.editedAt && <span className="italic opacity-80">изменено</span>}
               {isOwn && (message.isRead ? <CheckCheck className="h-3 w-3" /> : <Check className="h-3 w-3" />)}
             </div>
           </div>
@@ -363,6 +365,8 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
         {!isImage && (
           <div className="flex items-center gap-1 mt-1 text-[10px] text-muted-foreground">
             {formatTime(message.createdAt)}
+            {/* v25.9: "изменено" indicator — shown when the message was edited. */}
+            {message.editedAt && <span className="italic opacity-80">изменено</span>}
             {isFavorite && <Star className="h-3 w-3 fill-amber-400 text-amber-400" />}
             {isOwn && (message.isRead ? <CheckCheck className="h-3 w-3" /> : <Check className="h-3 w-3" />)}
           </div>
@@ -382,12 +386,18 @@ export const MessageBubble = React.memo(MessageBubbleImpl, (prev, next) => {
   // Only re-render if the message itself changed or ownership changed.
   // Callbacks are stable (useCallback in parent), so we skip comparing them.
   // v12: also compare attachments reference (changes when a new group arrives)
+  // v25.9: also compare editedAt so the "изменено" indicator appears when
+  // a message is edited via the new message:edit socket event.
+  // v25.9: also compare isFavorite so the ⭐ badge toggles without a parent
+  // re-render.
   return (
     prev.message.id === next.message.id &&
     prev.message.content === next.message.content &&
     prev.message.isRead === next.message.isRead &&
     prev.message.deletedForAll === next.message.deletedForAll &&
     prev.message.attachments === next.message.attachments &&
+    prev.message.editedAt === next.message.editedAt &&
+    prev.isFavorite === next.isFavorite &&
     prev.isOwn === next.isOwn
   )
 })

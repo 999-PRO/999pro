@@ -17,6 +17,8 @@ interface UseSocketOptions {
   conversationId?: string
   onMessage?: (m: Message) => void
   onMessageDeleted?: (payload: { messageId: string; conversationId: string; deletedForAll?: boolean; deletedForMe?: boolean }) => void
+  // v25.9: edit support — fired when another participant edits a message.
+  onMessageEdited?: (m: Message) => void
   onMessageForwarded?: (payload: { sourceMessageId: string; count: number }) => void
   onTypingStart?: (data: { conversationId: string; userId: string; username: string }) => void
   onTypingStop?: (data: { conversationId: string; userId: string }) => void
@@ -28,6 +30,9 @@ interface UseSocketOptions {
   onRead?: (data: { conversationId: string; userId: string }) => void
   // v25.6 (chat sync): broadcast when a new conversation is created with this user
   onConversationCreated?: (payload: { conversation: any }) => void
+  // v25.9: broadcast when a conversation is hard-deleted (admin or both
+  // participants soft-deleted). Lets the chat list update in real-time.
+  onConversationDeleted?: (payload: { conversationId: string }) => void
   // Call events
   onCallIncoming?: (payload: { callId: string; conversationId: string; type: 'audio' | 'video'; caller: any }) => void
   onCallStarted?: (payload: { callId: string; conversationId: string }) => void
@@ -97,6 +102,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     conversationId,
     onMessage,
     onMessageDeleted,
+    onMessageEdited,
     onMessageForwarded,
     onTypingStart,
     onTypingStop,
@@ -106,6 +112,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     onUserOffline,
     onRead,
     onConversationCreated,
+    onConversationDeleted,
     onCallIncoming,
     onCallStarted,
     onCallAccepted,
@@ -134,6 +141,7 @@ export function useSocket(options: UseSocketOptions = {}) {
   const handlersRef = useRef({
     onMessage,
     onMessageDeleted,
+    onMessageEdited,
     onMessageForwarded,
     onTypingStart,
     onTypingStop,
@@ -143,6 +151,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     onUserOffline,
     onRead,
     onConversationCreated,
+    onConversationDeleted,
     onCallIncoming,
     onCallStarted,
     onCallAccepted,
@@ -156,6 +165,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     handlersRef.current = {
       onMessage,
       onMessageDeleted,
+      onMessageEdited,
       onMessageForwarded,
       onTypingStart,
       onTypingStop,
@@ -165,6 +175,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       onUserOffline,
       onRead,
       onConversationCreated,
+      onConversationDeleted,
       onCallIncoming,
       onCallStarted,
       onCallAccepted,
@@ -173,7 +184,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       onCallCancelled,
       onCallSignal,
     }
-  }, [onMessage, onMessageDeleted, onMessageForwarded, onTypingStart, onTypingStop, onVoiceRecordingStart, onVoiceRecordingStop, onUserOnline, onUserOffline, onRead, onConversationCreated, onCallIncoming, onCallStarted, onCallAccepted, onCallRejected, onCallEnded, onCallCancelled, onCallSignal])
+  }, [onMessage, onMessageDeleted, onMessageEdited, onMessageForwarded, onTypingStart, onTypingStop, onVoiceRecordingStart, onVoiceRecordingStop, onUserOnline, onUserOffline, onRead, onConversationCreated, onConversationDeleted, onCallIncoming, onCallStarted, onCallAccepted, onCallRejected, onCallEnded, onCallCancelled, onCallSignal])
 
   // Wave 2 (F-BUG-002): split the original single useEffect into two:
   // 1) Socket lifecycle effect — creates/destroys the singleton based on
@@ -208,6 +219,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     const onDisconnect = () => setIsConnected(false)
     const handleMessage = (m: Message) => handlersRef.current.onMessage?.(m)
     const handleMessageDeleted = (d: any) => handlersRef.current.onMessageDeleted?.(d)
+    // v25.9: edit support
+    const handleMessageEdited = (m: Message) => handlersRef.current.onMessageEdited?.(m)
     const handleMessageForwarded = (d: any) => handlersRef.current.onMessageForwarded?.(d)
     const handleTypingStart = (d: any) => handlersRef.current.onTypingStart?.(d)
     const handleTypingStop = (d: any) => handlersRef.current.onTypingStop?.(d)
@@ -217,6 +230,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     const handleOffline = (d: any) => handlersRef.current.onUserOffline?.(d)
     // v25.6 (chat sync): new conversation created with this user
     const handleConversationCreated = (d: any) => handlersRef.current.onConversationCreated?.(d)
+    // v25.9: conversation hard-deleted
+    const handleConversationDeleted = (d: any) => handlersRef.current.onConversationDeleted?.(d)
     const handleRead = (d: any) => handlersRef.current.onRead?.(d)
     const handleCallIncoming = (d: any) => handlersRef.current.onCallIncoming?.(d)
     const handleCallStarted = (d: any) => handlersRef.current.onCallStarted?.(d)
@@ -283,6 +298,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     socket.on('disconnect', onDisconnect)
     socket.on('message:received', handleMessage)
     socket.on('message:deleted', handleMessageDeleted)
+    // v25.9: edit support
+    socket.on('message:edited', handleMessageEdited)
     socket.on('message:forwarded', handleMessageForwarded)
     // v16.9: moderation — when a message is blocked by the system, show a
     // window event so the chat UI can show the user why their message was
@@ -300,6 +317,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     socket.on('user:offline', handleOffline)
     // v25.6 (chat sync): new conversation created with this user
     socket.on('conversation:created', handleConversationCreated)
+    // v25.9: conversation hard-deleted
+    socket.on('conversation:deleted', handleConversationDeleted)
     socket.on('message:read', handleRead)
     socket.on('call:incoming', handleCallIncoming)
     socket.on('call:started', handleCallStarted)
@@ -326,6 +345,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       socket.off('disconnect', onDisconnect)
       socket.off('message:received', handleMessage)
       socket.off('message:deleted', handleMessageDeleted)
+      socket.off('message:edited', handleMessageEdited)
       socket.off('message:forwarded', handleMessageForwarded)
       socket.off('typing:start', handleTypingStart)
       socket.off('typing:stop', handleTypingStop)
@@ -334,6 +354,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       socket.off('user:online', handleOnline)
       socket.off('user:offline', handleOffline)
       socket.off('conversation:created', handleConversationCreated)
+      socket.off('conversation:deleted', handleConversationDeleted)
       socket.off('message:read', handleRead)
       socket.off('call:incoming', handleCallIncoming)
       socket.off('call:started', handleCallStarted)
@@ -506,6 +527,22 @@ export function useSocket(options: UseSocketOptions = {}) {
     socketRef.current?.emit('message:delete', { messageId, conversationId, forEveryone })
   }, [])
 
+  // v25.9: edit message — emits `message:edit` over the socket. The backend
+  // validates ownership + 48-hour window + moderation, then broadcasts
+  // `message:edited` to ALL participants (including the sender's other tabs).
+  // If the socket is disconnected, falls back to PATCH /api/chat/messages/:id.
+  const editMessage = useCallback((messageId: string, conversationId: string, content: string) => {
+    const sock = socketRef.current
+    if (sock && sock.connected) {
+      sock.emit('message:edit', { messageId, conversationId, content })
+      return
+    }
+    // REST fallback
+    void api
+      .patch(`/api/chat/messages/${messageId}`, { json: { content }, auth: true })
+      .catch(() => {/* error surfaced via toast in chat.tsx */})
+  }, [])
+
   const forwardMessage = useCallback((sourceMessageId: string, targetConversationIds: string[]) => {
     socketRef.current?.emit('message:forward', { sourceMessageId, targetConversationIds })
   }, [])
@@ -586,6 +623,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     stopVoiceRecording,
     markRead,
     deleteMessage,
+    editMessage,
     forwardMessage,
     startCall,
     acceptCall,

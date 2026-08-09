@@ -196,6 +196,9 @@ export function serialiseMessage(m: any, viewerId: string) {
     // deleted-for-everyone the timer is moot — return null so the client
     // doesn't show a stale "deletes in X" badge on a deleted bubble.
     selfDestructAt: m.deletedForAll ? null : (m.selfDestructAt ?? null),
+    // v25.9: editedAt — when set, the message was edited by its sender.
+    // UI uses this to show an "изменено" indicator next to the timestamp.
+    editedAt: m.editedAt ?? null,
     createdAt: m.createdAt,
     replyTo: m.replyTo
       ? {

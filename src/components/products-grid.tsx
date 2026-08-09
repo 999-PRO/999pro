@@ -114,6 +114,19 @@ export function ProductsGrid({
     await new Promise((r) => setTimeout(r, 350))
   }, [])
 
+  // v25.9 fix: listen for Studio-driven product changes. When the backend
+  // broadcasts `products:changed` (after a Studio save), `use-socket.ts`
+  // forwards it as a `999pro:products-changed` window event. Bump the seed
+  // so the useEffect above refetches with fresh data. Previously this grid
+  // only refreshed on manual pull-to-refresh.
+  useEffect(() => {
+    const handler = () => {
+      setManualSeed((s) => s + Math.floor(Math.random() * 1_000_000) + 1)
+    }
+    window.addEventListener('999pro:products-changed', handler)
+    return () => window.removeEventListener('999pro:products-changed', handler)
+  }, [])
+
   // Client-side category filter + search + sort (when showCategories is true).
   const filtered = useMemo(() => {
     let out = items

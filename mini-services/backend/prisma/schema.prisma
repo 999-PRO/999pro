@@ -540,6 +540,9 @@ model Message {
   deletedForAll  Boolean  @default(false)
   // v16.8-final: optional self-destruct timer for voice messages.
   selfDestructAt DateTime?
+  // v25.9: editedAt — set when the sender edits the message. UI shows
+  // an "edited" indicator. Null means never edited.
+  editedAt       DateTime?
   createdAt      DateTime @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1418,6 +1421,49 @@ model AIKB_Conversation {
   @@index([userId, createdAt])
   @@index([createdAt])
   @@index([localHandled])
+}
+
+// ============================================================
+//  v25.9 — AI AGENT: PERSISTENT CONVERSATIONS & MESSAGES
+// ============================================================
+// Previously the AI assistant had only an in-memory history (lost on reload)
+// and a flat log table (AIKB_Conversation). The user explicitly requested
+// persistent history, cross-device sync, and the ability to resume old
+// conversations. These two models provide a proper threaded structure.
+
+model AIConversation {
+  id          String   @id @default(cuid())
+  userId      String?
+  title       String   @default("Новый диалог")
+  context     String?  // current app view ("catalog", "chat", etc.)
+  role        String   @default("user") // user | admin | guest
+  pinned      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  messages    AIMessage[]
+
+  @@index([userId, updatedAt])
+  @@index([pinned, updatedAt])
+}
+
+model AIMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String   // user | assistant | tool
+  content        String
+  // Optional structured payload (JSON-encoded):
+  //   - assistant cards (products found)
+  //   - actions (open_catalog, open_product, etc.)
+  //   - calculation result
+  //   - images attached by user (vision)
+  cards          String?
+  actions        String?
+  calculation    String?
+  images         String?
+  createdAt      DateTime @default(now())
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }
 
 // ============================================================
