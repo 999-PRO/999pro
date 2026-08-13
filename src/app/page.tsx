@@ -11,6 +11,7 @@ import { DesktopHome } from '@/components/desktop-home'
 import { SmartBlocks } from '@/components/smart-blocks'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/notifications'
+import { haptic } from '@/lib/haptic'
 import { AnimatePresence } from 'framer-motion'
 import { useNotifications } from '@/lib/use-notifications'
 import { useNotificationsStore } from '@/lib/use-notifications'
@@ -710,9 +711,9 @@ function HomeView({
               SmartBlocks filtering its own blocks based on the same config. */}
           <SmartBlocks onOpenProduct={onOpenProduct} limit={12} />
 
-          {/* Catalog CTA */}
-          <div className="px-4 md:px-6 py-3">
-            <div className="rounded-3xl gradient-soft p-6 md:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          {/* Catalog CTA + Feed CTA — side-by-side on desktop, stacked on mobile. */}
+          <div className="px-4 md:px-6 py-3 grid sm:grid-cols-2 gap-3">
+            <div className="rounded-2xl gradient-soft p-6 md:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <div className="flex-1">
                 <h3 className="text-xl font-bold mb-1">Полный каталог</h3>
                 <p className="text-sm text-muted-foreground">
@@ -724,6 +725,32 @@ function HomeView({
                 className="rounded-full gradient-brand text-white font-semibold shadow-glow h-11 px-6"
               >
                 Открыть каталог
+              </Button>
+            </div>
+
+            {/* v25.10 (Task #3): Fullscreen feed CTA — Reels / TikTok style. */}
+            <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 md:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-4 text-white relative overflow-hidden">
+              <div
+                className="absolute inset-0 opacity-30"
+                style={{
+                  background:
+                    'radial-gradient(circle at 20% 20%, rgba(99,102,241,0.4) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(168,85,247,0.4) 0%, transparent 50%)',
+                }}
+              />
+              <div className="flex-1 relative">
+                <h3 className="text-xl font-bold mb-1">Лента товаров</h3>
+                <p className="text-sm text-white/70">
+                  Вертикальная лента в стиле Reels — листайте товары жестом, смотрите видео, открывайте описание.
+                </p>
+              </div>
+              <Button
+                onClick={() => {
+                  haptic.tap()
+                  window.dispatchEvent(new CustomEvent('open-feed'))
+                }}
+                className="rounded-full bg-white text-black font-semibold shadow-glow h-11 px-6 hover:bg-white/90 relative"
+              >
+                Открыть ленту
               </Button>
             </div>
           </div>

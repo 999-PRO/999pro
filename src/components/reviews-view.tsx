@@ -108,8 +108,8 @@ export function ReviewsView({ onNavigate }: { onNavigate: (v: string) => void })
         {loading ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="rounded-3xl overflow-hidden glass">
-                <div className="aspect-square skeleton" />
+              <div key={i} className="rounded-xl overflow-hidden glass">
+                <div className="aspect-[3/4] skeleton" />
                 <div className="p-3 space-y-2">
                   <div className="h-3 w-3/4 rounded skeleton" />
                   <div className="h-3 w-1/2 rounded skeleton" />
@@ -131,9 +131,9 @@ export function ReviewsView({ onNavigate }: { onNavigate: (v: string) => void })
               <button
                 key={p.id}
                 onClick={() => setSelectedProductId(p.id)}
-                className="text-left rounded-3xl overflow-hidden glass hover:shadow-glow transition-all hover:-translate-y-0.5 group"
+                className="text-left rounded-xl overflow-hidden glass hover:shadow-glow transition-all hover:-translate-y-0.5 group"
               >
-                <div className="aspect-square relative overflow-hidden bg-accent/20">
+                <div className="aspect-[3/4] relative overflow-hidden bg-accent/20">
                   {p.images[0] && (
                     <img
                       src={assetUrl(p.images[0])}

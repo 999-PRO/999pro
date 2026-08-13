@@ -86,6 +86,11 @@ interface AudioPlayerState {
   playbackRate: PlaybackRate
   /** Загружается ли трек (между play() и canplay). */
   isLoading: boolean
+  /** v25.10: True while the browser is seeking to a new position
+   *  (set on `seeking` event, cleared on `seeked`). Used by the UI to
+   *  show a "seeking…" state and freeze the time display so it doesn't
+   *  flicker between the old and new positions. */
+  isSeeking: boolean
 
   // ---- Queue (playlist) ----
   queue: AudioTrack[]
@@ -121,6 +126,10 @@ interface AudioPlayerState {
 // Создаётся lazily при первом play() — чтобы не блокировать SSR.
 let audioEl: HTMLAudioElement | null = null
 let rafId: number | null = null
+// v25.10: tracks whether we've already bound the mediaSession action
+// handlers (they're idempotent — re-binding the same handler overwrites
+// the previous one, but we skip the work to avoid console noise).
+let mediaSessionHandlersBound = false
 
 function getAudioEl(): HTMLAudioElement {
   if (typeof window === 'undefined') {
@@ -165,17 +174,43 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
     el.addEventListener('timeupdate', () => {
       const d = el.duration
       if (!d || !isFinite(d)) return
+      // v25.10: don't update currentTime/progress while the browser is
+      // mid-seek — the value flickers between the old and new positions
+      // and causes the "1-2s loop / stutter" the user reported.
+      if (get().isSeeking) return
       set({
         currentTime: el.currentTime,
         progress: el.currentTime / d,
       })
     })
 
-    el.addEventListener('play', () => set({ isPlaying: true, isLoading: false }))
-    el.addEventListener('pause', () => set({ isPlaying: false }))
+    el.addEventListener('play', () => {
+      set({ isPlaying: true, isLoading: false })
+      try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing' } catch {}
+    })
+    el.addEventListener('pause', () => {
+      set({ isPlaying: false })
+      try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused' } catch {}
+    })
 
     el.addEventListener('waiting', () => set({ isLoading: true }))
     el.addEventListener('canplay', () => set({ isLoading: false }))
+
+    // v25.10: seeking / seeked events — these fire when the browser issues
+    // a Range request to fetch a new playback position. Seeking is async
+    // (browser fetches the byte range from the server). Without tracking
+    // this state, the timeupdate handler above races with the seek and the
+    // displayed position "jumps" between old/new — exactly the user-visible
+    // bug where the music "loops 1-2 seconds" while seeking.
+    el.addEventListener('seeking', () => set({ isSeeking: true }))
+    el.addEventListener('seeked', () => {
+      const d = el.duration
+      set({
+        isSeeking: false,
+        currentTime: el.currentTime,
+        progress: d && isFinite(d) ? el.currentTime / d : 0,
+      })
+    })
 
     el.addEventListener('ended', () => {
       const st = get()
@@ -203,6 +238,7 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
     duration: 0,
     playbackRate: 1,
     isLoading: false,
+    isSeeking: false,
     queue: [],
     queueIndex: -1,
     repeat: 'off',
@@ -287,6 +323,64 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
         rafId = requestAnimationFrame(tick)
       }
 
+      // v25.10: Media Session API — register track metadata + action handlers
+      // so the OS lock-screen / Control Center / Bluetooth buttons / hardware
+      // media keys all work. Without this:
+      //   - iOS Safari pauses background audio when the screen locks (no
+      //     mediaSession.metadata = the OS doesn't know it's "media").
+      //   - Android Chrome shows a generic "999 PRO" notification with no
+      //     title/artist/artwork — no play/pause/seek buttons.
+      //   - Bluetooth next/prev buttons do nothing.
+      // We register metadata on every play() (cheap), and action handlers
+      // only once (they're global — re-registering would leak listeners).
+      try {
+        if ('mediaSession' in navigator) {
+          const artworkSizes = [96, 128, 192, 256, 384, 512]
+          const artwork = track.coverUrl
+            ? artworkSizes.map((s) => ({
+                src: track.coverUrl!,
+                sizes: `${s}x${s}`,
+                type: 'image/jpeg',
+              }))
+            : []
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: track.title || 'Трек',
+            artist: track.subtitle || track.senderName || '999PRO',
+            album: '999PRO AudioHub',
+            artwork,
+          })
+          navigator.mediaSession.playbackState = 'playing'
+
+          // Register action handlers ONCE — they don't depend on the current
+          // track, only on the store's get() which always reads live state.
+          if (!(mediaSessionHandlersBound as boolean)) {
+            mediaSessionHandlersBound = true
+            const ms = navigator.mediaSession
+            try { ms.setActionHandler('play', () => { get().resume() }) } catch {}
+            try { ms.setActionHandler('pause', () => { get().pause() }) } catch {}
+            try { ms.setActionHandler('seekbackward', (e: any) => {
+              const skip = e?.seekOffset || 10
+              const newTime = Math.max(0, get().currentTime - skip)
+              get().seekTo(newTime)
+            }) } catch {}
+            try { ms.setActionHandler('seekforward', (e: any) => {
+              const skip = e?.seekOffset || 10
+              const newTime = Math.min(get().duration, get().currentTime + skip)
+              get().seekTo(newTime)
+            }) } catch {}
+            try { ms.setActionHandler('seekto', (e: any) => {
+              if (typeof e?.seekTime === 'number') get().seekTo(e.seekTime)
+            }) } catch {}
+            try { ms.setActionHandler('previoustrack', () => { get().prev() }) } catch {}
+            try { ms.setActionHandler('nexttrack', () => { get().next() }) } catch {}
+          }
+        }
+      } catch {
+        // Media Session API not available (older browsers) — silently skip.
+        // Background playback will fall back to whatever the browser allows
+        // by default (typically: pause on screen lock, no lock-screen controls).
+      }
+
       // v16.17: CRITICAL FIX for "need to click twice" and "no autoplay on next".
       // The old code called el.play() immediately after setting el.src, but the
       // audio element hasn't loaded the new source yet — el.play() returns a
@@ -357,11 +451,20 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
         queue: [],
         queueIndex: -1,
         isLoading: false,
+        isSeeking: false,
       })
       if (rafId !== null) {
         cancelAnimationFrame(rafId)
         rafId = null
       }
+      // v25.10: clear Media Session metadata so the lock-screen / Control
+      // Center widget stops showing the stopped track.
+      try {
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.metadata = null
+          navigator.mediaSession.playbackState = 'none'
+        }
+      } catch {}
     },
 
     seek: (fraction) => {

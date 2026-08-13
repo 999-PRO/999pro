@@ -749,14 +749,41 @@ router.get(
       }
       res.on('close', onClientClose)
 
+      // v25.10 (AudioHub seek fix): forward the client's Range header to the
+      // upstream CDN and reply with proper 206 Partial Content + Content-Range.
+      //
+      // Previously this endpoint set `Accept-Ranges: bytes` but never honoured
+      // the Range header — it streamed the entire file from byte 0. Browsers
+      // send `Range: bytes=N-` when the user scrubs the seek bar. The proxy
+      // ignored it, so:
+      //   - iOS Safari refused to play/seek at all (strict Range requirement).
+      //   - Chrome desktop waited for the full file to download before seek
+      //     worked, and replayed 1-2s around the seek point (the "stutter /
+      //     loop" bug users reported).
+      //
+      // We now:
+      //   1. Read the incoming Range header.
+      //   2. Forward it to the upstream fetch.
+      //   3. If upstream replies 206, mirror 206 + Content-Range + Content-Length
+      //      + the partial body.
+      //   4. If upstream replies 200 (no Range support on their side — rare for
+      //      hitmos/muzce), we still set `Accept-Ranges: none` so the browser
+      //      doesn't try to seek beyond what's buffered. This is honest — we
+      //      can't honour Range if upstream can't.
+      const inboundRange = req.headers['range'] || null
+
       const connectTimeout = setTimeout(() => controller.abort(), 15000)
+      const upstreamHeaders: Record<string, string> = { Accept: 'audio/*' }
+      if (inboundRange) {
+        upstreamHeaders['Range'] = inboundRange
+      }
       const response = await fetch(url, {
         signal: controller.signal,
-        headers: { 'Accept': 'audio/*' },
+        headers: upstreamHeaders,
       })
       clearTimeout(connectTimeout)
 
-      if (!response.ok) {
+      if (!response.ok && response.status !== 206) {
         res.off('close', onClientClose)
         return res.status(502).json({ error: 'Upstream stream failed' })
       }
@@ -770,10 +797,44 @@ router.get(
       } else {
         res.setHeader('Cache-Control', 'public, max-age=86400, immutable')
       }
-      res.setHeader('Accept-Ranges', 'bytes')
-      const contentLength = response.headers.get('content-length')
-      if (contentLength) {
-        res.setHeader('Content-Length', contentLength)
+
+      const upstreamStatus = response.status // 200 or 206
+      const upstreamContentRange = response.headers.get('content-range')
+      const upstreamContentLength = response.headers.get('content-length')
+      const upstreamAcceptRanges = response.headers.get('accept-ranges')
+
+      if (upstreamStatus === 206 && upstreamContentRange) {
+        // Upstream honoured Range — mirror 206 + Content-Range. This is the
+        // path that fixes the iOS Safari + Chrome seek bug.
+        res.status(206)
+        res.setHeader('Content-Range', upstreamContentRange)
+        res.setHeader('Accept-Ranges', 'bytes')
+        if (upstreamContentLength) {
+          res.setHeader('Content-Length', upstreamContentLength)
+        }
+      } else if (inboundRange && upstreamStatus === 200) {
+        // Upstream doesn't honour Range — returned full body. Be honest:
+        // tell the browser we don't support Range so it doesn't retry.
+        // The browser will buffer the full response and allow seek only
+        // within the buffered range. Slower but functional on Chrome/Firefox.
+        // iOS Safari may still refuse to play — that's an upstream limitation
+        // we can't fix from the proxy side.
+        res.status(200)
+        res.setHeader('Accept-Ranges', 'none')
+        if (upstreamContentLength) {
+          res.setHeader('Content-Length', upstreamContentLength)
+        }
+      } else {
+        // No Range requested (initial load) — normal 200 response.
+        res.status(200)
+        if (upstreamAcceptRanges) {
+          res.setHeader('Accept-Ranges', upstreamAcceptRanges)
+        } else {
+          res.setHeader('Accept-Ranges', 'bytes')
+        }
+        if (upstreamContentLength) {
+          res.setHeader('Content-Length', upstreamContentLength)
+        }
       }
 
       if (response.body) {

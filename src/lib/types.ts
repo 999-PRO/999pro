@@ -51,6 +51,13 @@ export interface Product {
   } | null
   // v25.8 (TRI999 launch): product colors with per-color image.
   colors?: ProductColor[]
+  // v25.10 (Task #6): vertical (3:4) product video — admin-only upload.
+  // NULL = no video (image gallery only). When set, the Product Viewer shows
+  // a <video> at the top of the gallery, and the new fullscreen feed uses
+  // it instead of the static image.
+  videoUrl?: string | null
+  // v25.10: poster image (first frame extracted by FFmpeg).
+  videoPoster?: string | null
 }
 
 // v11: helper — resolve stock label from quantity + inStock.

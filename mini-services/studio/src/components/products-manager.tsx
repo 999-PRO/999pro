@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useDeferredValue, useRef, useMemo } from 'react'
-import { Plus, Pencil, Trash2, Eye, EyeOff, Search, Package, CheckSquare, Square, CheckCheck, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, Eye, EyeOff, Search, Package, CheckSquare, Square, CheckCheck, X, Video, Loader2, Film } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
 import type { Product, ProductColor } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -411,6 +411,11 @@ function ProductEditor({ product, existingCategories, onClose, onSaved }: {
   const [images, setImages] = useState<string[]>(product?.images || [])
   // v25.8 (TRI999 launch): product colors with per-color image.
   const [colors, setColors] = useState<ProductColor[]>(product?.colors || [])
+  // v25.10 (Task #6): vertical (3:4) product video — admin-only upload.
+  // videoUrl is a relative path (/uploads/videos/...). NULL = no video.
+  const [videoUrl, setVideoUrl] = useState<string | null>(product?.videoUrl || null)
+  const [videoPoster, setVideoPoster] = useState<string | null>(product?.videoPoster || null)
+  const [videoUploading, setVideoUploading] = useState(false)
   const [inStock, setInStock] = useState(product?.inStock ?? true)
   // v11: physical stock quantity — used to show "В наличии" / "Заканчивается" / "Нет в наличии".
   // Default to 10 for new products so they show "В наличии" by default.
@@ -512,6 +517,9 @@ const save = async () => {
         isRecommended,
         // v24.4: department link
         departmentId: departmentId || null,
+        // v25.10 (Task #6): video
+        videoUrl,
+        videoPoster,
       }
       if (product) {
         // QW3 (S-BUG-002): encode product id — slugs may contain "/" (e.g. "листовки-а5,-плотность-200-г/м²")
@@ -562,6 +570,25 @@ const save = async () => {
 
         <div className="space-y-4">
           <ImageUploader value={images} onChange={setImages} multiple max={8} aspect="square" label="Фотографии товара" />
+
+          {/* v25.10 (Task #6): vertical (3:4) product video — admin-only upload.
+              MP4 / WebM / MOV / AVI / MKV up to 100MB. Server-side compressed
+              via FFmpeg to 720x960 H.264 MP4 with +faststart for instant
+              playback + Range seek. Poster (first frame) extracted automatically. */}
+          <ProductVideoUploader
+            videoUrl={videoUrl}
+            videoPoster={videoPoster}
+            uploading={videoUploading}
+            onUploadingChange={setVideoUploading}
+            onUploaded={({ url, posterUrl }) => {
+              setVideoUrl(url)
+              setVideoPoster(posterUrl)
+            }}
+            onClear={() => {
+              setVideoUrl(null)
+              setVideoPoster(null)
+            }}
+          />
 
           {/* v25.8 (TRI999 launch): Product colors with per-color image.
               One product → multiple colors → each color has its own photo.
@@ -742,6 +769,186 @@ const save = async () => {
         title={title || (product ? 'Без названия' : 'Новый товар')}
       />
     </Dialog>
+  )
+}
+
+// ============================================================================
+//  ProductVideoUploader — admin-only vertical (3:4) product video upload.
+//  v25.10 (Task #6):
+//  • Accepts MP4 / WebM / MOV / AVI / MKV up to 100 MB.
+//  • POSTs to /api/upload/video (admin-only) which runs FFmpeg server-side:
+//    H.264 + AAC + faststart, scaled to 720x960 (3:4), poster extracted.
+//  • Shows progress + result. If FFmpeg is missing on the server, the upload
+//    still succeeds (original kept) and a warning toast is shown.
+// ============================================================================
+function ProductVideoUploader({
+  videoUrl,
+  videoPoster,
+  uploading,
+  onUploadingChange,
+  onUploaded,
+  onClear,
+}: {
+  videoUrl: string | null
+  videoPoster: string | null
+  uploading: boolean
+  onUploadingChange: (v: boolean) => void
+  onUploaded: ({ url, posterUrl }: { url: string; posterUrl: string | null }) => void
+  onClear: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [progress, setProgress] = useState(0)
+
+  const MAX_SIZE = 100 * 1024 * 1024 // 100MB — matches backend limit
+
+  const handleFile = async (file: File) => {
+    // Validate size client-side (matches backend).
+    if (file.size > MAX_SIZE) {
+      toast.error(`Видео слишком большое (макс. 100 МБ): ${file.name}`)
+      return
+    }
+    // Validate type.
+    const okExt = /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(file.name)
+    const okMime = file.type.startsWith('video/')
+    if (!okExt && !okMime) {
+      toast.error('Поддерживаются только видео: MP4, WebM, MOV, AVI, MKV')
+      return
+    }
+
+    onUploadingChange(true)
+    setProgress(0)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      // Use XMLHttpRequest for upload progress events — fetch() doesn't
+      // support upload progress without a ReadableStream polyfill.
+      const result = await new Promise<{ url: string; posterUrl: string | null; warning?: string }>(
+        (resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          xhr.open('POST', '/api/upload/video')
+          // Auth token — read from localStorage (matches studio auth-store).
+          const token = localStorage.getItem('999pro-studio-token')
+          if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100))
+          }
+          xhr.onload = () => {
+            try {
+              const data = JSON.parse(xhr.responseText)
+              if (xhr.status >= 200 && xhr.status < 300) resolve(data)
+              else reject(new Error(data?.error || `HTTP ${xhr.status}`))
+            } catch {
+              reject(new Error('Некорректный ответ сервера'))
+            }
+          }
+          xhr.onerror = () => reject(new Error('Сетевая ошибка загрузки'))
+          xhr.send(formData)
+        },
+      )
+      onUploaded({ url: result.url, posterUrl: result.posterUrl })
+      if (result.warning) toast.warning(result.warning)
+      else toast.success('Видео загружено и оптимизировано')
+    } catch (err: any) {
+      toast.error(err?.message || 'Не удалось загрузить видео')
+    } finally {
+      onUploadingChange(false)
+      setProgress(0)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label className="flex items-center gap-1.5">
+        <Video className="h-3.5 w-3.5" /> Вертикальное видео товара (3:4, до 60 сек)
+      </Label>
+
+      {!videoUrl && !uploading && (
+        <>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="w-full aspect-[3/4] max-w-[200px] mx-auto rounded-xl border-2 border-dashed border-border/60 hover:border-primary/60 hover:bg-muted/30 transition-colors flex flex-col items-center justify-center gap-2 text-muted-foreground"
+          >
+            <Film className="h-7 w-7" />
+            <div className="text-xs font-medium text-center px-2">
+              Нажмите чтобы загрузить видео
+              <div className="text-[10px] text-muted-foreground/70 mt-1">MP4 / WebM / MOV · до 100 МБ</div>
+            </div>
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,video/x-matroska,.mp4,.webm,.mov,.avi,.mkv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) handleFile(f)
+            }}
+          />
+        </>
+      )}
+
+      {uploading && (
+        <div className="w-full max-w-[200px] mx-auto aspect-[3/4] rounded-xl bg-muted/40 border border-border/60 flex flex-col items-center justify-center gap-3 p-4">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <div className="text-xs font-medium">Загрузка и сжатие…</div>
+          <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-full bg-primary transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <div className="text-[11px] text-muted-foreground">{progress}%</div>
+        </div>
+      )}
+
+      {!uploading && videoUrl && (
+        <div className="flex gap-3 items-start">
+          <div className="relative w-24 aspect-[3/4] rounded-xl overflow-hidden bg-black shrink-0">
+            <video
+              src={assetUrl(videoUrl)}
+              poster={videoPoster ? assetUrl(videoPoster) : undefined}
+              className="w-full h-full object-cover"
+              muted
+              playsInline
+              controls
+              preload="metadata"
+            />
+          </div>
+          <div className="flex-1 min-w-0 space-y-2">
+            <div className="text-xs text-muted-foreground truncate">Видео загружено</div>
+            <div className="text-[11px] text-muted-foreground/70 truncate font-mono">{videoUrl}</div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                className="text-xs px-2.5 py-1 rounded-md bg-muted hover:bg-muted/70 transition-colors"
+              >
+                Заменить
+              </button>
+              <button
+                type="button"
+                onClick={onClear}
+                className="text-xs px-2.5 py-1 rounded-md bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors flex items-center gap-1"
+              >
+                <Trash2 className="h-3 w-3" /> Удалить
+              </button>
+            </div>
+          </div>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="video/mp4,video/webm,video/quicktime,video/x-msvideo,video/x-matroska,.mp4,.webm,.mov,.avi,.mkv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) handleFile(f)
+            }}
+          />
+        </div>
+      )}
+    </div>
   )
 }
 

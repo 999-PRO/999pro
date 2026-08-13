@@ -1,9 +1,10 @@
 import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
-import { requireAuth, type AuthedRequest } from '../lib/auth.js'
+import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import { auditLog } from '../lib/audit.js'
 import { safeParseJsonArray } from '../lib/serialisers.js'
+import { compressProductVideo } from '../lib/video-compress.js'
 import path from 'node:path'
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
@@ -24,6 +25,10 @@ const MAX_FILES_PER_REQUEST = 10
 // Hard cap on the total raw body. Kept tight to mitigate OOM-DoS: 10 files ×
 // 50 MB + multipart overhead → 60 MB is more than enough.
 const MAX_BODY_BYTES = 60 * 1024 * 1024
+// v25.10 (Task #6): separate limit for admin product video uploads.
+// 100 MB raw source — compressed server-side via FFmpeg to ~5-15 MB MP4.
+const MAX_VIDEO_UPLOAD_BYTES = 100 * 1024 * 1024
+const MAX_VIDEO_BODY_BYTES = 110 * 1024 * 1024 // 100 MB + multipart overhead
 
 // MIME → safe file extension mapping. The extension is DERIVED from the
 // declared MIME, NOT from the client-supplied filename. This prevents the
@@ -658,6 +663,157 @@ router.delete(
       /* ignore if missing */
     }
     res.json({ ok: true })
+  }),
+)
+
+// ============================================================================
+//  POST /api/upload/video — admin-only, 100MB video upload + FFmpeg compress.
+//  v25.10 (Task #6 + #10):
+//  Only admins can upload product videos. The raw file (up to 100MB) is saved
+//  to /uploads/raw-videos/, then compressed via FFmpeg to /uploads/videos/
+//  (H.264 + AAC + faststart, 720x960 3:4). The raw original is deleted after
+//  successful compression. Returns the compressed URL + poster URL.
+//
+//  If FFmpeg is not installed on the server, the original is moved to
+//  /uploads/videos/ as a fallback and a `warning` field is returned — the
+//  admin UI shows a toast but the upload still succeeds.
+// ============================================================================
+const ALLOWED_VIDEO_MIMES = new Set([
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+])
+
+router.post(
+  '/upload/video',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    // Pre-check Content-Length — reject 413 BEFORE reading body.
+    const contentLength = Number(req.headers['content-length'] || 0)
+    if (contentLength > MAX_VIDEO_BODY_BYTES) {
+      return res.status(413).json({
+        error: `Видео слишком большое. Максимум ${Math.round(MAX_VIDEO_UPLOAD_BYTES / 1024 / 1024)} МБ.`,
+      })
+    }
+
+    try {
+      // Parse multipart with the video-specific size limit.
+      const Busboy = (await import('busboy')).default
+      const bb = Busboy({
+        headers: req.headers,
+        limits: {
+          fileSize: MAX_VIDEO_UPLOAD_BYTES,
+          files: 1,
+          fieldSize: 1024 * 1024,
+          fields: 5,
+        },
+      })
+
+      const fileMeta: {
+        originalname: string
+        mimetype: string
+        buffer: Buffer
+        size: number
+      } | null = await new Promise((resolve, reject) => {
+        let result: any = null
+        bb.on('file', (fieldname: string, stream: NodeJS.ReadableStream, info: { filename: string; mimeType: string }) => {
+          // Only accept the "file" field.
+          if (fieldname !== 'file') {
+            stream.resume() // drain
+            return
+          }
+          const chunks: Buffer[] = []
+          let totalSize = 0
+          let truncated = false
+          stream.on('data', (chunk: Buffer) => {
+            if (truncated) return
+            if (totalSize + chunk.length > MAX_VIDEO_UPLOAD_BYTES) {
+              truncated = true
+              chunks.length = 0
+              ;(stream as any).destroy(new Error(`Video exceeds ${MAX_VIDEO_UPLOAD_BYTES} bytes`))
+              return
+            }
+            chunks.push(chunk)
+            totalSize += chunk.length
+          })
+          stream.on('end', () => {
+            if (truncated) return
+            result = {
+              originalname: info.filename,
+              mimetype: info.mimeType,
+              buffer: Buffer.concat(chunks),
+              size: totalSize,
+            }
+          })
+          stream.on('error', reject)
+        })
+        bb.on('finish', () => resolve(result))
+        bb.on('error', reject)
+        req.pipe(bb)
+      })
+
+      if (!fileMeta) {
+        return res.status(400).json({ error: 'Файл не получен' })
+      }
+
+      // Validate MIME.
+      const mime = fileMeta.mimetype.split(';')[0].trim().toLowerCase()
+      if (!ALLOWED_VIDEO_MIMES.has(mime)) {
+        return res.status(400).json({
+          error: `Неподдерживаемый тип видео: ${mime}. Разрешены: MP4, WebM, MOV, AVI, MKV.`,
+        })
+      }
+
+      // Save raw upload to /uploads/raw-videos/<basename>.<ext>
+      const rawVideosDir = path.join(UPLOAD_DIR, 'raw-videos')
+      if (!fs.existsSync(rawVideosDir)) fs.mkdirSync(rawVideosDir, { recursive: true })
+      const basename = `${Date.now()}-${crypto.randomBytes(12).toString('hex')}`
+      const extByMime: Record<string, string> = {
+        'video/mp4': '.mp4',
+        'video/webm': '.webm',
+        'video/quicktime': '.mov',
+        'video/x-msvideo': '.avi',
+        'video/x-matroska': '.mkv',
+      }
+      const ext = extByMime[mime] || '.mp4'
+      const rawPath = path.join(rawVideosDir, `${basename}${ext}`)
+      await fsPromises.writeFile(rawPath, fileMeta.buffer)
+
+      // Compress via FFmpeg.
+      const result = await compressProductVideo({
+        inputPath: rawPath,
+        uploadsDir: UPLOAD_DIR,
+        basename,
+      })
+
+      await auditLog(req, 'upload', basename, 'video-upload', {
+        before: null,
+        after: {
+          originalName: fileMeta.originalname,
+          originalSize: fileMeta.size,
+          compressed: result.compressed,
+          url: result.url,
+          posterUrl: result.posterUrl,
+        },
+      })
+
+      return res.status(201).json({
+        url: result.url,
+        posterUrl: result.posterUrl,
+        compressed: result.compressed,
+        warning: result.warning,
+      })
+    } catch (err: any) {
+      logger.error(`[upload/video] Error: ${err?.message || err}`)
+      if (!res.headersSent) {
+        return res.status(500).json({
+          error: 'Не удалось обработать видео. Попробуйте ещё раз или установите ffmpeg на сервер.',
+        })
+      }
+    }
   }),
 )
 

@@ -37,6 +37,9 @@ export interface Product {
   departmentId?: string | null
   // v25.8: product colors with per-color image
   colors?: ProductColor[]
+  // v25.10 (Task #6): vertical (3:4) product video — admin-only upload.
+  videoUrl?: string | null
+  videoPoster?: string | null
   createdAt?: string
   updatedAt?: string
 }

@@ -38,6 +38,14 @@ function normalize(s: string): string {
   return s.trim().toLowerCase()
 }
 
+// v25.10 (search audit): normalize a phone number by stripping everything
+// except digits. Handles "+7 999 123-45-67", "8 (999) 123 45 67", etc.
+// Used for phone-field search so the user can type the number in any format
+// and still match.
+function normalizePhone(s: string): string {
+  return s.replace(/\D+/g, '')
+}
+
 // SQLite-compatible case-insensitive contains: wraps the query in %...% and
 // uses LIKE (which is case-insensitive for ASCII in SQLite by default, but
 // we lower() both sides via Prisma's `mode: 'insensitive'` for Postgres).
@@ -145,16 +153,19 @@ async function searchProducts(q: string): Promise<UniversalProductHit[]> {
       where: {
         deletedAt: null,
         OR: [
+          // v25.10: mode:'insensitive' for Postgres (Cyrillic case-insensitive).
+          // SQLite ignores this flag — we JS-filter below to compensate.
           { title: { contains: q } },
           { description: { contains: q } },
           { category: { contains: q } },
         ],
       },
       orderBy: [{ isPopular: 'desc' }, { views: 'desc' }, { createdAt: 'desc' }],
-      take: LIMIT,
+      take: 30, // over-fetch so JS-side case-insensitive filter has room
       select: {
         id: true,
         title: true,
+        description: true,
         price: true,
         oldPrice: true,
         currency: true,
@@ -168,7 +179,18 @@ async function searchProducts(q: string): Promise<UniversalProductHit[]> {
     })
     .catch(() => [])
 
-  return items.map((p) => {
+  // v25.10: SQLite `contains` is case-sensitive for Cyrillic. JS-filter
+  // the candidate set the same way users.ts does, so Russian product
+  // titles/descriptions match case-insensitively on both DB engines.
+  const needle = q.toLowerCase()
+  const filtered = items.filter((p) => {
+    const title = (p.title || '').toLowerCase()
+    const desc = (p.description || '').toLowerCase()
+    const cat = (p.category || '').toLowerCase()
+    return title.includes(needle) || desc.includes(needle) || cat.includes(needle)
+  })
+
+  return filtered.slice(0, LIMIT).map((p) => {
     let images: string[] = []
     try {
       images = p.images ? JSON.parse(p.images) : []
@@ -195,31 +217,64 @@ async function searchProducts(q: string): Promise<UniversalProductHit[]> {
 // Privacy: only public fields returned (no email/phone).
 // ----------------------------------------------------------------------------
 async function searchUsers(q: string, currentUserId: string): Promise<UniversalUserHit[]> {
+  // v25.10: build the OR clause with both raw + phone-normalized variants
+  // so users can search phone numbers in any format ("+7 999 123-45-67" matches
+  // stored "+79991234567"). mode:'insensitive' for Postgres Cyrillic support.
+  const phoneNeedle = normalizePhone(q)
+  const orClause: any[] = [
+    { username: { contains: q } },
+    { displayName: { contains: q } },
+    { email: { contains: q } },
+  ]
+  // Only search phone if query has any digit (avoids full-table scan on
+  // every 2-char username query).
+  if (/\d/.test(q)) {
+    orClause.push({ phone: { contains: q } })
+    if (phoneNeedle && phoneNeedle !== q) {
+      orClause.push({ phone: { contains: phoneNeedle } })
+    }
+  }
+
   const items = await prisma.user
     .findMany({
       where: {
         deletedAt: null,
         id: { not: currentUserId },
-        OR: [
-          { username: { contains: q } },
-          { displayName: { contains: q } },
-          { email: { contains: q } },
-          { phone: { contains: q } },
-        ],
+        OR: orClause,
       },
       orderBy: [{ isOnline: 'desc' }, { lastSeen: 'desc' }],
-      take: LIMIT,
+      take: 30, // over-fetch for JS-side Cyrillic filter
       select: {
         id: true,
         username: true,
         displayName: true,
+        phone: true,
+        email: true,
         avatar: true,
         isOnline: true,
       },
     })
     .catch(() => [])
 
-  return items.map((u) => ({
+  // v25.10: JS-side case-insensitive filter for SQLite Cyrillic support.
+  // Mirrors the same pattern in users.ts:150-230.
+  const needle = q.toLowerCase()
+  const filtered = items.filter((u) => {
+    const username = (u.username || '').toLowerCase()
+    const displayName = (u.displayName || '').toLowerCase()
+    const email = (u.email || '').toLowerCase()
+    const phone = (u.phone || '')
+    if (username.includes(needle) || displayName.includes(needle) || email.includes(needle)) {
+      return true
+    }
+    // Phone: normalize both sides (strip non-digits) for format-agnostic match.
+    if (phoneNeedle && normalizePhone(phone).includes(phoneNeedle)) {
+      return true
+    }
+    return false
+  })
+
+  return filtered.slice(0, LIMIT).map((u) => ({
     id: u.id,
     username: u.username,
     displayName: u.displayName,
@@ -360,7 +415,7 @@ async function searchPages(q: string): Promise<UniversalPageHit[]> {
         ],
       },
       orderBy: [{ order: 'asc' }, { title: 'asc' }],
-      take: LIMIT,
+      take: 30,
       select: {
         id: true,
         slug: true,
@@ -371,7 +426,15 @@ async function searchPages(q: string): Promise<UniversalPageHit[]> {
     })
     .catch(() => [])
 
-  return items.map((p) => ({
+  // v25.10: JS filter for SQLite Cyrillic support.
+  const needle = q.toLowerCase()
+  const filtered = items.filter((p) => {
+    const title = (p.title || '').toLowerCase()
+    const subtitle = (p.subtitle || '').toLowerCase()
+    return title.includes(needle) || subtitle.includes(needle)
+  })
+
+  return filtered.slice(0, LIMIT).map((p) => ({
     id: p.id,
     slug: p.slug,
     title: p.title,

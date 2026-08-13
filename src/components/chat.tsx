@@ -1452,15 +1452,22 @@ export function ChatView() {
     if (!files || files.length === 0 || !activeConv) return
     const fileArray = Array.from(files)
 
-    // v20: block video uploads — temporary measure per product decision.
-    // Catches both MIME-prefixed (video/*) and extension-based detection
-    // (some browsers don't set MIME for .mkv/.avi/.flv).
+    // v25.10 (chat video): re-enabled video uploads in chat.
+    // Previously (v20) video was blocked with a "temporary" toast. The
+    // backend has always supported video — the upload route accepts
+    // video/* MIME types, and the message schema accepts
+    // mediaType:'video' / attachments[].type:'video'. The chat attachment
+    // extraction hooks (use-chat-attachments.ts) + the videos-list
+    // full-screen player (videos-list.tsx) were already shipped and
+    // working for any historical video message — only the SEND path was
+    // blocked. We now send video with a 50MB per-file guard.
+    const CHAT_VIDEO_MAX_BYTES = 50 * 1024 * 1024 // 50MB
     const isVideoFile = (f: File) =>
       f.type.startsWith('video/') ||
       /\.(mp4|mov|avi|mkv|webm|m4v|3gp|flv|wmv|mpeg|mpg|m2ts|ts)$/i.test(f.name)
-    if (fileArray.some(isVideoFile)) {
-      toast.warning('Отправка видео временно недоступна.')
-      // Clear the input so the user can pick a different file type
+    const oversizedVideo = fileArray.find((f) => isVideoFile(f) && f.size > CHAT_VIDEO_MAX_BYTES)
+    if (oversizedVideo) {
+      toast.error(`Видео слишком большое (макс. 50 МБ): ${oversizedVideo.name}`)
       if (e.target) e.target.value = ''
       return
     }

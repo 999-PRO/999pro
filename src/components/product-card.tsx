@@ -60,20 +60,22 @@ const ProductCardImpl = ({ product, onOpen }: { product: Product; onOpen?: (id: 
           handleOpen()
         }
       }}
-      className="group relative rounded-3xl overflow-hidden glass shadow-soft hover:shadow-glow transition-all cursor-pointer hover:-translate-y-0.5"
+      className="group relative rounded-xl overflow-hidden glass shadow-soft hover:shadow-glow transition-all cursor-pointer hover:-translate-y-0.5"
       style={{
         // Phase 11.3: content-visibility:auto — browser skips rendering
         // for product cards scrolled off-screen. With 48+ cards in the
         // catalog grid, this significantly reduces initial render cost.
+        // 3:4 aspect — taller card → bumped intrinsic size to avoid scroll jitter.
         contentVisibility: 'auto' as React.CSSProperties['contentVisibility'],
-        containIntrinsicSize: '320px',
+        containIntrinsicSize: '440px',
       }}
     >
-      {/* Image carousel — square aspect ratio (1:1) + overflow-hidden +
-          object-cover. Square format is the new standard for product photos
-          (matches the share page and modern marketplaces like Ozon/WB).
-          Old 3:4 photos are cropped via object-cover — looks clean. */}
-      <div className="relative aspect-square overflow-hidden bg-muted/40">
+      {/* Image carousel — 3:4 portrait aspect ratio + overflow-hidden +
+          object-cover. 3:4 matches the Product Viewer format and prevents
+          the top of vertical product photos (slogan, brand, composition)
+          from being cropped. Modern marketplaces (Instagram, TikTok Shop,
+          Pinterest) standardize on 3:4 / 4:5 for vertical product media. */}
+      <div className="relative aspect-[3/4] overflow-hidden bg-muted/40">
         <div
           className="flex h-full transition-transform duration-300 ease-out"
           style={{ transform: `translateX(-${imgIndex * 100}%)` }}

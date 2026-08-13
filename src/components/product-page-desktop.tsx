@@ -264,6 +264,29 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
 
                   {/* ============ CENTER COLUMN: FIXED — no scroll, image top-aligned with side panels ============ */}
                   <div className="flex flex-col items-center gap-6 h-full min-h-0 pt-0">
+                    {/* v25.10 (Task #6): vertical product video — desktop variant.
+                        Shown ABOVE the main photo when the admin uploaded one.
+                        Same 3:4 aspect + max-w as the photo so the layout
+                        doesn't shift. Native controls + PiP + fullscreen. */}
+                    {product.videoUrl && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.4 }}
+                        className="w-full flex justify-center"
+                      >
+                        <div className="relative aspect-[3/4] w-full max-w-[560px] max-h-[calc(100vh-12rem)] rounded-xl overflow-hidden bg-black ring-1 ring-white/30 dark:ring-white/10 shadow-[0_24px_70px_-24px_rgba(0,0,0,0.4)]">
+                          <video
+                            src={assetUrl(product.videoUrl)}
+                            poster={product.videoPoster ? assetUrl(product.videoPoster) : undefined}
+                            className="h-full w-full object-cover"
+                            controls
+                            playsInline
+                            preload="metadata"
+                          />
+                        </div>
+                      </motion.div>
+                    )}
                     {/* v9-premium-v5: image top-aligned (items-start) so its top edge
                         aligns with left/right panel tops. Was justify-center which
                         dropped the image down. */}
@@ -450,20 +473,19 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                           transition={{ type: 'spring', stiffness: 400, damping: 22 }}
                           onClick={() => {
                             haptic.tap()
-                            // v16.1: open the unified CheckoutSheet (same as cart flow).
+                            // v25.10 (Task #16): "Купить сейчас" → "Оставить заявку".
+                            // Payments are not connected; the primary CTA now opens
+                            // the LeadSheet (existing /api/leads backend route).
                             if (product) {
-                              window.dispatchEvent(new CustomEvent('open-checkout', {
-                                detail: {
-                                  items: [{ productId: product.id, quantity: 1 }],
-                                  products: { [product.id]: product },
-                                },
+                              window.dispatchEvent(new CustomEvent('open-lead', {
+                                detail: { product },
                               }))
                             }
                           }}
-                          className="rounded-[20px] font-bold text-white shadow-[0_14px_36px_-10px_rgba(99,102,241,0.6)] bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:shadow-[0_18px_48px_-10px_rgba(99,102,241,0.72)] transition-all"
+                          className="rounded-xl font-bold text-white shadow-[0_14px_36px_-10px_rgba(99,102,241,0.6)] bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:shadow-[0_18px_48px_-10px_rgba(99,102,241,0.72)] transition-all"
                           style={{ height: '3.25rem' }}
                         >
-                          Купить сейчас
+                          Оставить заявку
                         </motion.button>
 
                         {/* Add to cart — pure glass, no solid bg */}

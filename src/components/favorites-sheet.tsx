@@ -85,8 +85,8 @@ export function FavoritesSheet({ open, onClose }: { open: boolean; onClose: () =
       {loading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 p-4 md:px-6 pt-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-3xl overflow-hidden glass">
-              <div className="aspect-square skeleton" />
+            <div key={i} className="rounded-xl overflow-hidden glass">
+              <div className="aspect-[3/4] skeleton" />
             </div>
           ))}
         </div>
@@ -122,9 +122,9 @@ export function FavoritesSheet({ open, onClose }: { open: boolean; onClose: () =
                   window.dispatchEvent(new PopStateEvent('popstate'))
                   onClose()
                 }}
-                className="text-left rounded-3xl overflow-hidden glass hover:shadow-glow transition-all hover:-translate-y-0.5"
+                className="text-left rounded-xl overflow-hidden glass hover:shadow-glow transition-all hover:-translate-y-0.5"
               >
-                <div className="relative aspect-square overflow-hidden bg-muted/40">
+                <div className="relative aspect-[3/4] overflow-hidden bg-muted/40">
                   {p.images?.[0] && (
                     // F-CRIT-001: next/image fill. Parent div promoted to
                     // `relative` so the absolutely-positioned <Image> snaps

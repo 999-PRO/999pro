@@ -277,6 +277,25 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
             </div>
           ) : (
             <div className="pb-32">
+              {/* v25.10 (Task #6): vertical (3:4) product video — shown above
+                  the image carousel when the admin uploaded one. Renders in
+                  the same 3:4 aspect as the carousel so the visual rhythm is
+                  preserved. The video uses native browser controls (play,
+                  pause, seek, fullscreen, Picture-in-Picture). The poster
+                  (first frame extracted by FFmpeg) shows before the user
+                  taps play, so the page doesn't show a black frame. */}
+              {product.videoUrl && (
+                <div className="relative w-full aspect-[3/4] bg-black select-none">
+                  <video
+                    src={assetUrl(product.videoUrl)}
+                    poster={product.videoPoster ? assetUrl(product.videoPoster) : undefined}
+                    className="h-full w-full object-cover"
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+                </div>
+              )}
               {/* v25.4 (TZ-2 task #6): FULL-BLEED image carousel —
                   - 3:4 aspect ratio on mobile (and on desktop inside ProductPageDesktop)
                   - Touches all 4 edges of the screen on mobile (no padding)
@@ -674,18 +693,20 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                   onClick={() => {
                     haptic.tap()
                     if (product) {
-                      window.dispatchEvent(new CustomEvent('open-checkout', {
-                        detail: {
-                          items: [{ productId: product.id, quantity: 1 }],
-                          products: { [product.id]: product },
-                        },
+                      // v25.10 (Task #16): "Купить" → "Оставить заявку".
+                      // Payments are not connected; the primary CTA now opens
+                      // the LeadSheet (existing /api/leads backend route)
+                      // instead of CheckoutSheet. The cart / checkout flow is
+                      // preserved — users can still add to cart and check out
+                      // via the cart icon if needed.
+                      window.dispatchEvent(new CustomEvent('open-lead', {
+                        detail: { product },
                       }))
-                      setTimeout(() => onClose(), 50)
                     }
                   }}
-                  className="h-12 rounded-[18px] flex-1 font-bold text-white shadow-[0_10px_28px_-8px_rgba(99,102,241,0.6)] bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:shadow-[0_14px_36px_-8px_rgba(99,102,241,0.72)] transition-all"
+                  className="h-12 rounded-xl flex-1 font-bold text-white shadow-[0_10px_28px_-8px_rgba(99,102,241,0.6)] bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:shadow-[0_14px_36px_-8px_rgba(99,102,241,0.72)] transition-all"
                 >
-                  Купить
+                  Оставить заявку
                 </button>
               </div>
             </div>
@@ -810,8 +831,8 @@ function SimilarProducts({ product }: { product: Product }) {
         <h2 className="text-sm font-bold mb-3 px-1">Похожие товары</h2>
         <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-1 px-1 pb-2">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="shrink-0 w-28 rounded-2xl overflow-hidden bg-foreground/5">
-              <div className="aspect-square skeleton" />
+            <div key={i} className="shrink-0 w-28 rounded-xl overflow-hidden bg-foreground/5">
+              <div className="aspect-[3/4] skeleton" />
               <div className="p-2 space-y-1">
                 <div className="h-3 w-3/4 rounded skeleton" />
                 <div className="h-3 w-1/2 rounded skeleton" />
@@ -860,9 +881,9 @@ function SimilarProducts({ product }: { product: Product }) {
                 )
               }
             }}
-            className="shrink-0 w-36 rounded-[18px] overflow-hidden bg-foreground/5 ring-1 ring-border/30 hover:shadow-[0_12px_32px_-12px_rgba(0,0,0,0.25)] hover:bg-foreground/10 transition-all hover:-translate-y-1"
+            className="shrink-0 w-36 rounded-xl overflow-hidden bg-foreground/5 ring-1 ring-border/30 hover:shadow-[0_12px_32px_-12px_rgba(0,0,0,0.25)] hover:bg-foreground/10 transition-all hover:-translate-y-1"
           >
-            <div className="aspect-square overflow-hidden bg-foreground/5">
+            <div className="aspect-[3/4] overflow-hidden bg-foreground/5">
               {p.images?.[0] && (
                 <img
                   src={assetUrl(p.images[0])}

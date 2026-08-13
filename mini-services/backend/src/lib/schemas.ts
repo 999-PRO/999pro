@@ -114,6 +114,12 @@ export const createProductSchema = z.object({
       image: z.string().min(1).max(2048),
     })
   ).max(50).optional(),
+  // v25.10 (Task #6): vertical (3:4) product video — short clip (10-60s).
+  // NULL = no video (image gallery only). The video URL is a relative path
+  // (/uploads/...) pointing at the FFmpeg-compressed MP4.
+  videoUrl: z.string().max(2048).nullable().optional(),
+  // v25.10: poster image (first frame extracted by FFmpeg).
+  videoPoster: z.string().max(2048).nullable().optional(),
 })
 
 export const createStorySchema = z.object({

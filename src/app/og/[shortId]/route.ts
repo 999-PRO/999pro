@@ -1,19 +1,32 @@
 // ============================================================================
-//  OG Image proxy — /api/og-image/[shortId]
+//  OG Image proxy — /og/[shortId]
 //  ----------------------------------------------------------------------------
 //  WhatsApp / Facebook / Telegram crawlers don't reliably fetch OG images
 //  from third-party domains (Unsplash, etc.). They prefer images served from
 //  the SAME domain as the share page.
 //
 //  This endpoint:
-//    1. Receives a request for /api/og-image/<shortId>
+//    1. Receives a request for /og/<shortId>
 //    2. Looks up the ShareLink → Product → first image URL
 //    3. Fetches the image (from Unsplash, /uploads/, or any CDN)
-//    4. Re-encodes it as JPEG (1200×1200, quality 85) using Sharp
-//    5. Returns it with long-lived cache headers
+//    4. Re-encodes it as JPEG (1200×1200, quality 88) using Sharp
 //
-//  The share page's og:image meta tag points to this endpoint, so crawlers
-//  always see an image from OUR domain — reliable preview in WhatsApp.
+//  v25.10 (3:4 no-crop rewrite):
+//  Previously this endpoint cover-cropped the source to a 1200×1200 square —
+//  vertical (3:4) product photos lost their top edge (slogan, brand,
+//  composition). Now we use a "letterbox with blurred background" layout:
+//
+//    1. Background layer: the source image, resized to COVER 1200×1200,
+//       heavily blurred + darkened — fills the entire canvas so there's no
+//       ugly white border.
+//    2. Foreground layer: the SAME source image, resized to CONTAIN within
+//       1200×1200 (no crop) — the original 3:4 photo is shown in full.
+//    3. Composite foreground on top of background.
+//
+//  Result: a 1200×1200 canvas (WhatsApp/Twitter/FB compatible) where the
+//  original 3:4 product photo is fully visible (no content lost), on a
+//  branded-blurred background. Modern marketplaces (Instagram, YouTube,
+//  Spotify) use the same technique for share cards.
 //
 //  Performance: response is cached with Cache-Control: public, max-age=86400
 //  (24h). Next.js also caches the fetch result with revalidate: 3600.
@@ -112,19 +125,58 @@ export async function GET(
     }
     const imgBuffer = Buffer.from(await imgRes.arrayBuffer())
 
-    // Re-encode with Sharp: resize to 1200×1200 cover, JPEG q85.
-    // 1200×1200 is the recommended minimum for OG images (WhatsApp/Facebook).
-    // JPEG keeps file size small (~100-200 KB) for fast crawler fetch.
-    // Note: withoutEnlargement is FALSE — we DO want to upscale smaller
-    // source images (e.g. 800×533 Unsplash previews) to 1200×1200, because
-    // WhatsApp rejects OG images smaller than 1200px.
-    const processed = await sharp(imgBuffer)
-      .resize(1200, 1200, {
+    // v25.10 (3:4 no-crop rewrite):
+    // 1. BACKGROUND — source resized to COVER 1200×1200, blurred, darkened.
+    //    This fills the entire canvas with a branded-looking backdrop so
+    //    there's no ugly white letterbox border.
+    // 2. FOREGROUND — source resized to CONTAIN 1200×1200 (no crop). The
+    //    original 3:4 product photo is shown in full — nothing is lost.
+    // 3. Composite foreground on top of background.
+    //
+    // Canvas stays 1200×1200 (1:1) — recommended minimum for WhatsApp/FB OG
+    // images, and the aspect ratio WhatsApp displays natively in chat
+    // previews (no additional cropping by the crawler).
+    const CANVAS = 1200
+
+    // Background: cover + blur + darken
+    const bg = await sharp(imgBuffer)
+      .resize(CANVAS, CANVAS, {
         fit: 'cover',
         position: 'center',
         withoutEnlargement: false,
       })
-      .jpeg({ quality: 85, progressive: true })
+      .blur(28) // heavy gaussian blur — turns any image into a soft gradient
+      .modulate({ brightness: 0.55, saturation: 1.1 }) // darken + slight saturate
+      .jpeg({ quality: 80 })
+      .toBuffer()
+
+    // Foreground: contain (no crop) — original 3:4 photo fully visible.
+    // PNG preserves alpha so transparent padding stays transparent — JPEG
+    // would fill transparency with white, creating an ugly rectangle that
+    // hides the blurred background. We composite this PNG onto the JPEG
+    // background below, then re-encode the final composite as JPEG.
+    const fg = await sharp(imgBuffer)
+      .resize(CANVAS, CANVAS, {
+        fit: 'contain',
+        position: 'center',
+        background: { r: 0, g: 0, b: 0, alpha: 0 }, // transparent padding
+        withoutEnlargement: false,
+      })
+      .png({ quality: 90, compressionLevel: 6 })
+      .toBuffer()
+
+    // Composite foreground (PNG with alpha) on top of background (JPEG).
+    // Sharp handles the alpha blending correctly when the top layer has
+    // an alpha channel and the bottom doesn't.
+    const processed = await sharp(bg)
+      .composite([
+        {
+          input: fg,
+          gravity: 'center',
+          blend: 'over',
+        },
+      ])
+      .jpeg({ quality: 88, progressive: true })
       .toBuffer()
 
     // Return with long-lived cache. Crawlers respect Cache-Control and

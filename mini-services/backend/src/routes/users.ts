@@ -191,12 +191,21 @@ router.get(
     // SQLite `contains` is case-sensitive for non-ASCII (Cyrillic).
     // Fetch candidates with a broad search, then filter in JS by
     // case-insensitive substring match.
+    //
+    // v25.10: phone normalization — strip non-digits so "+7 999 123-45-67"
+    // matches stored "+79991234567". Also try both raw + normalized forms
+    // in the DB query to catch formatted phone storage.
     const needle = q.toLowerCase()
+    const phoneNeedle = q.replace(/\D+/g, '')
     const searchOR: any[] = [
       { username: { contains: q } },
       { displayName: { contains: q } },
       ...(q.startsWith('+') || /^\d/.test(q) ? [{ phone: { contains: q } }] : []),
     ]
+    // Add normalized phone search if the needle has digits and differs from raw.
+    if (phoneNeedle && phoneNeedle !== q && /^\d/.test(q)) {
+      searchOR.push({ phone: { contains: phoneNeedle } })
+    }
     // Only admins can search by email — sensitive PII.
     if (isAdmin) {
       searchOR.push({ email: { contains: q } })
@@ -223,8 +232,10 @@ router.get(
       if (username.includes(needle) || displayName.includes(needle)) return true
       if (isAdmin) {
         const email = (u.email || '').toLowerCase()
-        const phone = (u.phone || '').toLowerCase()
-        if (email.includes(needle) || phone.includes(needle)) return true
+        const phone = (u.phone || '')
+        if (email.includes(needle)) return true
+        // Phone: normalize both sides for format-agnostic match.
+        if (phoneNeedle && phone.replace(/\D+/g, '').includes(phoneNeedle)) return true
       }
       return false
     })

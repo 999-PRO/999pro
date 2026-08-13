@@ -6,6 +6,14 @@ const withBundleAnalyzer = bundleAnalyzer({
 });
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+// v25.10 (TV/Smart-TV audit): the /studio/* rewrite was previously hardcoded
+// to http://localhost:3001 — fine when frontend + studio run on the same
+// host, but BROKEN on Smart TV / any client that loads the frontend from a
+// different origin (e.g. https://tri-999.online) because the rewrite target
+// `localhost:3001` is unreachable from the TV. We now read STUDIO_URL from
+// env so the operator can point it at the studio's public URL.
+// Default keeps the old behaviour for local dev / single-host prod.
+const STUDIO_URL = process.env.STUDIO_URL || "http://localhost:3001";
 
 // Sandbox preview gateways may proxy pages via iframe from a different origin.
 // In dev / preview mode we omit X-Frame-Options and frame-ancestors so the
@@ -190,8 +198,8 @@ const nextConfig: NextConfig = {
       // v8-audit-fix: socket.io initial handshake is /socket.io/ (no path after).
       // Without this, the WebSocket/polling connection fails and chat doesn't work.
       { source: '/socket.io', destination: `${BACKEND_URL}/socket.io/` },
-      { source: '/studio', destination: 'http://localhost:3001/studio/' },
-      { source: '/studio/:path*', destination: 'http://localhost:3001/studio/:path*' },
+      { source: '/studio', destination: `${STUDIO_URL}/studio/` },
+      { source: '/studio/:path*', destination: `${STUDIO_URL}/studio/:path*` },
     ]
   },
 };

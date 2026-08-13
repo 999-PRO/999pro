@@ -88,10 +88,18 @@ export async function generateMetadata({
       // v25.4 (OG audit): 'website' → 'product' so Facebook renders a richer
       // product card with price. Combined with the product:price:* tags below
       // (emitted via the `other` field), WhatsApp/FB show the price inline.
-      // Cast to satisfy Next.js's strict OpenGraph type (it only models
-      // 'website'/'article'/'video.other' etc. — 'product' is valid per the
-      // OG spec but not in Next's type definitions).
-      type: 'product' as any,
+      //
+      // v25.10 (sandbox fix): Next.js 16's strict OpenGraph type enum rejects
+      // 'product' at build/render time ("Invalid OpenGraph type: product").
+      // We cast through `as const` + `as any` to bypass the type check, but
+      // Next still validates at runtime. The OG spec actually allows 'product'
+      // (https://ogp.me/#types — Product), but Next.js's metadata type only
+      // models 'website' | 'article' | 'video.*' | 'music.*' | 'profile' |
+      // 'book'. We emit the meta tag manually via the `other` field so it
+      // still appears in the HTML head — Facebook/WhatsApp crawlers read the
+      // raw <meta property="og:type" content="product"> tag, NOT Next's
+      // typed object.
+      type: 'website' as any,
       locale: 'ru_RU',
       siteName: 'TRI999',
       url: shareUrl,
@@ -118,6 +126,10 @@ export async function generateMetadata({
     // and Twitter's "Price" label1/data1 extra fields. Emitted as raw meta
     // tags via the `other` field (Next.js doesn't have a typed product slot).
     other: {
+      // v25.10: emit raw og:type=product meta tag (Next 16 won't accept it
+      // in the typed `openGraph.type` field, but Facebook/WhatsApp crawlers
+      // read this raw meta tag from <head>).
+      'og:type': 'product',
       'product:price:amount': String(product.price),
       'product:price:currency': product.currency || 'RUB',
       'product:availability': 'instock',

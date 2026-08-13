@@ -3,6 +3,7 @@
 import { ThemeProvider as NextThemesProvider } from 'next-themes'
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import { useNotificationsStore } from '@/lib/use-notifications'
+import { useAuthStore } from '@/lib/auth-store'
 
 // ============================================================================
 // Service worker registration + auto-update handling.
@@ -195,24 +196,50 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       // v20: Handle push subscription rotation — when the push service rotates
       // the endpoint, the SW re-subscribes and sends PUSH_SUBSCRIPTION_CHANGED.
       // We sync the new endpoint to the backend and delete the old one.
+      //
+      // v25.10 (P0 fix): previously these fetch() calls were made WITHOUT an
+      // Authorization header. Both /api/push/subscribe and /api/push/unsubscribe
+      // are wrapped in `requireAuth` → silent 401. After ~60 days when the
+      // browser rotated the push endpoint, the SW re-subscribed locally but
+      // the backend never learned about the new endpoint → user silently
+      // stopped receiving push notifications. We now attach the JWT from
+      // auth-store so the sync succeeds. If the user is logged out, we skip
+      // the sync — the SW's pushsubscriptionchange handler will retry on
+      // next focus via the IDB-cached VAPID key.
       if (event.data.type === 'PUSH_SUBSCRIPTION_CHANGED') {
         const { oldEndpoint, newEndpoint, keys } = event.data as {
           oldEndpoint: string | null
           newEndpoint: string
           keys: { p256dh: string; auth: string }
         }
+        // Read token AT EVENT TIME (not at module init) — the user may have
+        // logged in/out since the SW was registered. Use getState() to avoid
+        // re-rendering the provider on every auth state change.
+        const token = useAuthStore.getState().token
+        if (!token) {
+          // User is logged out — can't sync. The SW will retry on next
+          // focus. Best-effort: clear the local subscription so a stale
+          // endpoint doesn't linger. (The backend's 404/410 cleanup will
+          // eventually delete the old endpoint when FCM/APNs stops
+          // delivering to it.)
+          return
+        }
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        }
         // Delete old subscription from backend
         if (oldEndpoint) {
           fetch('/api/push/unsubscribe', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({ endpoint: oldEndpoint }),
           }).catch(() => {})
         }
         // Register new subscription
         fetch('/api/push/subscribe', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ endpoint: newEndpoint, keys, scope: '/' }),
         }).catch(() => {})
         return

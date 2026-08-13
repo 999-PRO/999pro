@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { Home, LayoutGrid, User, MoreHorizontal, MessageCircle, Sparkles } from 'lucide-react'
+import { Home, LayoutGrid, User, MoreHorizontal, MessageCircle, Sparkles, Clapperboard } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useCartStore } from '@/lib/cart-store'
@@ -30,11 +30,24 @@ import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
 // ============================================================================
 
 // Standard nav items (left side) — filtered by module access.
-const NAV = [
+// v25.10 (Task #3): 'feed' has a `customEvent` field — instead of switching
+// to a real view, it dispatches a window event that opens the ProductFeed
+// overlay. Other items navigate normally via `onNavigate(viewId)`.
+type NavItem = {
+  id: string
+  label: string
+  icon: typeof Home
+  customEvent?: string
+}
+const NAV: NavItem[] = [
   { id: 'home', label: 'Главная', icon: Home },
   { id: 'catalog', label: 'Каталог', icon: LayoutGrid },
+  // v25.10 (Task #3): ProductFeed — fullscreen vertical feed (Reels-style).
+  // Rendered as a NAV button that dispatches 'open-feed' window event.
+  // The feed itself is mounted globally in AppShell.
+  { id: 'feed', label: 'Лента', icon: Clapperboard, customEvent: 'open-feed' },
   { id: 'chat', label: 'Чат', icon: MessageCircle },
-] as const
+]
 
 export function BottomNav({
   view,
@@ -112,7 +125,13 @@ export function BottomNav({
                 key={item.id}
                 onClick={() => {
                   haptic.tap()
-                  onNavigate(item.id)
+                  // v25.10: 'feed' is not a real view — it opens the
+                  // fullscreen ProductFeed overlay via window event.
+                  if (item.customEvent && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent(item.customEvent))
+                  } else {
+                    onNavigate(item.id)
+                  }
                 }}
                 className={cn(
                   'relative flex flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] transition-colors mobile-nav-item flex-1 min-w-0',

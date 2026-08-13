@@ -7,6 +7,8 @@ import { MobileHeader } from './mobile-header'
 import { CallManager } from './call-manager'
 import { CartSheet } from './cart-sheet'
 import { CheckoutSheet } from './checkout-sheet'
+import { LeadSheet } from './lead-sheet'
+import { ProductFeed } from './product-feed'
 import { InAppNotificationToast } from './in-app-notification-toast'
 import { PullToRefresh } from './pull-to-refresh'
 import { SmartScrollButton } from './smart-scroll-button'
@@ -206,6 +208,17 @@ export function AppShell({
         onOrderCreated={() => { setCheckoutOpen(false); setCartOpen(false) }}
         onNavigate={onNavigate}
       />
+
+      {/* v25.10 (Task #16): Global LeadSheet — "Оставить заявку" modal.
+          Listens for `open-lead` events from product pages. Replaces the
+          old "Купить" CTA (which opened CheckoutSheet) since payments are
+          not connected. */}
+      <LeadSheet />
+
+      {/* v25.10 (Task #3): Global ProductFeed — fullscreen vertical feed
+          (Reels / TikTok style). Listens for `open-feed` events. Triggered
+          by a button on the home page. Uses existing /api/products data. */}
+      <ProductFeed />
 
       {/* In-app notification toast — floating top card shown when a message
           arrives in a conversation the user is NOT currently viewing.

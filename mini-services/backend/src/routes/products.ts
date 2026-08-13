@@ -685,6 +685,9 @@ router.post(
         departmentId: data.departmentId || null,
         // v25.8 (TRI999 launch): colors array
         colors: JSON.stringify(data.colors ?? []),
+        // v25.10 (Task #6): vertical product video
+        videoUrl: data.videoUrl ?? null,
+        videoPoster: data.videoPoster ?? null,
       },
     })
     await auditLog(req, 'product', product.id, 'create', {
@@ -723,6 +726,10 @@ const updateProductSchema = z.object({
       image: z.string().min(1).max(2048),
     })
   ).max(50).optional(),
+  // v25.10 (Task #6): vertical product video — admin can set/clear.
+  // NULL clears the video.
+  videoUrl: z.string().max(2048).nullable().optional(),
+  videoPoster: z.string().max(2048).nullable().optional(),
 })
 
 // PATCH /api/products/:id — admin only
@@ -758,6 +765,9 @@ router.patch(
         ...(data.departmentId !== undefined && { departmentId: data.departmentId || null }),
         // v25.8: colors array
         ...(data.colors !== undefined && { colors: JSON.stringify(data.colors) }),
+        // v25.10 (Task #6): vertical product video
+        ...(data.videoUrl !== undefined && { videoUrl: data.videoUrl }),
+        ...(data.videoPoster !== undefined && { videoPoster: data.videoPoster }),
       },
     })
     await auditLog(req, 'product', updated.id, 'update', {

@@ -74,13 +74,14 @@ export function MediaHubOverlay({
     setShowSelector(false)
   }, [])
 
-  // v18.11: Video Hub access check — non-admins get a toast instead of the overlay.
+  // v25.10 (Task #15): Video Hub — open for ALL users (was admin-only).
+  // The films module is already wired and functional — the previous
+  // admin-only gate was a holdover from when the module was unstable.
+  // Now that the films player (HLS/DASH/iframe/native adapters) is stable,
+  // all users can browse and watch. Admin-only restrictions are still
+  // enforced server-side for film UPLOADS (POST /api/films requires admin).
   const handleVideoHubClick = () => {
-    if (isAdmin) {
-      openSection('films')
-    } else {
-      toast.info('Video Hub скоро будет доступен. Раздел в разработке.')
-    }
+    openSection('films')
   }
 
   // ---- If initialFilmId is set, jump straight to films section ----

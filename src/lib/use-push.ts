@@ -257,11 +257,31 @@ export function usePushNotifications() {
         // cache the failure so we don't keep retrying on every focus event.
         // Previously this threw, was caught at the bottom, and retried on
         // every focus — silent infinite retry loop.
+        //
+        // v25.10 (P1 fix): the disable flag was PERMANENT (no TTL, no
+        // auto-recovery). If the backend returned 503 once (brief outage,
+        // or before VAPID was configured), the user NEVER received push
+        // again until manual localStorage clear. We now store the flag WITH
+        // a timestamp and auto-recover after 24h. This balances "don't
+        // hammer a broken backend" against "don't permanently break push
+        // for the user".
         const VAPID_DISABLED_KEY = '999pro-push-vapid-disabled'
+        const VAPID_DISABLED_TTL_MS = 24 * 60 * 60 * 1000 // 24h
         try {
-          if (localStorage.getItem(VAPID_DISABLED_KEY) === '1') {
-            pushWarn('VAPID disabled on backend — skipping (clear localStorage to retry)')
-            return
+          const raw = localStorage.getItem(VAPID_DISABLED_KEY)
+          if (raw === '1' || raw === 'legacy') {
+            // Legacy permanent flag — clear it and let us retry. This
+            // migrates existing users who were permanently stuck.
+            localStorage.removeItem(VAPID_DISABLED_KEY)
+          } else if (raw) {
+            // New format: '1|<timestamp>' — check age.
+            const ts = Number(raw.split('|')[1] || 0)
+            if (ts && Date.now() - ts < VAPID_DISABLED_TTL_MS) {
+              pushWarn('VAPID disabled on backend recently — skipping (will retry in <24h)')
+              return
+            }
+            // TTL expired — clear and retry.
+            localStorage.removeItem(VAPID_DISABLED_KEY)
           }
         } catch {}
         let vapidRes: { publicKey: string }
@@ -269,8 +289,10 @@ export function usePushNotifications() {
           vapidRes = await api.get<{ publicKey: string }>('/api/push/vapid-public')
         } catch (e: any) {
           if (e?.status === 503) {
-            pushWarn('Backend returned 503 — VAPID not configured. Disabling push retries.')
-            try { localStorage.setItem(VAPID_DISABLED_KEY, '1') } catch {}
+            pushWarn('Backend returned 503 — VAPID not configured. Disabling push retries for 24h.')
+            try {
+              localStorage.setItem(VAPID_DISABLED_KEY, `1|${Date.now()}`)
+            } catch {}
           }
           return
         }

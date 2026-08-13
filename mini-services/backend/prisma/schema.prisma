@@ -203,6 +203,13 @@ model Product {
   // Example: [{"name":"Белый","image":"/uploads/white.jpg"},{"name":"Чёрный","image":"/uploads/black.jpg"}]
   // Empty array = no color variants (regular image gallery is used).
   colors       String   @default("[]")
+  // v25.10 (Task #6): vertical (3:4) product video — short clip (10-60s)
+  // shown in the product viewer, on home/catalog cards, and in the new
+  // fullscreen feed. NULL = no video (image gallery only). Server-side
+  // compressed via FFmpeg (H.264 + AAC + faststart). Admin-only upload.
+  videoUrl     String?
+  // v25.10: poster image for the video (first frame extracted by FFmpeg).
+  videoPoster  String?
   // Engagement counters — lifetime totals, used by the smart-ranking
   // algorithm on the home page. These NEVER decrease (a favorite removed
   // still counts as a "favorite add" because the user showed interest).
