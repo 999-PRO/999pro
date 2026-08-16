@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, ReactNode } from 'react'
-import { Sidebar } from './sidebar'
+import { DesktopHeader } from './desktop-header'
 import { BottomNav } from './bottom-nav'
 import { MobileHeader } from './mobile-header'
 import { CallManager } from './call-manager'
@@ -39,7 +39,7 @@ import type { Product } from '@/lib/types'
 import { useOrdersBadgeStore } from '@/lib/orders-badge-store'
 import { useAuthStore } from '@/lib/auth-store'
 
-/** App shell: persistent sidebar on desktop, header + bottom nav on mobile. */
+/** App shell: desktop top header, mobile header + bottom nav. */
 export function AppShell({
   view,
   onNavigate,
@@ -123,12 +123,9 @@ export function AppShell({
   }, [authed, view, incrementOrdersBadge])
 
   return (
-    <div className="min-h-screen flex bg-background">
-      {/* Desktop sidebar — compact premium rail (76px / 88px on xl) */}
-      <Sidebar view={view} onNavigate={onNavigate} onMore={onMore} onOpenSearch={onOpenSearch} />
-
-      {/* Main column — offset for fixed sidebar on desktop */}
-      <div className="flex-1 flex flex-col min-w-0 md:ml-[76px] xl:ml-[88px]">
+    <div className="min-h-screen bg-background">
+      <div className="flex min-h-screen flex-col min-w-0">
+        <DesktopHeader view={view} onNavigate={onNavigate} onMore={onMore} onOpenSearch={onOpenSearch} />
         <MobileHeader view={view} onNavigate={onNavigate} onOpenSearch={onOpenSearch} />
         {/* v20: email verification banner completely removed from app shell.
             Verification prompts now only appear contextually at order
