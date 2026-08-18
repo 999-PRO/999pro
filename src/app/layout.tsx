@@ -301,59 +301,67 @@ const SPLASH_BOOTSTRAP = `
       });
     }
 
-    // Splash overlay is created on DOMContentLoaded using the resolved isDark.
+    // v25.12: Modern splash screen — gradient bg, animated logo, pulse indicator
     document.addEventListener('DOMContentLoaded', function() {
       if (document.getElementById('app-splash')) return;
       var stored2 = null;
       try { stored2 = localStorage.getItem('theme'); } catch (e) {}
       var isNeon = stored2 === 'neon';
-      var bg = isNeon ? '#08060f' : (isDark ? '#0f172a' : '#f5f6f7');
-      var fg = isDark ? '#ffffff' : '#0f172a';
-      var sub = isDark ? 'rgba(255,255,255,0.85)' : 'rgba(15,23,42,0.85)';
-      var spinnerTrack = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(15,23,42,0.15)';
-      var spinnerTop = isNeon ? '#8b5cf6' : '#3b82f6';
 
       var s = document.createElement('div');
       s.id = 'app-splash';
-      s.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:' + bg + ';z-index:9999;transition:opacity .3s ease;';
-      // Splash logo: TRI999 wordmark.
+      s.style.cssText = 'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;transition:opacity .4s ease;overflow:hidden;background:linear-gradient(135deg,#EC4899 0%,#A855F7 50%,#9333EA 100%);';
+
+      // Animated logo container
+      var logoWrap = document.createElement('div');
+      logoWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:12px;animation:app-splash-fadeIn .6s ease;';
+
+      // TRI999 wordmark — white with glow
       var logo = document.createElement('div');
-      logo.style.cssText = 'display:flex;align-items:center;line-height:1;color:' + fg + ';font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;';
-      var logoNum = document.createElement('div');
-      logoNum.style.cssText = 'font-size:48px;font-weight:800;letter-spacing:-0.02em;';
-      logoNum.textContent = 'TRI999';
-      logo.appendChild(logoNum);
-      s.appendChild(logo);
-      var sp = document.createElement('div');
-      sp.style.cssText = 'position:absolute;bottom:25%;width:36px;height:36px;border:3px solid ' + spinnerTrack + ';border-top-color:' + spinnerTop + ';border-radius:50%;animation:app-splash-spin .8s linear infinite;';
-      s.appendChild(sp);
+      logo.style.cssText = 'font-size:42px;font-weight:900;letter-spacing:-0.03em;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;text-shadow:0 4px 24px rgba(0,0,0,0.25);animation:app-splash-pulse 2s ease-in-out infinite;';
+      logo.textContent = 'TRI999';
+      logoWrap.appendChild(logo);
+
+      // Tagline
+      var tagline = document.createElement('div');
+      tagline.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.8);font-weight:500;letter-spacing:0.05em;text-transform:uppercase;';
+      tagline.textContent = 'Маркетплейс нового поколения';
+      logoWrap.appendChild(tagline);
+
+      s.appendChild(logoWrap);
+
+      // Modern loading indicator — 3 bouncing dots
+      var dots = document.createElement('div');
+      dots.style.cssText = 'position:absolute;bottom:20%;display:flex;gap:8px;';
+      for (var i = 0; i < 3; i++) {
+        var dot = document.createElement('div');
+        dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.9);animation:app-splash-bounce 1.4s ease-in-out ' + (i * 0.16) + 's infinite;';
+        dots.appendChild(dot);
+      }
+      s.appendChild(dots);
+
+      // Styles for animations
       var st = document.createElement('style');
-      st.textContent = '@keyframes app-splash-spin{to{transform:rotate(360deg)}}';
+      st.textContent =
+        '@keyframes app-splash-spin{to{transform:rotate(360deg)}}' +
+        '@keyframes app-splash-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.85;transform:scale(0.98)}}' +
+        '@keyframes app-splash-bounce{0%,80%,100%{transform:scale(0.6);opacity:0.5}40%{transform:scale(1);opacity:1}}' +
+        '@keyframes app-splash-fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}';
       document.head.appendChild(st);
       document.body.appendChild(s);
-      // v11-fix: reduced splash timeout from 8000ms to 3000ms.
-      // The 8s timeout was a fallback for when React failed to hydrate,
-      // but it caused users to see the splash for too long on slow 3G.
-      // 3s is enough — if React hasn't mounted by then, something is wrong.
-      //
-      // v13.1 (audit P0-2 fix): also remove the splash on window.load so
-      // non-Home routes (/p/[shortId], /dl/[shortId], /og/...) don't show
-      // the splash for the full 3s when their React tree already mounted.
-      // Previously the splash was only removed by Home's mount effect; on
-      // share pages users saw a spinner over a fully rendered page.
+
+      // v25.12: reduced timeout to 2.5s — modern splash is shorter
       setTimeout(function() {
         if (document.getElementById('app-splash')) {
           s.style.opacity = '0';
-          setTimeout(function() { s.remove(); }, 300);
+          setTimeout(function() { s.remove(); }, 400);
         }
-      }, 3000);
-      // window.load fires after all resources finish loading — by then
-      // React has definitely hydrated on any route. Remove splash immediately.
+      }, 2500);
       window.addEventListener('load', function() {
         var splash = document.getElementById('app-splash');
         if (splash) {
           splash.style.opacity = '0';
-          setTimeout(function() { splash.remove(); }, 300);
+          setTimeout(function() { splash.remove(); }, 400);
         }
       }, { once: true });
     });

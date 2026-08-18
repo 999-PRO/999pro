@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, Search, LogOut, KeyRound, Phone, Sparkles, Activity, Share2, Users, Sun, Moon, Truck, ShoppingBag, Home, FileText, Shield, ShieldCheck, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, UserPlus, Smartphone, Megaphone, MessagesSquare } from 'lucide-react'
+import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, Search, LogOut, KeyRound, Phone, Sparkles, Activity, Share2, Users, Sun, Moon, Truck, ShoppingBag, Home, FileText, Shield, ShieldCheck, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, UserPlus, Smartphone, Megaphone, MessagesSquare, FolderTree, FileSpreadsheet } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
@@ -20,6 +20,8 @@ const NAV = [
   { id: 'home', label: 'Главная', icon: Home },
   { id: 'share', label: 'Smart Share', icon: Share2 },
   { id: 'products', label: 'Товары', icon: Package },
+  { id: 'categories', label: 'Категории', icon: FolderTree },
+  { id: 'price-lists', label: 'Прайс-листы', icon: FileSpreadsheet },
   { id: 'orders', label: 'Заказы', icon: ShoppingBag },
   { id: 'delivery', label: 'Доставка', icon: Truck },
   { id: 'users', label: 'Пользователи', icon: Users },

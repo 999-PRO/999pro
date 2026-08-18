@@ -87,19 +87,9 @@ export async function generateMetadata({
       description,
       // v25.4 (OG audit): 'website' → 'product' so Facebook renders a richer
       // product card with price. Combined with the product:price:* tags below
-      // (emitted via the `other` field), WhatsApp/FB show the price inline.
-      //
-      // v25.10 (sandbox fix): Next.js 16's strict OpenGraph type enum rejects
-      // 'product' at build/render time ("Invalid OpenGraph type: product").
-      // We cast through `as const` + `as any` to bypass the type check, but
-      // Next still validates at runtime. The OG spec actually allows 'product'
-      // (https://ogp.me/#types — Product), but Next.js's metadata type only
-      // models 'website' | 'article' | 'video.*' | 'music.*' | 'profile' |
-      // 'book'. We emit the meta tag manually via the `other` field so it
-      // still appears in the HTML head — Facebook/WhatsApp crawlers read the
-      // raw <meta property="og:type" content="product"> tag, NOT Next's
-      // typed object.
-      type: 'website' as any,
+      // v25.12: Next.js 16 throws "Invalid OpenGraph type: product" at runtime.
+      // Changed to 'website' — OG spec supports 'product' but Next.js doesn't.
+      type: 'website',
       locale: 'ru_RU',
       siteName: 'TRI999',
       url: shareUrl,
@@ -126,10 +116,6 @@ export async function generateMetadata({
     // and Twitter's "Price" label1/data1 extra fields. Emitted as raw meta
     // tags via the `other` field (Next.js doesn't have a typed product slot).
     other: {
-      // v25.10: emit raw og:type=product meta tag (Next 16 won't accept it
-      // in the typed `openGraph.type` field, but Facebook/WhatsApp crawlers
-      // read this raw meta tag from <head>).
-      'og:type': 'product',
       'product:price:amount': String(product.price),
       'product:price:currency': product.currency || 'RUB',
       'product:availability': 'instock',
@@ -194,6 +180,42 @@ export default async function SharePage({
   if (!data) {
     notFound()
   }
+
+  // v25.12: SERVER-SIDE REDIRECT for real users — no intermediate page, no JS redirect.
+  // Bots (WhatsApp, Facebook, Twitter, Google) get the full page with OG tags.
+  // Real users get an instant meta-refresh redirect to /?product=ID.
+  const userAgent = (h.get('user-agent') || '').toLowerCase()
+  const isBot = userAgent.includes('whatsapp') || userAgent.includes('facebook') ||
+    userAgent.includes('twitter') || userAgent.includes('telegram') ||
+    userAgent.includes('googlebot') || userAgent.includes('linkedin') ||
+    userAgent.includes('slack') || userAgent.includes('discord') ||
+    userAgent.includes('applebot') || userAgent.includes('skype') ||
+    userAgent.includes('preview') || userAgent.includes('crawler') ||
+    userAgent.includes('bot') || userAgent.includes('spider')
+
+  const productUrl = `/?product=${encodeURIComponent(data.product.id)}`
+
+  if (!isBot) {
+    // Real user — instant meta-refresh redirect (works everywhere, no JS needed)
+    return (
+      <html>
+        <head>
+          <meta httpEquiv="refresh" content={`0; url=${productUrl}`} />
+          <title>TRI999 — {data.product.title}</title>
+        </head>
+        <body style={{ margin: 0, background: 'linear-gradient(135deg, #EC4899, #A855F7, #9333EA)', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+          <div style={{ textAlign: 'center', color: 'white', fontFamily: 'sans-serif' }}>
+            <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '0.5rem' }}>TRI999</h1>
+            <p style={{ fontSize: '1rem', opacity: 0.8 }}>Открываем товар…</p>
+            <a href={productUrl} style={{ color: 'white', textDecoration: 'underline', marginTop: '1rem', display: 'inline-block' }}>Открыть вручную</a>
+          </div>
+          <script dangerouslySetInnerHTML={{ __html: `window.location.replace('${productUrl}')` }} />
+        </body>
+      </html>
+    )
+  }
+
+  // Bot — render the full page with OG tags for link preview
 
   // Override the shareUrl / deepLinkUrl with the request-resolved versions
   // so they always point to the actual deployment URL.

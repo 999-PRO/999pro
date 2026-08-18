@@ -13,8 +13,6 @@ const MODULES = [
   { key: 'video-hub', label: 'Video Hub', icon: '🎬', desc: 'Каталог фильмов и сериалов' },
   { key: 'media-hub', label: 'Media Hub', icon: '📺', desc: 'Медиа-контент' },
   { key: 'catalog', label: 'Каталог', icon: '🛍️', desc: 'Каталог товаров' },
-  // v25.10 (Task #3): fullscreen vertical product feed (Reels-style).
-  { key: 'feed', label: 'Лента товаров', icon: '🎞️', desc: 'Вертикальная лента товаров в стиле Reels — листайте товары жестом, смотрите видео, открывайте описание' },
   { key: 'orders', label: 'Заказы', icon: '📦', desc: 'История и статус заказов' },
   { key: 'profile', label: 'Профиль', icon: '👤', desc: 'Профиль пользователя' },
   { key: 'favorites', label: 'Избранное', icon: '❤️', desc: 'Избранные товары' },

@@ -69,10 +69,12 @@ const nextConfig: NextConfig = {
       //   - 'localhost' / '127.0.0.1' — backend dev uploads
       //   - 'images.unsplash.com' — seed data
       //   - '*.space-z.ai' — sandbox preview backend
+      //   - 'commondatastorage.googleapis.com' — v25.12: test sample videos
       { protocol: "http", hostname: "localhost" },
       { protocol: "http", hostname: "127.0.0.1" },
       { protocol: "https", hostname: "images.unsplash.com" },
       { protocol: "https", hostname: "*.space-z.ai" },
+      { protocol: "https", hostname: "commondatastorage.googleapis.com" },
     ],
   },
   // v8-audit-fix: CSP headers for XSS defense-in-depth

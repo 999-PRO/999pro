@@ -198,17 +198,17 @@ router.get(
     const needle = q.toLowerCase()
     const phoneNeedle = q.replace(/\D+/g, '')
     const searchOR: any[] = [
-      { username: { contains: q } },
-      { displayName: { contains: q } },
-      ...(q.startsWith('+') || /^\d/.test(q) ? [{ phone: { contains: q } }] : []),
+      { username: { contains: q, mode: 'insensitive' } },
+      { displayName: { contains: q, mode: 'insensitive' } },
+      ...(q.startsWith('+') || /^\d/.test(q) ? [{ phone: { contains: q, mode: 'insensitive' } }] : []),
     ]
     // Add normalized phone search if the needle has digits and differs from raw.
     if (phoneNeedle && phoneNeedle !== q && /^\d/.test(q)) {
-      searchOR.push({ phone: { contains: phoneNeedle } })
+      searchOR.push({ phone: { contains: phoneNeedle, mode: 'insensitive' } })
     }
     // Only admins can search by email — sensitive PII.
     if (isAdmin) {
-      searchOR.push({ email: { contains: q } })
+      searchOR.push({ email: { contains: q, mode: 'insensitive' } })
     }
     const candidates = await prisma.user.findMany({
       where: {

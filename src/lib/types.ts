@@ -58,6 +58,9 @@ export interface Product {
   videoUrl?: string | null
   // v25.10: poster image (first frame extracted by FFmpeg).
   videoPoster?: string | null
+  // v25.12: position of the video in the media carousel (0 = first,
+  // 1 = after 1st image, etc.). null/0 = first slide. Admin controls this.
+  videoPosition?: number | null
 }
 
 // v11: helper — resolve stock label from quantity + inStock.

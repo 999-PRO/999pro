@@ -33,6 +33,10 @@ const ContactsManager = dynamic(() => import('@/components/contacts-manager').th
 // v24.4: Mass push + departments
 const MassPushManager = dynamic(() => import('@/components/mass-push-manager').then(m => ({ default: m.MassPushManager })), { ssr: false, loading: loadingFallback })
 const DepartmentsManager = dynamic(() => import('@/components/departments-manager').then(m => ({ default: m.DepartmentsManager })), { ssr: false, loading: loadingFallback })
+// v25.11: Categories Manager — replaces hardcoded PROJECT_CATEGORIES
+const CategoriesManager = dynamic(() => import('@/components/categories-manager').then(m => ({ default: m.CategoriesManager })), { ssr: false, loading: loadingFallback })
+// v25.12: Price Lists Manager — upload PDF/Word/images with prices for clients
+const PriceListsManager = dynamic(() => import('@/components/price-lists-manager').then(m => ({ default: m.PriceListsManager })), { ssr: false, loading: loadingFallback })
 // v24.5: Global AI Assistant for ALL studio sections
 const GlobalStudioAI = dynamic(() => import('@/components/global-studio-ai').then(m => ({ default: m.GlobalStudioAI })), { ssr: false })
 // v12.3.1: StoriesManager RESTORED (Stories is a standalone module — not Feed).
@@ -67,9 +71,9 @@ const ManagersManager = dynamic(() => import('@/components/managers-manager').th
 // v25.8 (TRI999 launch): Chat settings — visibility + test-data cleanup
 const ChatSettingsManager = dynamic(() => import('@/components/chat-settings-manager').then(m => ({ default: m.ChatSettingsManager })), { ssr: false, loading: loadingFallback })
 
-type View = 'analytics' | 'share' | 'products' | 'users' | 'managers' | 'leads' | 'contacts' | 'stories' | 'club' | 'banners' | 'hero' | 'header' | 'audit' | 'orders' | 'delivery' | 'home' | 'info-pages' | 'moderation' | 'aikb' | 'ai-providers' | 'promo-codes' | 'bonus-points' | 'module-access' | 'security' | 'registration-settings' | 'communication' | 'splash-screen' | 'mass-push' | 'departments' | 'chat-settings'
+type View = 'analytics' | 'share' | 'products' | 'users' | 'managers' | 'leads' | 'contacts' | 'stories' | 'club' | 'banners' | 'hero' | 'header' | 'audit' | 'orders' | 'delivery' | 'home' | 'info-pages' | 'moderation' | 'aikb' | 'ai-providers' | 'promo-codes' | 'bonus-points' | 'module-access' | 'security' | 'registration-settings' | 'communication' | 'splash-screen' | 'mass-push' | 'departments' | 'categories' | 'price-lists' | 'chat-settings'
 
-const VALID_VIEWS = ['analytics', 'share', 'products', 'users', 'managers', 'leads', 'contacts', 'stories', 'club', 'banners', 'hero', 'header', 'audit', 'orders', 'delivery', 'home', 'info-pages', 'moderation', 'aikb', 'ai-providers', 'promo-codes', 'bonus-points', 'module-access', 'security', 'registration-settings', 'communication', 'splash-screen', 'mass-push', 'departments', 'chat-settings']
+const VALID_VIEWS = ['analytics', 'share', 'products', 'users', 'managers', 'leads', 'contacts', 'stories', 'club', 'banners', 'hero', 'header', 'audit', 'orders', 'delivery', 'home', 'info-pages', 'moderation', 'aikb', 'ai-providers', 'promo-codes', 'bonus-points', 'module-access', 'security', 'registration-settings', 'communication', 'splash-screen', 'mass-push', 'departments', 'categories', 'price-lists', 'chat-settings']
 
 function getInitialView(): View {
   if (typeof window === 'undefined') return 'analytics'
@@ -317,6 +321,8 @@ useEffect(() => {
               {view === 'contacts' && <ContactsManager key="contacts" />}
               {view === 'mass-push' && <MassPushManager key="mass-push" />}
               {view === 'departments' && <DepartmentsManager key="departments" />}
+              {view === 'categories' && <CategoriesManager key="categories" />}
+              {view === 'price-lists' && <PriceListsManager key="price-lists" />}
               {/* v12.3.1: Stories render block RESTORED. */}
               {view === 'stories' && <StoriesManager key="stories" />}
               {view === 'club' && <ClubManager key="club" />}

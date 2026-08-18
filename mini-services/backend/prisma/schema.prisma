@@ -34,7 +34,7 @@ generator client {
 
 datasource db {
   // v25.8 (TRI999 launch): PostgreSQL is the ONLY production database provider.
-  provider = "postgresql"
+  provider = "sqlite"
   url = env("DATABASE_URL")
 }
 
@@ -210,6 +210,9 @@ model Product {
   videoUrl     String?
   // v25.10: poster image for the video (first frame extracted by FFmpeg).
   videoPoster  String?
+  // v25.12: position of the video in the media carousel (0 = first,
+  // 1 = after first image, etc.). Default 0 = video is the first slide.
+  videoPosition Int?
   // Engagement counters — lifetime totals, used by the smart-ranking
   // algorithm on the home page. These NEVER decrease (a favorite removed
   // still counts as a "favorite add" because the user showed interest).
@@ -221,6 +224,9 @@ model Product {
   // all /api/departments/* routes + Product.departmentId FK would have crashed
   // at runtime on Postgres prod. Mirrors the SQLite schema.
   departmentId String?
+  // v25.11: optional link to Category entity (replaces hardcoded PROJECT_CATEGORIES).
+  // When null, Product.category string is still used for backward compat.
+  categoryId   String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @default(now()) @updatedAt
 
@@ -238,6 +244,8 @@ model Product {
   shareEvents ShareEvent[]
   // v24.6-audit (C-DB-1 fix): Department relation (was missing in postgres schema)
   department  Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  // v25.11: Category relation (optional).
+  categoryRow Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   @@index([isPopular])
   @@index([category])
@@ -253,6 +261,7 @@ model Product {
   @@index([purchases])
   @@index([deletedAt]) // v9-audit-fix: soft-delete filter index
   @@index([departmentId]) // v24.6-audit (H-DB-6 fix): index on FK for fast department-filtered queries
+  @@index([categoryId]) // v25.11: index for category-filtered catalog queries
 }
 
 // ProductView — one row per product page open. Used for:
@@ -1603,4 +1612,60 @@ model Department {
 
   // Products linked to this department
   products    Product[]
+}
+
+// ============================================================================
+//  Category — v25.11: replaces hardcoded PROJECT_CATEGORIES in 5 places.
+//  Admin manages CRUD + order via Studio -> "Kategorii". Frontend reads via
+//  GET /api/categories (public). Product.category field stays as string for
+//  backward compat (legacy products without a Category row still work).
+// ============================================================================
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  icon        String   @default("Folder")
+  description String?
+  sortOrder   Int      @default(0)
+  visible     Boolean  @default(true)
+  parentId    String?
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Category[] @relation("CategoryHierarchy")
+  products    Product[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([parentId, sortOrder])
+  @@index([visible, sortOrder])
+}
+
+// ============================================================================
+//  PriceList — v25.12: прайс-листы для клиентов.
+//  Admin загружает PDF / Word / изображения с прайсами через Studio.
+//  Clients видят список на /?view=price и могут скачать/просмотреть файлы.
+// ============================================================================
+model PriceList {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  // File URL — relative path (/uploads/price-lists/...) or external URL
+  fileUrl     String
+  // File type: 'pdf' | 'word' | 'image' | 'excel' | 'other'
+  fileType    String   @default("pdf")
+  // Optional: thumbnail/preview image (for PDFs/Word)
+  thumbnail   String?
+  // Optional: category this price list belongs to (e.g. "Реклама", "Мебель")
+  category    String?
+  // Optional: file size in bytes (for display)
+  fileSize    Int?
+  // Visibility + ordering
+  visible     Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  // Optional: expiry date (price list auto-hides after this date)
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@index([visible, sortOrder])
+  @@index([category])
 }

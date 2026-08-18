@@ -37,6 +37,8 @@ import chatRoutes from './routes/chat.js'
 import uploadRoutes from './routes/upload.js'
 import bannersRoutes from './routes/banners.js'
 import departmentsRoutes from './routes/departments.js'
+import categoriesRoutes from './routes/categories.js'
+import priceListRoutes from './routes/price-lists.js'
 import infoPagesRoutes from './routes/info-pages.js'
 import moderationRoutes from './routes/moderation.js'
 import settingsRoutes from './routes/settings.js'
@@ -534,6 +536,8 @@ app.use('/api/stories', storiesRoutes)
 app.use('/api/chat', chatRoutes)
 app.use('/api/banners', bannersRoutes)
 app.use('/api/departments', departmentsRoutes)
+app.use('/api/categories', categoriesRoutes)
+app.use('/api/price-lists', priceListRoutes)
 app.use('/api/info-pages', infoPagesRoutes)
 app.use('/api/moderation', moderationRoutes)
 app.use('/api/settings', settingsRoutes)

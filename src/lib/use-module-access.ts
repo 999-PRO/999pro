@@ -19,10 +19,6 @@ const DEFAULT_MODULES: ModulesMap = {
   'video-hub': true,
   'media-hub': true,
   catalog: true,
-  // v25.10 (Task #3): fullscreen product feed (Reels-style).
-  // Always enabled by default — uses existing /api/products data.
-  // Studio admin can disable via module-access settings if needed.
-  feed: true,
   orders: true,
   profile: true,
   favorites: true,

@@ -1867,8 +1867,11 @@ export function ChatView() {
       {/* Animated decorative background — floating SVG shapes, "TRI999" text,
           soft coloured circles. pointer-events:none, z-0. */}
       <ChatBackground />
-      {/* h-full на мобильном (= 100dvh родителя), на десктопе — calc от viewport */}
-      <div className="relative z-10 flex flex-col md:flex-row gap-0 md:gap-4 px-0 md:px-6 py-0 md:py-4 h-full md:h-[calc(100vh-6rem)] overflow-hidden">
+      {/* v25.12: chat uses full viewport height on mobile (h-[100dvh]) to
+          bypass the .app-main padding-top. The chat manages its own internal
+          layout (header + search + message list + input bar). On desktop,
+          h-[calc(100vh-6rem)] leaves room for the TopBar. */}
+      <div className="relative z-10 flex flex-col md:flex-row gap-0 md:gap-4 px-0 md:px-6 py-0 md:py-4 h-[100dvh] md:h-[calc(100vh-6rem)] overflow-hidden">
         {/* Sidebar: conversation list — min-h-0 для скролла списка */}
         <div className={cn(
           'md:w-80 shrink-0 flex flex-col gap-3 px-4 md:px-0 pt-4 md:pt-0 min-h-0',

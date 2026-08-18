@@ -103,7 +103,6 @@ export function QrModal({ open, onClose, url, title, shortId }: Props) {
       >
         <div className="px-5 py-4 flex items-center justify-between border-b border-slate-200/60 dark:border-slate-800/60">
           <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 grid place-items-center text-white font-extrabold text-sm">9</div>
             <div>
               <div className="font-bold text-sm leading-tight">QR-код товара</div>
               <div className="text-xs text-slate-500 truncate max-w-[200px]">{title}</div>
