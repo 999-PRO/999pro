@@ -155,9 +155,9 @@ async function searchProducts(q: string): Promise<UniversalProductHit[]> {
         OR: [
           // v25.10: mode:'insensitive' for Postgres (Cyrillic case-insensitive).
           // SQLite ignores this flag — we JS-filter below to compensate.
-          { title: { contains: q, mode: 'insensitive' } },
-          { description: { contains: q, mode: 'insensitive' } },
-          { category: { contains: q, mode: 'insensitive' } },
+          { title: { contains: q } },
+          { description: { contains: q } },
+          { category: { contains: q } },
         ],
       },
       orderBy: [{ isPopular: 'desc' }, { views: 'desc' }, { createdAt: 'desc' }],
@@ -222,16 +222,16 @@ async function searchUsers(q: string, currentUserId: string): Promise<UniversalU
   // stored "+79991234567"). mode:'insensitive' for Postgres Cyrillic support.
   const phoneNeedle = normalizePhone(q)
   const orClause: any[] = [
-    { username: { contains: q, mode: 'insensitive' } },
-    { displayName: { contains: q, mode: 'insensitive' } },
-    { email: { contains: q, mode: 'insensitive' } },
+    { username: { contains: q } },
+    { displayName: { contains: q } },
+    { email: { contains: q } },
   ]
   // Only search phone if query has any digit (avoids full-table scan on
   // every 2-char username query).
   if (/\d/.test(q)) {
-    orClause.push({ phone: { contains: q, mode: 'insensitive' } })
+    orClause.push({ phone: { contains: q } })
     if (phoneNeedle && phoneNeedle !== q) {
-      orClause.push({ phone: { contains: phoneNeedle, mode: 'insensitive' } })
+      orClause.push({ phone: { contains: phoneNeedle } })
     }
   }
 
@@ -410,8 +410,8 @@ async function searchPages(q: string): Promise<UniversalPageHit[]> {
       where: {
         isPublished: true,
         OR: [
-          { title: { contains: q, mode: 'insensitive' } },
-          { subtitle: { contains: q, mode: 'insensitive' } },
+          { title: { contains: q } },
+          { subtitle: { contains: q } },
         ],
       },
       orderBy: [{ order: 'asc' }, { title: 'asc' }],

@@ -135,18 +135,6 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
   useEffect(() => {
     if (!productId) return
     api.post(`/api/products/${productId}/view`, { json: {} }).catch(() => {})
-    // v25.11: also record in localStorage for the "Recently viewed" block
-    // on the home page (used as a fallback for anonymous users).
-    try {
-      const raw = localStorage.getItem('999pro-recently-viewed')
-      let ids: string[] = raw ? JSON.parse(raw) : []
-      if (!Array.isArray(ids)) ids = []
-      ids = ids.filter((id) => id !== productId)
-      ids.unshift(productId)
-      ids = ids.slice(0, 20)
-      localStorage.setItem('999pro-recently-viewed', JSON.stringify(ids))
-      window.dispatchEvent(new CustomEvent('999pro:recently-viewed-changed'))
-    } catch { /* ignore */ }
   }, [productId])
 
   // v20: Reset scroll position to top whenever the product changes.
@@ -296,87 +284,78 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                   pause, seek, fullscreen, Picture-in-Picture). The poster
                   (first frame extracted by FFmpeg) shows before the user
                   taps play, so the page doesn't show a black frame. */}
-              {/* v25.12: UNIFIED MEDIA CAROUSEL — video + images in ONE carousel.
-                  Video position is controlled by product.videoPosition (0 = first,
-                  1 = after 1st image, etc.). Admin sets this in Studio.
-                  Swipe left/right navigates between video and images. */}
-              {(() => {
-                // Build media list: array of { type: 'video' | 'image', url, poster? }
-                // Video is inserted at position = product.videoPosition (default 0).
-                const videoPos = product.videoPosition ?? 0
-                const imagesArr = product.images || []
-                const mediaList: Array<{ type: 'video' | 'image'; url: string; poster?: string | null }> = []
-                const videoInserted = { done: false }
-                for (let i = 0; i < imagesArr.length; i++) {
-                  // Insert video before this image if position matches
-                  if (!videoInserted.done && videoPos === i && product.videoUrl) {
-                    mediaList.push({ type: 'video', url: product.videoUrl, poster: product.videoPoster })
-                    videoInserted.done = true
-                  }
-                  mediaList.push({ type: 'image', url: imagesArr[i] })
-                }
-                // If video not yet inserted (position >= images.length), append at end
-                if (!videoInserted.done && product.videoUrl) {
-                  mediaList.push({ type: 'video', url: product.videoUrl, poster: product.videoPoster })
-                }
-                const mediaCount = mediaList.length
-                const usingColorImage = selectedColorIdx !== null && product.colors?.[selectedColorIdx]?.image
-
-                return (
-                  <div
-                    className="relative w-full aspect-[3/4] overflow-hidden bg-slate-100 dark:bg-slate-900 select-none"
-                    style={{ touchAction: 'pan-y' }}
-                    onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX }}
-                    onTouchEnd={(e) => {
-                      if (usingColorImage || mediaCount <= 1) return
-                      const dx = e.changedTouches[0].clientX - touchStartX.current
-                      if (dx < -50) setImgIndex((i) => (i + 1) % mediaCount)
-                      else if (dx > 50) setImgIndex((i) => (i - 1 + mediaCount) % mediaCount)
-                    }}
-                  >
-                    <div
-                      className="flex h-full transition-transform duration-300 ease-out"
-                      style={{
-                        transform: usingColorImage
-                          ? 'translateX(0)'
-                          : `translateX(-${imgIndex * 100}%)`,
-                      }}
-                    >
-                      {usingColorImage ? (
-                        <img
-                          src={assetUrl(product.colors[selectedColorIdx].image)}
-                          alt={`${product.title} — ${product.colors[selectedColorIdx].name}`}
-                          className="h-full w-full object-cover shrink-0"
-                          style={{ aspectRatio: '3 / 4' }}
-                          decoding="async"
-                          draggable={false}
-                        />
-                      ) : (
-                        mediaList.map((m, i) => (
-                          <div key={i} className="relative h-full w-full shrink-0 bg-slate-100 dark:bg-slate-900" style={{ aspectRatio: '3 / 4' }}>
-                            {m.type === 'video' ? (
-                              <video
-                                src={assetUrl(m.url)}
-                                poster={m.poster ? assetUrl(m.poster) : undefined}
-                                className="h-full w-full object-cover"
-                                controls
-                                playsInline
-                                preload="metadata"
-                              />
-                            ) : (
-                              <img
-                                src={assetUrl(m.url)}
-                                alt={`${product.title} — фото ${i + 1}`}
-                                className="h-full w-full object-cover"
-                                style={{ aspectRatio: '3 / 4' }}
-                                decoding="async"
-                                draggable={false}
-                              />
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
+              {product.videoUrl && (
+                <div className="relative w-full aspect-[3/4] bg-black select-none">
+                  <video
+                    src={assetUrl(product.videoUrl)}
+                    poster={product.videoPoster ? assetUrl(product.videoPoster) : undefined}
+                    className="h-full w-full object-cover"
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+                </div>
+              )}
+              {/* v25.4 (TZ-2 task #6): FULL-BLEED image carousel —
+                  - 3:4 aspect ratio on mobile (and on desktop inside ProductPageDesktop)
+                  - Touches all 4 edges of the screen on mobile (no padding)
+                  - Bottom gradient fades into the background color so the
+                    image "melts" into the product description below
+                  - Back / Share buttons float over the image (glass style)
+                  - Dots indicator floats at the bottom of the image, above
+                    the gradient
+                  - Discount badge top-left (above the back button area) */}
+              <div
+                className="relative w-full aspect-[3/4] overflow-hidden bg-slate-100 dark:bg-slate-900 select-none"
+                // v25.7 (TZ ЭТАП 2.8): touch-action: 'pan-y' tells the browser
+                // "only vertical panning is allowed on this element". The
+                // JS handlers below still own horizontal swipe detection
+                // (onTouchStart records X, onTouchEnd flips the image if
+                // |dx| > 50). This eliminates the iOS Safari gesture-decision
+                // jank where a near-horizontal finger start would briefly
+                // stall the page's vertical scroll.
+                style={{ touchAction: 'pan-y' }}
+                onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX }}
+                onTouchEnd={(e) => {
+                  if (product.images.length <= 1) return
+                  const dx = e.changedTouches[0].clientX - touchStartX.current
+                  if (dx < -50) setImgIndex((i) => (i + 1) % product.images.length)
+                  else if (dx > 50) setImgIndex((i) => (i - 1 + product.images.length) % product.images.length)
+                }}
+              >
+                <div
+                  className="flex h-full transition-transform duration-300 ease-out"
+                  style={{
+                    transform: selectedColorIdx !== null && product.colors?.[selectedColorIdx]?.image
+                      ? 'translateX(0)'
+                      : `translateX(-${imgIndex * 100}%)`
+                  }}
+                >
+                  {/* v25.8: if a color is selected and has its own image, show
+                      that image instead of the gallery. Otherwise show the gallery. */}
+                  {selectedColorIdx !== null && product.colors?.[selectedColorIdx]?.image ? (
+                    <img
+                      src={assetUrl(product.colors[selectedColorIdx].image)}
+                      alt={`${product.title} — ${product.colors[selectedColorIdx].name}`}
+                      className="h-full w-full object-cover shrink-0"
+                      style={{ aspectRatio: '3 / 4' }}
+                      decoding="async"
+                      draggable={false}
+                    />
+                  ) : (
+                    product.images.map((src, i) => (
+                      <img
+                        key={i}
+                        src={assetUrl(src)}
+                        alt={`${product.title} — фото ${i + 1}`}
+                        className="h-full w-full object-cover shrink-0"
+                        style={{ aspectRatio: '3 / 4' }}
+                        decoding="async"
+                        draggable={false}
+                      />
+                    ))
+                  )}
+                </div>
 
                 {/* Top overlay — back + share buttons + discount badge.
                     Glass style so they're visible over any image color.
@@ -411,50 +390,42 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                   </div>
                 </div>
 
-                {/* Arrows (desktop only — mobile uses swipe). v25.12: uses mediaCount */}
-                {(() => {
-                  const mediaCount = (product.videoUrl ? 1 : 0) + product.images.length
-                  if (mediaCount <= 1) return null
-                  return (
-                    <>
-                      <button
-                        onClick={() => setImgIndex((i) => (i - 1 + mediaCount) % mediaCount)}
-                        aria-label="Предыдущее"
-                        className="hidden md:grid absolute left-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-background/80 backdrop-blur-md place-items-center hover:scale-105 active:scale-95 transition-transform shadow-md"
-                      >
-                        <ChevronLeft className="h-5 w-5" />
-                      </button>
-                      <button
-                        onClick={() => setImgIndex((i) => (i + 1) % mediaCount)}
-                        aria-label="Следующее"
-                        className="hidden md:grid absolute right-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-background/80 backdrop-blur-md place-items-center hover:scale-105 active:scale-95 transition-transform shadow-md"
-                      >
-                        <ChevronRight className="h-5 w-5" />
-                      </button>
-                    </>
-                  )
-                })()}
+                {/* Arrows (desktop only — mobile uses swipe) */}
+                {product.images.length > 1 && (
+                  <>
+                    <button
+                      onClick={() => setImgIndex((i) => (i - 1 + product.images.length) % product.images.length)}
+                      aria-label="Предыдущее фото"
+                      className="hidden md:grid absolute left-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-background/80 backdrop-blur-md grid place-items-center hover:scale-105 active:scale-95 transition-transform shadow-md"
+                    >
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+                    <button
+                      onClick={() => setImgIndex((i) => (i + 1) % product.images.length)}
+                      aria-label="Следующее фото"
+                      className="hidden md:grid absolute right-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-background/80 backdrop-blur-md grid place-items-center hover:scale-105 active:scale-95 transition-transform shadow-md"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </>
+                )}
 
-                {/* Dots — float above the gradient. v25.12: includes video slide */}
-                {(() => {
-                  const mediaCount = (product.videoUrl ? 1 : 0) + product.images.length
-                  if (mediaCount <= 1) return null
-                  return (
-                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex gap-1.5">
-                      {Array.from({ length: mediaCount }).map((_, i) => (
-                        <button
-                          key={i}
-                          onClick={() => setImgIndex(i)}
-                          aria-label={i === 0 && product.videoUrl ? 'Видео' : `Фото ${i - (product.videoUrl ? 1 : 0) + 1}`}
-                          className={cn(
-                            'h-1.5 rounded-full transition-all',
-                            i === imgIndex ? 'w-6 bg-white' : 'w-1.5 bg-white/60',
-                          )}
-                        />
-                      ))}
-                    </div>
-                  )
-                })()}
+                {/* Dots — float above the gradient */}
+                {product.images.length > 1 && (
+                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex gap-1.5">
+                    {product.images.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setImgIndex(i)}
+                        aria-label={`Фото ${i + 1}`}
+                        className={cn(
+                          'h-1.5 rounded-full transition-all',
+                          i === imgIndex ? 'w-6 bg-white' : 'w-1.5 bg-white/60',
+                        )}
+                      />
+                    ))}
+                  </div>
+                )}
 
                 {/* Bottom gradient — smooth transition from image to background.
                     The gradient goes from transparent (image visible) to the
@@ -467,9 +438,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                     background: 'linear-gradient(to bottom, transparent 0%, var(--background) 100%)',
                   }}
                 />
-                </div>
-              )
-              })()}
+              </div>
 
               {/* Info section — sits below the image, with the gradient
                   making it look like a natural continuation of the image. */}
@@ -490,7 +459,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                       onClick={() => setImgIndex(i)}
                       aria-label={`Фото ${i + 1}`}
                       className={cn(
-                        'shrink-0 h-16 w-12 overflow-hidden transition-all duration-200 relative rounded-[12px] shadow-sm',
+                        'shrink-0 h-16 w-16 overflow-hidden transition-all duration-200 relative rounded-[14px] shadow-sm',
                         i === imgIndex
                           ? 'scale-105 z-20 opacity-100 ring-2 ring-primary'
                           : 'z-10 opacity-55 hover:opacity-100',
@@ -713,25 +682,29 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                       image: product.images[0],
                     })
                     haptic.success()
-                    toast.success('Добавлено в список заявок', { sound: 'cart' })
+                    toast.success('Добавлено в корзину', { sound: 'cart' })
                   }}
                   className="h-12 rounded-[18px] flex-1 font-semibold bg-foreground/5 backdrop-blur-xl ring-1 ring-border/40 hover:bg-foreground/10 transition-all flex items-center justify-center gap-2 shadow-[0_6px_20px_-8px_rgba(0,0,0,0.3)]"
                 >
-                  <ShoppingCart className="h-4 w-4" /> В список
+                  <ShoppingCart className="h-4 w-4" /> В корзину
                 </button>
 
                 <button
                   onClick={() => {
                     haptic.tap()
                     if (product) {
-                      // v25.11: primary CTA — opens LeadSheet (single-product lead).
-                      // Payments are not connected; this is the main conversion path.
+                      // v25.10 (Task #16): "Купить" → "Оставить заявку".
+                      // Payments are not connected; the primary CTA now opens
+                      // the LeadSheet (existing /api/leads backend route)
+                      // instead of CheckoutSheet. The cart / checkout flow is
+                      // preserved — users can still add to cart and check out
+                      // via the cart icon if needed.
                       window.dispatchEvent(new CustomEvent('open-lead', {
                         detail: { product },
                       }))
                     }
                   }}
-                  className="h-12 rounded-xl flex-[1.4] font-bold text-white shadow-[0_10px_28px_-8px_rgba(99,102,241,0.6)] bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:shadow-[0_14px_36px_-8px_rgba(99,102,241,0.72)] transition-all"
+                  className="h-12 rounded-xl flex-1 font-bold text-white shadow-[0_10px_28px_-8px_rgba(99,102,241,0.6)] bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:shadow-[0_14px_36px_-8px_rgba(99,102,241,0.72)] transition-all"
                 >
                   Оставить заявку
                 </button>

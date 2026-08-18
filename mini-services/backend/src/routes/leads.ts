@@ -15,10 +15,9 @@ const router: Router = Router()
 // apiLimiter (120/min/IP) is too permissive for an unauthenticated lead
 // submission form — bots could flood the admin queue. 5/min/IP is enough
 // for real customers and stops casual spam.
-// v25.12: increased from 5 to 20/min for testing. Lower to 10 for production.
 const publicLeadLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 20,
+  limit: 5,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Слишком много заявок, попробуйте позже' },
@@ -150,95 +149,6 @@ router.post('/', publicLeadLimiter, optionalAuth, asyncHandler(async (req: Authe
   // Return the created entity (REST convention) — most other POST endpoints
   // do the same. The old `{ id, ok: true }` shape was inconsistent.
   res.status(201).json(lead)
-}))
-
-// POST /api/leads/bulk — submit multiple leads at once (from "Заявки-корзина").
-// v25.11: replaces CheckoutSheet for the cart flow. Each item becomes a separate
-// Lead row (so the admin can process them independently in Studio → Leads).
-// Body:
-//   { name, phone, comment?, contactMethod?, items: [{ productId, quantity }] }
-// Auth: optional — if the user is logged in, leads are linked to their userId.
-router.post('/bulk', publicLeadLimiter, optionalAuth, asyncHandler(async (req: AuthedRequest, res) => {
-  const body = z.object({
-    name: z.string().min(1).max(200),
-    phone: z.string().min(3).max(30),
-    comment: z.string().max(2000).optional(),
-    contactMethod: z.enum(['whatsapp', 'telegram', 'phone', 'email']).optional(),
-    items: z.array(z.object({
-      productId: z.string().min(1).max(64),
-      quantity: z.number().int().min(1).max(100).default(1),
-    })).min(1).max(50),
-  }).parse(req.body)
-
-  const userId = req.user?.id ?? null
-
-  // Fetch all products in one query (avoid N+1)
-  const products = await prisma.product.findMany({
-    where: { id: { in: body.items.map((it) => it.productId) }, deletedAt: null },
-    select: { id: true, title: true, price: true, images: true },
-  })
-  const productMap = new Map(products.map((p) => [p.id, p]))
-
-  // Build lead records
-  const leadsData = body.items.map((it) => {
-    const p = productMap.get(it.productId)
-    let productImage: string | null = null
-    if (p) {
-      try {
-        const imgs = JSON.parse(p.images || '[]')
-        if (Array.isArray(imgs) && imgs.length > 0) productImage = String(imgs[0])
-      } catch { /* ignore */ }
-    }
-    return {
-      name: body.name,
-      phone: body.phone,
-      comment: body.comment || null,
-      productId: it.productId,
-      productTitle: p?.title || null,
-      productPrice: p ? Math.round(Number(p.price)) : null,
-      productImage,
-      quantity: it.quantity,
-      contactMethod: body.contactMethod || null,
-      userId,
-    }
-  })
-
-  // Insert all leads in a transaction
-  const result = await prisma.$transaction(
-    leadsData.map((data) => prisma.lead.create({ data })),
-  )
-
-  // Notify admins about the bulk submission
-  try {
-    const { getIo } = await import('../socket/handlers.js')
-    const io = getIo()
-    if (io) {
-      io.to('admins').emit('lead:created', {
-        leadId: result[0]?.id,
-        bulk: true,
-        count: result.length,
-        name: body.name,
-        createdAt: new Date().toISOString(),
-      })
-    }
-    const { sendPushToUser } = await import('./push.js')
-    const admins = await prisma.user.findMany({
-      where: { role: 'admin', deletedAt: null },
-      select: { id: true },
-    })
-    for (const admin of admins) {
-      sendPushToUser(admin.id, {
-        title: `🔔 ${result.length} ${result.length === 1 ? 'новая заявка' : 'новых заявок'}!`,
-        body: `${body.name}: ${result.length} тов.`,
-        tag: `admin-lead-bulk-${result[0]?.id ?? Date.now()}`,
-        url: '/studio/?view=leads',
-      }).catch(() => {})
-    }
-  } catch (e) {
-    logger.error('Admin push failed (bulk):', { module: 'leads', error: e })
-  }
-
-  res.status(201).json({ ok: true, created: result.length, leads: result })
 }))
 
 // GET /api/leads — admin: list all leads (paginated)

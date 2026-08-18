@@ -391,7 +391,33 @@ export function drawQrToCanvas(
     }
   }
 
-  // v25.12: center logo removed — cleaner QR code, no badge
+  // Optional center logo (small brand badge)
+  if (logo) {
+    const logoSize = canvas.width * 0.18 // 18% of canvas width
+    const cx = (canvas.width - logoSize) / 2
+    const cy = (canvas.height - logoSize) / 2
+
+    // White rounded background for the logo
+    ctx.fillStyle = '#ffffff'
+    roundRect(ctx, cx - 6, cy - 6, logoSize + 12, logoSize + 12, 16)
+    ctx.fill()
+
+    // Gradient brand badge
+    const grad = ctx.createLinearGradient(cx, cy, cx + logoSize, cy + logoSize)
+    grad.addColorStop(0, '#38bdf8')
+    grad.addColorStop(0.5, '#2563eb')
+    grad.addColorStop(1, '#7c3aed')
+    ctx.fillStyle = grad
+    roundRect(ctx, cx, cy, logoSize, logoSize, logoSize * 0.22)
+    ctx.fill()
+
+    // "9" text
+    ctx.fillStyle = '#ffffff'
+    ctx.font = `bold ${logoSize * 0.6}px -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('9', cx + logoSize / 2, cy + logoSize / 2 + logoSize * 0.04)
+  }
 }
 
 function roundRect(

@@ -1,6 +1,6 @@
 'use client'
 
-import { Home, LayoutGrid, MessageCircle, User, MoreHorizontal, Search, ShoppingBag, Heart, Sparkles } from 'lucide-react'
+import { Home, LayoutGrid, MessageCircle, User, MoreHorizontal, Search, ShoppingBag, Heart, Sparkles, Clapperboard } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
@@ -25,13 +25,24 @@ interface SidebarProps {
 
 // v39: CLUB moved to the top section (next to Search + Media Hub) as a
 // prominent CTA. Media Hub moved DOWN into the nav stack as a regular item.
-const NAV = [
+// v25.10 (Task #3): NavItem type — 'feed' has an optional customEvent
+// field that dispatches a window event instead of switching to a real view.
+type NavItem = {
+  id: string
+  label: string
+  icon: typeof Home | typeof MediaHubIcon
+  customEvent?: string
+}
+const NAV: NavItem[] = [
   { id: 'home', label: 'Главная', icon: Home },
   { id: 'catalog', label: 'Каталог', icon: LayoutGrid },
+  // v25.10 (Task #3): fullscreen vertical product feed (Reels-style).
+  // Opens the ProductFeed overlay via window event (not a real view).
+  { id: 'feed', label: 'Лента', icon: Clapperboard, customEvent: 'open-feed' },
   { id: 'media-hub', label: 'Media Hub', icon: MediaHubIcon },
   { id: 'chat', label: 'Чат', icon: MessageCircle },
   { id: 'profile', label: 'Профиль', icon: User },
-] as const
+]
 
 /**
  * Premium compact rail navigation — 72px wide, icon-only with hover tooltips.
@@ -165,6 +176,9 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
                   if (typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('open-media-hub'))
                   }
+                } else if (item.customEvent && typeof window !== 'undefined') {
+                  // v25.10: 'feed' dispatches a custom event (overlay, not a view).
+                  window.dispatchEvent(new CustomEvent(item.customEvent))
                 } else {
                   onNavigate(item.id)
                 }

@@ -121,40 +121,31 @@ function serialiseProduct(p: any) {
   return result
 }
 
-// GET /api/products?category=&popular=&q=&limit=&offset=&shuffle=&seed=&
-//          minPrice=&maxPrice=&hasDiscount=&inStockOnly=&sort=
-// v25.11: added server-side filtering by price range + discount + sort options.
-//         Replaces the client-side filtering in ProductsGrid (which only
-//         filtered on a 100-item page — limited the catalog to ~100 items).
+// GET /api/products?category=&popular=&q=&limit=&offset=&shuffle=&seed=
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { category, popular, q, shuffle, seed, minPrice, maxPrice, hasDiscount, inStockOnly, sort } = req.query
+    const { category, popular, q, shuffle, seed } = req.query
     const { limit, offset } = parsePagination(req.query)
 
     const where: any = { deletedAt: null } // D-CRIT-001 fix: filter soft-deleted products
     if (category) where.category = String(category)
     if (popular === 'true' || popular === '1') where.isPopular = true
-    // v25.11: server-side filters
-    if (inStockOnly === 'true' || inStockOnly === '1') where.inStock = true
-    if (hasDiscount === 'true' || hasDiscount === '1') {
-      where.NOT = { AND: [{ oldPrice: null }, { oldPrice: { lte: 0 } }] }
-      // discount only exists when oldPrice > price
-      // Prisma doesn't support cross-field comparison directly, so we over-fetch
-      // and JS-filter below. For now, just require oldPrice to be set.
-      where.oldPrice = { not: null }
-    }
-    // Price range filters
-    if (minPrice || maxPrice) {
-      where.price = {}
-      if (minPrice) where.price.gte = Number(minPrice)
-      if (maxPrice) where.price.lte = Number(maxPrice)
-    }
 
     // Case-insensitive search across title / description / category.
+    // SQLite's Prisma `contains` is case-SENSITIVE for Cyrillic, so we
+    // lowercase both sides via `LOWER()` with raw SQL `LIKE`. This makes
+    // total & items consistent (audit finding H8: previously `total`
+    // came from case-sensitive `count` while `items` were re-filtered
+    // case-insensitively in JS, so the two could disagree).
     let needle: string | null = null
     if (q && typeof q === 'string' && q.trim()) {
       needle = String(q).toLowerCase().trim()
+      // SQLite stores data as-is; we use Prisma's `contains` with the
+      // lowercased needle, which approximates case-insensitive match
+      // for ASCII but is still case-sensitive for Cyrillic. To get true
+      // case-insensitive Cyrillic search, we additionally JS-filter
+      // below and over-fetch to ensure we have enough matches.
       where.OR = [
         { title: { contains: String(q) } },
         { description: { contains: String(q) } },
@@ -162,20 +153,17 @@ router.get(
       ]
     }
 
-    // v25.11: server-side sort
-    let orderBy: any = { createdAt: 'desc' } // default: newest
-    if (sort === 'price-asc') orderBy = { price: 'asc' }
-    else if (sort === 'price-desc') orderBy = { price: 'desc' }
-    else if (sort === 'popular') orderBy = [{ isPopular: 'desc' }, { views: 'desc' }]
-    else if (sort === 'rating') orderBy = [{ rating: 'desc' }, { reviewsCount: 'desc' }]
-
+    // When searching, over-fetch so the JS-side case-insensitive filter
+    // still has enough rows to fill the page. Without over-fetch, page 2
+    // of a search could return 0 items even though matches exist beyond
+    // the first `limit` rows.
     const dbLimit = needle ? Math.min(limit * 5, 500) : limit
     const dbSkip = needle ? 0 : offset
 
     const [items, total] = await Promise.all([
       prisma.product.findMany({
         where,
-        orderBy,
+        orderBy: { createdAt: 'desc' },
         take: dbLimit,
         skip: dbSkip,
       }),
@@ -191,33 +179,40 @@ router.get(
           (p.description || '').toLowerCase().includes(needle!) ||
           (p.category || '').toLowerCase().includes(needle!),
       )
-      // v25.11: also filter by hasDiscount (cross-field: oldPrice > price)
-      if (hasDiscount === 'true' || hasDiscount === '1') {
-        finalItems = finalItems.filter((p) => {
-          const op = p.oldPrice != null ? Number(p.oldPrice) : null
-          return op != null && op > Number(p.price)
-        })
-      }
-      finalItems = finalItems.slice(offset, offset + limit)
-    } else if (hasDiscount === 'true' || hasDiscount === '1') {
-      // Even without needle, filter discount cross-field
-      finalItems = items.filter((p) => {
-        const op = p.oldPrice != null ? Number(p.oldPrice) : null
-        return op != null && op > Number(p.price)
-      })
+      // Apply pagination to the filtered set.
       finalItems = finalItems.slice(offset, offset + limit)
     }
 
+    // Optional shuffle: produces a deterministic per-seed shuffle so the
+    // home page / catalog can feel "alive" without breaking pagination
+    // (same seed → same order). The seed is typically the page-session
+    // timestamp rounded to a few minutes, so the order rotates over time.
     if (shuffle === 'true' || shuffle === '1') {
       const seedNum = typeof seed === 'string' ? parseInt(seed, 10) || Date.now() : Date.now()
       finalItems = deterministicShuffle(finalItems, seedNum)
     }
 
+    // P1-7 fix: when searching (needle is set), `total` must reflect the
+    // filtered count, NOT the raw DB count (which is case-sensitive and
+    // returns a different number for Cyrillic queries). We compute the
+    // filtered total by re-filtering the full dbLimit set; this is an
+    // approximation (dbLimit caps at 500) but matches what the UI shows.
     let finalTotal = total
-    if (needle || hasDiscount === 'true' || hasDiscount === '1') {
-      const filteredCount = finalItems.length + offset
+    if (needle) {
+      // Count how many of the over-fetched rows match the JS filter.
+      // This is a lower bound on the true total -- accurate enough for
+      // pagination UI (which only needs "more pages exist?" signal).
+      const filteredCount = items.filter(
+        (p) =>
+          p.title.toLowerCase().includes(needle) ||
+          (p.description || '').toLowerCase().includes(needle) ||
+          (p.category || '').toLowerCase().includes(needle),
+      ).length
+      // If we hit the dbLimit cap, there may be more matches beyond -- signal
+      // "more pages exist" by reporting filteredCount + 1 (only if the current
+      // page returned a full `limit` of items, indicating more data).
       finalTotal = items.length === dbLimit && finalItems.length === limit
-        ? filteredCount + limit
+        ? filteredCount + offset + limit
         : filteredCount
     }
 
@@ -639,73 +634,6 @@ router.get(
   }),
 )
 
-// ============================================================================
-//  GET /api/products/recently-viewed — v25.11
-//  Returns products the current user has viewed recently (max 12, last 30 days).
-//  For anonymous users (no auth), returns [] — the client should use
-//  localStorage as a fallback for anonymous sessions.
-//
-//  Reads from the ProductView table (created by POST /api/products/:id/view).
-//  Groups by productId, takes the most recent view per product, sorts by
-//  view time desc, excludes the current product if `?exclude=ID` is passed
-//  (used on the product page to avoid self-reference).
-// ============================================================================
-router.get(
-  '/recently-viewed',
-  optionalAuth,
-  asyncHandler(async (req: AuthedRequest, res) => {
-    const userId = req.user?.id
-    if (!userId) {
-      res.json({ items: [] })
-      return
-    }
-    const excludeId = typeof req.query.exclude === 'string' ? req.query.exclude : undefined
-    const limit = Math.min(Math.max(Number(req.query.limit ?? 12) || 12, 1), 24)
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000)
-
-    // Find the most recent ProductView per productId for this user.
-    // SQLite doesn't support DISTINCT ON, so we use groupBy + a follow-up find.
-    const recentViews = await prisma.productView.findMany({
-      where: {
-        userId,
-        createdAt: { gte: thirtyDaysAgo },
-        ...(excludeId ? { productId: { not: excludeId } } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100, // over-fetch, dedupe in JS
-      select: { productId: true, createdAt: true },
-    })
-
-    // Dedupe by productId (keep first = most recent)
-    const seen = new Set<string>()
-    const orderedIds: string[] = []
-    for (const v of recentViews) {
-      if (!seen.has(v.productId)) {
-        seen.add(v.productId)
-        orderedIds.push(v.productId)
-      }
-      if (orderedIds.length >= limit) break
-    }
-
-    if (orderedIds.length === 0) {
-      res.json({ items: [] })
-      return
-    }
-
-    // Fetch products in one query, then preserve the order from orderedIds
-    const products = await prisma.product.findMany({
-      where: { id: { in: orderedIds }, deletedAt: null },
-    })
-    const byId = new Map(products.map((p) => [p.id, p]))
-    const items = orderedIds
-      .map((id) => byId.get(id))
-      .filter((p): p is NonNullable<typeof p> => !!p)
-      .map(serialiseProduct)
-
-    res.json({ items })
-  }),
-)
-
 // GET /api/products/:id
 router.get(
   '/:id',
@@ -760,8 +688,6 @@ router.post(
         // v25.10 (Task #6): vertical product video
         videoUrl: data.videoUrl ?? null,
         videoPoster: data.videoPoster ?? null,
-        // v25.12: video position in carousel (0 = first, 1 = after 1st image, etc.)
-        videoPosition: data.videoPosition ?? null,
       },
     })
     await auditLog(req, 'product', product.id, 'create', {
@@ -804,8 +730,6 @@ const updateProductSchema = z.object({
   // NULL clears the video.
   videoUrl: z.string().max(2048).nullable().optional(),
   videoPoster: z.string().max(2048).nullable().optional(),
-  // v25.12: video position in carousel (0 = first, 1 = after 1st image, etc.)
-  videoPosition: z.number().int().min(0).max(50).nullable().optional(),
 })
 
 // PATCH /api/products/:id — admin only
@@ -844,8 +768,6 @@ router.patch(
         // v25.10 (Task #6): vertical product video
         ...(data.videoUrl !== undefined && { videoUrl: data.videoUrl }),
         ...(data.videoPoster !== undefined && { videoPoster: data.videoPoster }),
-        // v25.12: video position
-        ...(data.videoPosition !== undefined && { videoPosition: data.videoPosition }),
       },
     })
     await auditLog(req, 'product', updated.id, 'update', {

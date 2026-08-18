@@ -404,29 +404,31 @@ async function renderProductStory(opts: {
   const dy = (STORY_H - drawH) / 2
   ctx.drawImage(img, dx, dy, drawW, drawH)
 
-  // 2. Gradient overlay (top + bottom) for text readability.
-  // v25.12: changed from dark slate to pink-purple for brand consistency.
+  // 2. Dark gradient overlay (top + bottom) for text readability.
+  // v25.4: re-tuned for 1440px height (was 400/700 for 1920px).
   const topGrad = ctx.createLinearGradient(0, 0, 0, 300)
-  topGrad.addColorStop(0, 'rgba(88, 28, 135, 0.85)')
-  topGrad.addColorStop(1, 'rgba(88, 28, 135, 0)')
+  topGrad.addColorStop(0, 'rgba(15, 23, 42, 0.85)')
+  topGrad.addColorStop(1, 'rgba(15, 23, 42, 0)')
   ctx.fillStyle = topGrad
   ctx.fillRect(0, 0, STORY_W, 300)
 
   const bottomGrad = ctx.createLinearGradient(0, STORY_H - 560, 0, STORY_H)
-  bottomGrad.addColorStop(0, 'rgba(88, 28, 135, 0)')
-  bottomGrad.addColorStop(0.5, 'rgba(88, 28, 135, 0.75)')
-  bottomGrad.addColorStop(1, 'rgba(76, 29, 149, 0.95)')
+  bottomGrad.addColorStop(0, 'rgba(15, 23, 42, 0)')
+  bottomGrad.addColorStop(0.5, 'rgba(15, 23, 42, 0.7)')
+  bottomGrad.addColorStop(1, 'rgba(15, 23, 42, 0.95)')
   ctx.fillStyle = bottomGrad
   ctx.fillRect(0, STORY_H - 560, STORY_W, 560)
 
-  // 3. Brand text top-left — just "TRI999" wordmark, no badge.
+  // 3. Brand logo top-left — gradient badge + wordmark.
+  // v25.4: badge size 80 → 64 (proportional to shorter canvas).
+  drawBrandBadge(ctx, 60, 60, 64)
+
+  // 4. Tagline (top, below logo).
   ctx.fillStyle = '#ffffff'
-  ctx.font = `800 36px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.font = `500 28px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
-  ctx.fillText('TRI999', 60, 65)
-
-  // 4. (tagline removed — TRI999 is already shown above)
+  ctx.fillText(TAGLINE, 140, 80)
 
   // 5. Image counter (top-right).
   if (opts.totalImages > 1 && !opts.isCover) {
@@ -446,6 +448,24 @@ async function renderProductStory(opts: {
   }
 
   return canvas
+}
+
+function drawBrandBadge(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+  // Gradient background
+  const grad = ctx.createLinearGradient(x, y, x + size, y + size)
+  grad.addColorStop(0, '#38bdf8')
+  grad.addColorStop(0.5, '#2563eb')
+  grad.addColorStop(1, '#7c3aed')
+  ctx.fillStyle = grad
+  roundRectPath(ctx, x, y, size, size, size * 0.22)
+  ctx.fill()
+
+  // "9" text
+  ctx.fillStyle = '#ffffff'
+  ctx.font = `800 ${size * 0.62}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('9', x + size / 2, y + size / 2 + size * 0.04)
 }
 
 function drawProductCard(ctx: CanvasRenderingContext2D, opts: any) {
@@ -565,7 +585,9 @@ function drawCoverCard(ctx: CanvasRenderingContext2D, opts: any) {
         }
       }
 
-      // v25.12: no brand badge in QR center — cleaner look
+      // Brand badge in center — v25.4: 80→64
+      const badgeSize = 64
+      drawBrandBadge(ctx, STORY_W / 2 - badgeSize / 2, qrY + qrSize / 2 - badgeSize / 2, badgeSize)
     }
   }
 

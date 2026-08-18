@@ -24,9 +24,6 @@ import { StudioAIAssistant } from './studio-ai-assistant'
 const CATEGORIES = [
   'Реклама', 'Подарки', 'Мебель', 'Печать', 'Дизайн', 'Интерьер', 'Наружная реклама', 'Полиграфия',
 ] as const
-// v25.11: legacy CATEGORIES kept as fallback when /api/categories is empty
-// (e.g. before admin runs the seed). New canonical source is the Category
-// table — fetched at runtime via /api/categories.
 
 // S-LOW-002 fix: getExistingCategories replaced by useMemo inside component.
 // The standalone function is removed (was dead code after the fix).
@@ -75,25 +72,6 @@ const { dialog: confirmDialogState, confirm: confirmDialog, close: closeConfirm 
     items.forEach((p) => { if (p.category) set.add(p.category) })
     return Array.from(set)
   }, [items])
-
-  // v25.11: canonical categories from DB (replaces hardcoded CATEGORIES list).
-  // Fetched once on mount. Falls back to legacy CATEGORIES on error/empty.
-  const [dbCategories, setDbCategories] = useState<{ id: string; name: string; icon: string }[]>([])
-  useEffect(() => {
-    api.get<{ items: { id: string; name: string; icon: string }[] }>('/api/categories')
-      .then((d) => setDbCategories(d.items || []))
-      .catch(() => {})
-  }, [])
-  // Live refresh when admin adds/edits categories in another tab
-  useEffect(() => {
-    const onCatsChanged = () => {
-      api.get<{ items: { id: string; name: string; icon: string }[] }>('/api/categories')
-        .then((d) => setDbCategories(d.items || []))
-        .catch(() => {})
-    }
-    window.addEventListener('999pro:categories-changed', onCatsChanged as EventListener)
-    return () => window.removeEventListener('999pro:categories-changed', onCatsChanged as EventListener)
-  }, [])
 
   // S-HIGH-004: previously the comment below claimed "AbortController prevents
   // race conditions" but no AbortController was used — only useDeferredValue.
@@ -398,7 +376,6 @@ const { dialog: confirmDialogState, confirm: confirmDialog, close: closeConfirm 
         <ProductEditor
           product={editing}
           existingCategories={existingCategories}
-          dbCategories={dbCategories}
           onClose={() => { setEditing(null); setCreating(false) }}
           onSaved={() => { setEditing(null); setCreating(false); refresh() }}
         />
@@ -420,10 +397,9 @@ function pluralize(n: number): string {
   return 'товаров'
 }
 
-function ProductEditor({ product, existingCategories, dbCategories, onClose, onSaved }: {
+function ProductEditor({ product, existingCategories, onClose, onSaved }: {
   product: Product | null
   existingCategories: string[]
-  dbCategories: { id: string; name: string; icon: string }[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -439,8 +415,6 @@ function ProductEditor({ product, existingCategories, dbCategories, onClose, onS
   // videoUrl is a relative path (/uploads/videos/...). NULL = no video.
   const [videoUrl, setVideoUrl] = useState<string | null>(product?.videoUrl || null)
   const [videoPoster, setVideoPoster] = useState<string | null>(product?.videoPoster || null)
-  // v25.12: video position in carousel (0 = first, 1 = after 1st image, etc.)
-  const [videoPosition, setVideoPosition] = useState<number>(product?.videoPosition ?? 0)
   const [videoUploading, setVideoUploading] = useState(false)
   const [inStock, setInStock] = useState(product?.inStock ?? true)
   // v11: physical stock quantity — used to show "В наличии" / "Заканчивается" / "Нет в наличии".
@@ -546,8 +520,6 @@ const save = async () => {
         // v25.10 (Task #6): video
         videoUrl,
         videoPoster,
-        // v25.12: video position in carousel
-        videoPosition: videoUrl ? videoPosition : null,
       }
       if (product) {
         // QW3 (S-BUG-002): encode product id — slugs may contain "/" (e.g. "листовки-а5,-плотность-200-г/м²")
@@ -618,31 +590,6 @@ const save = async () => {
             }}
           />
 
-          {/* v25.12: video position selector — only shown if video is uploaded */}
-          {videoUrl && (
-            <div className="space-y-1.5">
-              <Label>Позиция видео в карусели</Label>
-              <div className="flex items-center gap-2">
-                <select
-                  value={videoPosition}
-                  onChange={(e) => setVideoPosition(Number(e.target.value))}
-                  className="flex-1 h-10 px-3 rounded-2xl bg-background border border-border/40 text-sm"
-                >
-                  <option value={0}>Первым (перед всеми фото)</option>
-                  {images.map((_, i) => (
-                    <option key={i} value={i + 1}>После фото {i + 1}</option>
-                  ))}
-                </select>
-                <span className="text-xs text-muted-foreground shrink-0">
-                  Позиция: {videoPosition === 0 ? '1-е' : `${videoPosition + 1}-е`}
-                </span>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Видео будет показано на этой позиции в карусели. По умолчанию — первым.
-              </p>
-            </div>
-          )}
-
           {/* v25.8 (TRI999 launch): Product colors with per-color image.
               One product → multiple colors → each color has its own photo.
               On the product page, clicking a color instantly switches the main image. */}
@@ -683,56 +630,38 @@ const save = async () => {
 
           <div className="space-y-1.5">
             <Label htmlFor="category">Категория</Label>
-            {/* v25.11: prefer DB-backed categories (from /api/categories).
-                Fall back to legacy hardcoded CATEGORIES + existingCategories
-                if DB is empty (e.g. before admin seeds). */}
-            {(() => {
-              const dbNames = dbCategories.map((c) => c.name)
-              const allCats = Array.from(new Set([...dbNames, ...CATEGORIES, ...existingCategories]))
-              return (
-                <div className="flex gap-2">
-                  <Input
-                    id="category"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="rounded-2xl flex-1"
-                    placeholder="Введите или выберите категорию"
-                    list="category-suggestions"
-                  />
-                  <datalist id="category-suggestions">
-                    {allCats.map((c) => (
-                      <option key={c} value={c} />
-                    ))}
-                  </datalist>
-                </div>
-              )
-            })()}
-            {/* Chip buttons — show DB categories first, then legacy */}
+            <div className="flex gap-2">
+              <Input
+                id="category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="rounded-2xl flex-1"
+                placeholder="Введите категорию"
+                list="category-suggestions"
+              />
+              <datalist id="category-suggestions">
+                {Array.from(new Set([...CATEGORIES, ...existingCategories])).map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </div>
             <div className="flex flex-wrap gap-2 mt-1">
-              {(() => {
-                const dbNames = dbCategories.map((c) => c.name)
-                const allCats = Array.from(new Set([...dbNames, ...CATEGORIES, ...existingCategories]))
-                return allCats.map((c) => {
-                  const dbCat = dbCategories.find((dc) => dc.name === c)
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setCategory(c)}
-                      className={cn(
-                        'px-3 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1',
-                        category === c ? 'gradient-brand text-white shadow-glow' : 'glass text-muted-foreground hover:text-foreground',
-                      )}
-                    >
-                      {dbCat && <span className="text-[10px] opacity-70">{dbCat.icon === 'Folder' ? '📁' : '🏷'}</span>}
-                      {c}
-                    </button>
-                  )
-                })
-              })()}
+              {Array.from(new Set([...CATEGORIES, ...existingCategories])).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCategory(c)}
+                  className={cn(
+                    'px-3 py-1.5 rounded-full text-xs font-medium transition-all',
+                    category === c ? 'gradient-brand text-white shadow-glow' : 'glass text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {c}
+                </button>
+              ))}
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Управлять списком категорий можно в разделе «Категории». Можно также ввести свою.
+              Можно ввести свою категорию вручную или выбрать из списка.
             </p>
           </div>
 

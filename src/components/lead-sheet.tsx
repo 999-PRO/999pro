@@ -22,6 +22,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, Phone, MessageSquare, Send, Loader2, User, Mail } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/lib/auth-store'
 import { toast } from '@/lib/notifications'
 import { haptic } from '@/lib/haptic'
 import { formatPrice } from '@/lib/format'
@@ -43,6 +44,8 @@ export function LeadSheet() {
   const [contactMethod, setContactMethod] = useState<ContactMethod>('whatsapp')
   const [submitting, setSubmitting] = useState(false)
 
+  const user = useAuthStore((s) => s.user)
+
   // ─── Open / close via window event ───
   useEffect(() => {
     const onOpen = (e: Event) => {
@@ -54,16 +57,13 @@ export function LeadSheet() {
     return () => window.removeEventListener('open-lead', onOpen as EventListener)
   }, [])
 
-  // v25.12: fields are EMPTY on open — user must fill them manually.
-  // Previously pre-filled from logged-in user, but that was confusing.
-  // Reset fields when sheet opens.
+  // Pre-fill from logged-in user
   useEffect(() => {
-    if (open) {
-      setName('')
-      setPhone('')
-      setComment('')
+    if (open && user) {
+      setName((prev) => prev || user.displayName || user.username || '')
+      setPhone((prev) => prev || user.phone || '')
     }
-  }, [open])
+  }, [open, user])
 
   // Lock body scroll while open
   useEffect(() => {
@@ -92,11 +92,6 @@ export function LeadSheet() {
     setSubmitting(true)
     haptic.tap()
     try {
-      // v25.12: auth: false — /api/leads supports optionalAuth on the backend.
-      // Sending auth: true would throw "Not authenticated" for guests, which
-      // is wrong — leads are designed to be submittable without an account.
-      // The backend links the lead to userId only if a valid Bearer token is
-      // present; otherwise it creates an anonymous lead.
       await api.post('/api/leads', {
         json: {
           name: name.trim(),
@@ -104,13 +99,12 @@ export function LeadSheet() {
           comment: comment.trim() || null,
           productId: product?.id || null,
           productTitle: product?.title || null,
-          // v25.12: round price to int — backend z.number().int() rejects floats
-          productPrice: product?.price ? Math.round(product.price) : null,
+          productPrice: product?.price ?? null,
           productImage: product?.images?.[0] || null,
           quantity: 1,
           contactMethod,
         },
-        // auth: true would block guests; we want leads to be submittable anonymously
+        auth: true, // optional auth — backend accepts both authed + anon
       })
       toast.success('Заявка отправлена! Мы свяжемся с вами.')
       haptic.success()

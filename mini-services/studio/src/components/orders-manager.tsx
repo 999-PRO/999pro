@@ -35,8 +35,7 @@ const STATUSES: { id: OrderStatus; label: string; color: string; icon: typeof Cl
 ]
 
 // v16.5: common product categories for the filter dropdown
-// v25.11: now loaded dynamically from /api/categories (with fallback)
-const FALLBACK_CATEGORIES = ['Реклама', 'Подарки', 'Мебель', 'Полиграфия', 'Интерьер']
+const CATEGORIES = ['Реклама', 'Подарки', 'Мебель', 'Полиграфия', 'Интерьер']
 
 interface HistoryEntry {
   id: string
@@ -56,15 +55,6 @@ const [orders, setOrders] = useState<Order[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
-  // v25.11: dynamic categories from /api/categories (replaces hardcoded FALLBACK_CATEGORIES)
-  const [dbCategories, setDbCategories] = useState<string[]>(FALLBACK_CATEGORIES)
-  useEffect(() => {
-    api.get<{ items: { name: string }[] }>('/api/categories')
-      .then((d) => {
-        if (d.items && d.items.length > 0) setDbCategories(d.items.map((c) => c.name))
-      })
-      .catch(() => {})
-  }, [])
   // v16.5: confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{ orderId: string; status: OrderStatus; label: string } | null>(null)
   // v16.5: history panel state
@@ -242,7 +232,7 @@ const [orders, setOrders] = useState<Order[]>([])
             onClick={() => setCategoryFilter('all')}
             label="Все категории"
           />
-          {dbCategories.map((cat) => (
+          {CATEGORIES.map((cat) => (
             <FilterChip
               key={cat}
               active={categoryFilter === cat}

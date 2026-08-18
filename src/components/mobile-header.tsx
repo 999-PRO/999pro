@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ShoppingBag, Package, Music2, Search } from 'lucide-react'
+import { ShoppingBag, Package, Music2 } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
 import { useCartStore } from '@/lib/cart-store'
 import { useOrdersBadgeStore } from '@/lib/orders-badge-store'
@@ -250,30 +250,21 @@ export function MobileHeader({
 
         <div className="flex-1" />
 
-        {/* v25.12: Search button — gradient style, opens Universal Search */}
-        <button
-          type="button"
-          onClick={onOpenSearch}
-          aria-label="Поиск"
-          className="relative shrink-0 h-10 w-10 rounded-full grid place-items-center transition-all active:scale-95 hover:scale-105"
-          style={{
-            background: 'linear-gradient(135deg, #EC4899 0%, #F97316 100%)',
-            boxShadow: '0 2px 8px -2px rgba(236, 72, 153, 0.4)',
-            color: '#ffffff',
-          }}
-        >
-          <Search className="h-[18px] w-[18px]" strokeWidth={2.4} />
-        </button>
-
-        {/* v12.6.2: "Мои заявки" (Orders) button — v25.12: gradient pink-purple style */}
+        {/* v12.6.2: "Мои заявки" (Orders) button — replaces the Search button
+            on ALL pages. The Search button has been removed entirely because
+            the search bar is now always visible in normal flow on the Home
+            page (no header button needed). Same round glass style as the
+            other header buttons. Opens the orders view. */}
         <button
           type="button"
           onClick={() => onNavigate('orders')}
           aria-label="Мои заказы"
           className="relative shrink-0 h-10 w-10 rounded-full grid place-items-center transition-all active:scale-95 hover:scale-105"
           style={{
-            background: 'linear-gradient(135deg, #EC4899 0%, #A855F7 100%)',
-            boxShadow: '0 2px 8px -2px rgba(160, 32, 112, 0.4)',
+            background: 'rgba(15,23,42,0.35)',
+            backdropFilter: 'blur(12px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(12px) saturate(160%)',
+            border: '1px solid rgba(255,255,255,0.25)',
             color: '#ffffff',
           }}
         >
@@ -281,7 +272,7 @@ export function MobileHeader({
           <OrdersBadge />
         </button>
 
-        {/* Cart icon — v25.12: gradient purple style */}
+        {/* Cart icon — round glass card with badge */}
         <button
           type="button"
           aria-label="Корзина"
@@ -292,8 +283,11 @@ export function MobileHeader({
           }}
           className="relative shrink-0 h-10 w-10 rounded-full grid place-items-center transition-all active:scale-95 hover:scale-105"
           style={{
-            background: 'linear-gradient(135deg, #A855F7 0%, #9333EA 100%)',
-            boxShadow: '0 2px 8px -2px rgba(147, 51, 234, 0.4)',
+            // v8-audit-fix: dark glass so buttons are visible on light/white headers too
+            background: 'rgba(15,23,42,0.35)',
+            backdropFilter: 'blur(12px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(12px) saturate(160%)',
+            border: '1px solid rgba(255,255,255,0.25)',
             color: '#ffffff',
           }}
         >

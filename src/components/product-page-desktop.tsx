@@ -20,7 +20,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Heart, ShoppingCart, Star, Share2, QrCode,
-  Truck, Shield, RefreshCw, Check, Store, X, AlertTriangle, Play,
+  Truck, Shield, RefreshCw, Check, Store, X, AlertTriangle,
 } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
 import type { Product } from '@/lib/types'
@@ -89,17 +89,6 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
   useEffect(() => {
     if (!productId) return
     api.post(`/api/products/${productId}/view`, { json: {} }).catch(() => {})
-    // v25.11: also record in localStorage for the "Recently viewed" block
-    try {
-      const raw = localStorage.getItem('999pro-recently-viewed')
-      let ids: string[] = raw ? JSON.parse(raw) : []
-      if (!Array.isArray(ids)) ids = []
-      ids = ids.filter((id) => id !== productId)
-      ids.unshift(productId)
-      ids = ids.slice(0, 20)
-      localStorage.setItem('999pro-recently-viewed', JSON.stringify(ids))
-      window.dispatchEvent(new CustomEvent('999pro:recently-viewed-changed'))
-    } catch { /* ignore */ }
   }, [productId])
 
   // v20: Reset scroll position to top when product changes (similar products).
@@ -279,15 +268,31 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                         Shown ABOVE the main photo when the admin uploaded one.
                         Same 3:4 aspect + max-w as the photo so the layout
                         doesn't shift. Native controls + PiP + fullscreen. */}
-                    {/* v25.12: video is now part of the main image carousel (first slide).
-                        No separate video block on top. */}
+                    {product.videoUrl && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.4 }}
+                        className="w-full flex justify-center"
+                      >
+                        <div className="relative aspect-[3/4] w-full max-w-[560px] max-h-[calc(100vh-12rem)] rounded-xl overflow-hidden bg-black ring-1 ring-white/30 dark:ring-white/10 shadow-[0_24px_70px_-24px_rgba(0,0,0,0.4)]">
+                          <video
+                            src={assetUrl(product.videoUrl)}
+                            poster={product.videoPoster ? assetUrl(product.videoPoster) : undefined}
+                            className="h-full w-full object-cover"
+                            controls
+                            playsInline
+                            preload="metadata"
+                          />
+                        </div>
+                      </motion.div>
+                    )}
                     {/* v9-premium-v5: image top-aligned (items-start) so its top edge
                         aligns with left/right panel tops. Was justify-center which
                         dropped the image down. */}
                     {/* Main photo — the largest element, minimal framing.
                         v9-premium-v4: max-h constrains to viewport so it never overflows.
-                        Image is completely fixed — never moves on scroll.
-                        v25.12: if imgIndex === 0 and video exists — show <video> instead of <img>. */}
+                        Image is completely fixed — never moves on scroll. */}
                     <motion.div
                       initial={{ opacity: 0, y: 24 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -296,72 +301,35 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                     >
                       <div
                         ref={galleryRef}
+                        // v25.4 (TZ-2 task #6): 3:4 aspect ratio on desktop too,
+                        // matching mobile. The taller format gives product photos
+                        // more vertical space (better for showing apparel, full-body
+                        // product shots, etc.) and keeps the visual language
+                        // consistent across devices.
                         className="relative aspect-[3/4] w-full max-w-[560px] max-h-[calc(100vh-12rem)] rounded-[20px] overflow-hidden bg-slate-100/60 dark:bg-slate-900/40 select-none cursor-zoom-in ring-1 ring-white/30 dark:ring-white/10 shadow-[0_24px_70px_-24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
-                        onMouseMove={() => {
-                          // v25.12: disable zoom if current slide is video
-                          const videoPos = product.videoPosition ?? 0
-                          const isVideoSlide = product.videoUrl && imgIndex === videoPos
-                          if (!isVideoSlide) handleMouseMove()
-                        }}
-                        onMouseEnter={() => {
-                          const videoPos = product.videoPosition ?? 0
-                          const isVideoSlide = product.videoUrl && imgIndex === videoPos
-                          if (!isVideoSlide) setZoomed(true)
-                        }}
+                        onMouseMove={handleMouseMove}
+                        onMouseEnter={() => setZoomed(true)}
                         onMouseLeave={() => setZoomed(false)}
-                        onDoubleClick={() => {
-                          const videoPos = product.videoPosition ?? 0
-                          const isVideoSlide = product.videoUrl && imgIndex === videoPos
-                          if (!isVideoSlide) setZoomed((z) => !z)
-                        }}
+                        onDoubleClick={() => setZoomed((z) => !z)}
                       >
-                        {(() => {
-                          // v25.12: determine what to show at imgIndex based on videoPosition
-                          const videoPos = product.videoPosition ?? 0
-                          const isVideoSlide = product.videoUrl && imgIndex === videoPos
-                          if (isVideoSlide) {
-                            return (
-                              <video
-                                src={assetUrl(product.videoUrl!)}
-                                poster={product.videoPoster ? assetUrl(product.videoPoster) : undefined}
-                                className="absolute inset-0 h-full w-full object-cover"
-                                controls
-                                playsInline
-                                preload="metadata"
-                                autoPlay
-                                muted
-                                loop
-                              />
-                            )
-                          }
-                          // Image slide: figure out which image index this is
-                          // If imgIndex < videoPos → image index = imgIndex
-                          // If imgIndex > videoPos → image index = imgIndex - 1
-                          const imageIdx = product.videoUrl && imgIndex > videoPos
-                            ? imgIndex - 1
-                            : imgIndex
-                          const safeImageIdx = Math.max(0, Math.min(imageIdx, product.images.length - 1))
-                          return (
-                            <AnimatePresence mode="wait">
-                              <motion.img
-                                key={imgIndex}
-                                src={assetUrl(product.images[safeImageIdx])}
-                                alt={`${product.title} — фото ${safeImageIdx + 1}`}
-                                className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 ease-out"
-                                style={{
-                                  transform: zoomed ? `scale(1.8)` : 'scale(1)',
-                                  transformOrigin: `${zoomPos.x}% ${zoomPos.y}%`,
-                                }}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                transition={{ duration: 0.2 }}
-                                decoding="async"
-                                draggable={false}
-                              />
-                            </AnimatePresence>
-                          )
-                        })()}
+                        <AnimatePresence mode="wait">
+                          <motion.img
+                            key={imgIndex}
+                            src={assetUrl(product.images[imgIndex])}
+                            alt={`${product.title} — фото ${imgIndex + 1}`}
+                            className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 ease-out"
+                            style={{
+                              transform: zoomed ? `scale(1.8)` : 'scale(1)',
+                              transformOrigin: `${zoomPos.x}% ${zoomPos.y}%`,
+                            }}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            decoding="async"
+                            draggable={false}
+                          />
+                        </AnimatePresence>
 
                         {/* Discount badge */}
                         {product.oldPrice && product.oldPrice > product.price && (
@@ -370,16 +338,12 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                           </div>
                         )}
 
-                        {/* Image counter — v25.12: includes video slide */}
-                        {(() => {
-                          const mediaCount = (product.videoUrl ? 1 : 0) + product.images.length
-                          if (mediaCount <= 1) return null
-                          return (
-                            <div className="absolute bottom-5 right-5 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-md text-white text-xs font-medium ring-1 ring-white/10">
-                              {imgIndex + 1} / {mediaCount}
-                            </div>
-                          )
-                        })()}
+                        {/* Image counter */}
+                        {product.images.length > 1 && (
+                          <div className="absolute bottom-5 right-5 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-md text-white text-xs font-medium ring-1 ring-white/10">
+                            {imgIndex + 1} / {product.images.length}
+                          </div>
+                        )}
 
                         {/* Zoom hint */}
                         <div className="absolute bottom-5 left-5 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-md text-white/90 text-xs ring-1 ring-white/10">
@@ -388,65 +352,46 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                       </div>
                     </motion.div>
 
-                    {/* Thumbnails — v25.12: includes video at its position */}
-                    {(() => {
-                      const videoPos = product.videoPosition ?? 0
-                      const imagesArr = product.images || []
-                      const thumbs: Array<{ type: 'video' | 'image'; url: string; poster?: string | null }> = []
-                      const inserted = { done: false }
-                      for (let i = 0; i < imagesArr.length; i++) {
-                        if (!inserted.done && videoPos === i && product.videoUrl) {
-                          thumbs.push({ type: 'video', url: product.videoUrl, poster: product.videoPoster || imagesArr[0] })
-                          inserted.done = true
-                        }
-                        thumbs.push({ type: 'image', url: imagesArr[i] })
-                      }
-                      if (!inserted.done && product.videoUrl) {
-                        thumbs.push({ type: 'video', url: product.videoUrl, poster: product.videoPoster || imagesArr[0] })
-                      }
-                      if (thumbs.length <= 1) return null
-                      return (
-                        <motion.div
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.4, delay: 0.25 }}
-                          className="w-full flex justify-center shrink-0"
-                        >
-                          <div className="flex gap-3 overflow-x-auto no-scrollbar py-4 px-4 -mx-4">
-                            {thumbs.map((t, i) => (
-                              <motion.button
-                                key={i}
-                                onClick={() => setImgIndex(i)}
-                                aria-label={t.type === 'video' ? 'Видео' : `Фото ${i + 1}`}
-                                whileHover={{ scale: 1.06, y: -3 }}
-                                whileTap={{ scale: 0.94 }}
-                                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                                className={cn(
-                                  'shrink-0 overflow-hidden transition-all duration-200 relative rounded-2xl',
-                                  i === imgIndex
-                                    ? 'ring-2 ring-[#A02070] opacity-100 shadow-[0_8px_24px_-6px_rgba(160,32,112,0.4)]'
-                                    : 'opacity-50 hover:opacity-100 ring-1 ring-border/40',
-                                )}
-                                style={{ height: '4.5rem', width: '4.5rem' }}
-                              >
-                                <img
-                                  src={t.type === 'video' ? assetUrl(t.poster || t.url) : assetUrl(t.url)}
-                                  alt={t.type === 'video' ? 'Видео' : `Фото ${i + 1}`}
-                                  className="h-full w-full object-cover"
-                                  loading="lazy"
-                                  draggable={false}
-                                />
-                                {t.type === 'video' && (
-                                  <div className="absolute inset-0 grid place-items-center bg-black/30">
-                                    <Play className="h-5 w-5 text-white" fill="currentColor" />
-                                  </div>
-                                )}
-                              </motion.button>
-                            ))}
-                          </div>
-                        </motion.div>
-                      )
-                    })()}
+                    {/* Thumbnails — v9-premium-v5: fully floating, radius 20px,
+                        no container at all. Active: soft blue glow + glass ring +
+                        scale + lift. Inactive: only external shadow, no ring.
+                        Generous padding so glow/shadow never clipped. */}
+                    {product.images.length > 1 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.4, delay: 0.25 }}
+                        className="w-full flex justify-center shrink-0"
+                      >
+                        <div className="flex gap-5 overflow-x-auto no-scrollbar py-7 px-6 -mx-6">
+                          {product.images.map((src, i) => (
+                            <motion.button
+                              key={i}
+                              onClick={() => setImgIndex(i)}
+                              aria-label={`Фото ${i + 1}`}
+                              whileHover={{ scale: 1.06, y: -5 }}
+                              whileTap={{ scale: 0.94 }}
+                              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                              className={cn(
+                                'shrink-0 h-22 w-22 overflow-hidden transition-all duration-200 relative',
+                                i === imgIndex
+                                  ? 'scale-105 z-20 opacity-100 rounded-[20px] shadow-[0_12px_44px_-8px_rgba(0,0,0,0.4)]'
+                                  : 'z-10 opacity-50 hover:opacity-100 rounded-[20px] shadow-[0_6px_24px_-10px_rgba(0,0,0,0.4)] hover:shadow-[0_10px_32px_-8px_rgba(0,0,0,0.45)]',
+                              )}
+                              style={{ height: '5.25rem', width: '5.25rem' }}
+                            >
+                              <img
+                                src={assetUrl(src)}
+                                alt={`${product.title} — фото ${i + 1}`}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                                draggable={false}
+                              />
+                            </motion.button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
 
                   {/* ============ RIGHT COLUMN: independent scroll ============ */}
@@ -555,12 +500,12 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                               price: product.price,
                               image: product.images[0],
                             })
-                            toast.success('Добавлено в список заявок', { sound: 'cart' })
+                            toast.success('Добавлено в корзину', { sound: 'cart' })
                           }}
                           className="rounded-[20px] font-semibold text-slate-700 dark:text-slate-100 bg-white/40 dark:bg-white/10 backdrop-blur-xl ring-1 ring-white/40 dark:ring-white/15 hover:bg-white/60 dark:hover:bg-white/15 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.2)] transition-all flex items-center justify-center gap-2"
                           style={{ height: '3.25rem' }}
                         >
-                          <ShoppingCart className="h-4 w-4" /> В список заявок
+                          <ShoppingCart className="h-4 w-4" /> В корзину
                         </motion.button>
 
                         {/* Tertiary actions — circular floating orbs */}

@@ -82,14 +82,14 @@ const TARGETS: ShareTarget[] = [
     label: 'Telegram',
     icon: Send,
     color: 'text-sky-500',
-    gradient: 'from-[#EC4899] to-[#9333EA]',
+    gradient: 'from-sky-400 to-blue-600',
   },
   {
     platform: 'instagram',
     label: 'Instagram',
     icon: Instagram,
     color: 'text-pink-500',
-    gradient: 'from-[#EC4899] via-[#A855F7] to-[#9333EA]',
+    gradient: 'from-fuchsia-500 via-pink-500 to-amber-500',
   },
   {
     platform: 'facebook',
@@ -440,11 +440,11 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             <div className="h-1.5 w-12 rounded-full bg-slate-200 dark:bg-slate-700" />
           </div>
 
-          {/* Header — v25.12: TRI999 gradient logo, no "9" */}
+          {/* Header */}
           <div className="px-5 pb-3 flex items-start justify-between gap-3 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="h-9 w-9 rounded-xl grid place-items-center text-white font-extrabold text-xs shrink-0" style={{ background: 'linear-gradient(135deg, #EC4899, #A855F7, #9333EA)' }}>
-                T
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 grid place-items-center text-white font-extrabold shrink-0">
+                9
               </div>
               <div className="min-w-0">
                 <div className="font-bold text-base leading-tight">Поделиться товаром</div>
@@ -465,7 +465,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             <div className="px-5 pb-3 shrink-0">
               <button
                 onClick={handleNativeShare}
-                className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#EC4899] to-[#9333EA] text-white font-bold shadow-lg shadow-pink-500/30 hover:shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+                className="w-full h-12 rounded-2xl bg-gradient-to-r from-blue-600 to-violet-600 text-white font-bold shadow-lg shadow-blue-500/30 hover:shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
               >
                 <ShareIcon /> Поделиться через систему
               </button>
@@ -481,7 +481,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             <button
               onClick={handleClickSendToChat}
               disabled={sendingToChat}
-              className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#10B981] to-[#059669] text-white font-bold shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:scale-[1.02] transition-all disabled:opacity-60 disabled:hover:scale-100 flex items-center justify-center gap-2"
+              className="w-full h-12 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-white font-bold shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:scale-[1.02] transition-all disabled:opacity-60 disabled:hover:scale-100 flex items-center justify-center gap-2"
             >
               {sendingToChat ? (
                 <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
@@ -524,7 +524,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             </div>
 
             {/* Smart Story generator entry */}
-            <div className="mt-4 rounded-2xl bg-gradient-to-br from-[#EC4899] via-[#A855F7] to-[#9333EA] p-4 text-white relative overflow-hidden">
+            <div className="mt-4 rounded-2xl bg-gradient-to-br from-fuchsia-500 via-pink-500 to-amber-500 p-4 text-white relative overflow-hidden">
               <div className="absolute inset-0 opacity-20 pointer-events-none">
                 <Sparkles className="absolute -top-2 -right-2 h-20 w-20" />
               </div>
@@ -560,19 +560,11 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             </div>
           </div>
 
-          {/* Footer branding — v25.12: only TRI999, no "9" badge */}
+          {/* Footer branding */}
           <div className="px-5 py-3 border-t border-slate-200/60 dark:border-slate-800/60 shrink-0">
             <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500">
-              <span
-                className="font-extrabold text-xs"
-                style={{
-                  backgroundImage: 'linear-gradient(135deg, #EC4899, #A855F7, #9333EA)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                }}
-              >
-                TRI999
-              </span>
+              <div className="h-4 w-4 rounded-md bg-gradient-to-br from-sky-400 via-blue-500 to-violet-600 grid place-items-center text-white text-[8px] font-extrabold">9</div>
+              TRI999 — TRI999
             </div>
           </div>
         </motion.div>

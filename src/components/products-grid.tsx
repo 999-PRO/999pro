@@ -8,12 +8,7 @@ import { cn } from '@/lib/utils'
 import { Search } from 'lucide-react'
 import { usePullToRefreshSubscription } from './pull-to-refresh'
 
-// Project categories — always visible, never disappear after selection.
-// v25.11: this list is now considered legacy. The canonical source is
-// /api/categories (DB-backed). The frontend ProductsGrid will be replaced
-// by a proper catalog page in a later step. For now, we keep PROJECT_CATEGORIES
-// as the initial fallback so the old UI doesn't break, but fetch /api/categories
-// at runtime and use it if available.
+// Project categories (always visible, never disappear after selection).
 export const PROJECT_CATEGORIES = [
   'Реклама',
   'Подарки',

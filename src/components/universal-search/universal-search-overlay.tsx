@@ -396,7 +396,7 @@ export function UniversalSearchOverlay({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[97] bg-black/50 dark:bg-black/50"
+            className="fixed inset-0 z-[97] bg-black/50"
             style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
             onClick={onClose}
           />
@@ -433,7 +433,7 @@ export function UniversalSearchOverlay({
                       boxShadow: '0 6px 20px -4px rgba(99,102,241,0.5)',
                     }}
                   >
-                    <Search className="h-5 w-5 text-foreground" />
+                    <Search className="h-5 w-5 text-white" />
                   </div>
                   <input
                     ref={inputRef}
@@ -445,7 +445,7 @@ export function UniversalSearchOverlay({
                       if (e.key === 'Escape') onClose()
                     }}
                     placeholder="Поиск по всему приложению..."
-                    className="flex-1 bg-transparent text-foreground text-base placeholder:text-muted-foreground/70 outline-none min-w-0"
+                    className="flex-1 bg-transparent text-white text-base placeholder:text-white/40 outline-none min-w-0"
                   />
                   {/* Voice search button — uses Web Speech API (Chrome/Edge/Safari).
                       Hidden on browsers that don't support SpeechRecognition. */}
@@ -465,7 +465,7 @@ export function UniversalSearchOverlay({
                   <button
                     onClick={onClose}
                     aria-label="Закрыть"
-                    className="grid place-items-center h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-foreground/10 transition-colors shrink-0"
+                    className="grid place-items-center h-8 w-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors shrink-0"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -516,7 +516,7 @@ export function UniversalSearchOverlay({
                     sees progress while waiting for the slowest source (Audio Hub
                     external API can take 5-10s on cold cache). */}
                 {loading && total === 0 && query.trim().length >= 2 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center py-12 text-white/50">
                     <div
                       className="h-8 w-8 rounded-full border-2 border-white/20 border-t-white/80 animate-spin mb-3"
                       style={{ animationDuration: '0.6s' }}
@@ -527,9 +527,9 @@ export function UniversalSearchOverlay({
 
                 {/* Empty state — only when ALL sources are done AND nothing found */}
                 {showEmpty && (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center py-12 text-white/50">
                     <Search className="h-10 w-10 mb-3 opacity-50" />
-                    <div className="text-sm font-medium text-foreground/80 mb-1">
+                    <div className="text-sm font-medium text-white/70 mb-1">
                       Ничего не найдено
                     </div>
                     <div className="text-xs">
@@ -641,7 +641,7 @@ export function UniversalSearchOverlay({
                         returned results. Helps the user understand that more
                         results may appear. */}
                     {(loadingAudio || loadingFilms) && (
-                      <div className="flex items-center justify-center gap-2 py-3 text-[11px] text-muted-foreground/70">
+                      <div className="flex items-center justify-center gap-2 py-3 text-[11px] text-white/40">
                         <div
                           className="h-3 w-3 rounded-full border border-white/20 border-t-white/60 animate-spin"
                           style={{ animationDuration: '0.8s' }}
@@ -660,7 +660,7 @@ export function UniversalSearchOverlay({
               </div>
 
               {/* Bottom hint (desktop only — Cmd+K) */}
-              <div className="hidden md:flex items-center justify-center gap-2 px-4 py-2 border-t border-white/5 text-[11px] text-muted-foreground/70 shrink-0">
+              <div className="hidden md:flex items-center justify-center gap-2 px-4 py-2 border-t border-white/5 text-[11px] text-white/40 shrink-0">
                 <Command className="h-3 w-3" />
                 <span>+ K — открыть поиск</span>
                 <span className="mx-2">·</span>
@@ -693,7 +693,7 @@ function CategoryChip({
     <button
       onClick={onClick}
       className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground bg-foreground/5'
+        active ? 'text-white' : 'text-white/60 hover:text-white/90 bg-white/5'
       }`}
       style={
         active
@@ -727,14 +727,14 @@ function CategorySection({
           className="grid place-items-center h-6 w-6 rounded-md shrink-0"
           style={{ background: gradient, boxShadow: `0 4px 12px -2px ${glow}` }}
         >
-          <Icon className="h-3.5 w-3.5 text-foreground" />
+          <Icon className="h-3.5 w-3.5 text-white" />
         </div>
-        <div className="text-xs font-semibold text-foreground/90 uppercase tracking-wide">{label}</div>
-        <div className="text-[11px] text-muted-foreground/70">· {count}</div>
+        <div className="text-xs font-semibold text-white/80 uppercase tracking-wide">{label}</div>
+        <div className="text-[11px] text-white/40">· {count}</div>
         {onShowAll && (
           <button
             onClick={onShowAll}
-            className="ml-auto text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
+            className="ml-auto text-[11px] text-white/50 hover:text-white flex items-center gap-0.5"
           >
             Все <ChevronRight className="h-3 w-3" />
           </button>
@@ -756,7 +756,7 @@ function ResultRow({
     <motion.button
       whileTap={{ scale: 0.99 }}
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-left transition-colors hover:bg-foreground/5"
+      className="w-full flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-left transition-colors hover:bg-white/5"
       style={{ background: 'rgba(255,255,255,0.025)' }}
     >
       {children}
@@ -775,7 +775,7 @@ function ProductRow({
 }) {
   return (
     <ResultRow onClick={onClick}>
-      <div className="h-12 w-12 rounded-lg overflow-hidden shrink-0 bg-foreground/5 grid place-items-center">
+      <div className="h-12 w-12 rounded-lg overflow-hidden shrink-0 bg-white/5 grid place-items-center">
         {hit.image ? (
            
           <img
@@ -785,25 +785,25 @@ function ProductRow({
             loading="lazy"
           />
         ) : (
-          <Package className="h-5 w-5 text-muted-foreground/70" />
+          <Package className="h-5 w-5 text-white/40" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-foreground font-medium truncate">{highlight(hit.title, query)}</div>
-        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
+        <div className="text-sm text-white font-medium truncate">{highlight(hit.title, query)}</div>
+        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-white/50">
           {hit.category && <span className="truncate">{hit.category}</span>}
           <span className="shrink-0">·</span>
           <span className="text-emerald-400 font-semibold">
             {formatPrice(hit.price, hit.currency)}
           </span>
           {hit.oldPrice && (
-            <span className="line-through text-muted-foreground/50 shrink-0">
+            <span className="line-through text-white/30 shrink-0">
               {formatPrice(hit.oldPrice, hit.currency)}
             </span>
           )}
         </div>
       </div>
-      <ChevronRight className="h-4 w-4 text-muted-foreground/50 shrink-0" />
+      <ChevronRight className="h-4 w-4 text-white/30 shrink-0" />
     </ResultRow>
   )
 }
@@ -819,17 +819,17 @@ function FilmRow({
 }) {
   return (
     <ResultRow onClick={onClick}>
-      <div className="h-14 w-10 rounded-md overflow-hidden shrink-0 bg-foreground/5 grid place-items-center">
+      <div className="h-14 w-10 rounded-md overflow-hidden shrink-0 bg-white/5 grid place-items-center">
         {hit.posterUrl ? (
            
           <img src={hit.posterUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
         ) : (
-          <FilmIcon className="h-4 w-4 text-muted-foreground/70" />
+          <FilmIcon className="h-4 w-4 text-white/40" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-foreground font-medium truncate">{highlight(hit.title, query)}</div>
-        <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+        <div className="text-sm text-white font-medium truncate">{highlight(hit.title, query)}</div>
+        <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-white/50">
           {hit.isSeries && (
             <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold">
               СЕРИАЛ
@@ -844,7 +844,7 @@ function FilmRow({
           )}
         </div>
       </div>
-      <ChevronRight className="h-4 w-4 text-muted-foreground/50 shrink-0" />
+      <ChevronRight className="h-4 w-4 text-white/30 shrink-0" />
     </ResultRow>
   )
 }
@@ -860,22 +860,22 @@ function AudioRow({
 }) {
   return (
     <ResultRow onClick={onClick}>
-      <div className="h-12 w-12 rounded-lg overflow-hidden shrink-0 bg-foreground/5 grid place-items-center">
+      <div className="h-12 w-12 rounded-lg overflow-hidden shrink-0 bg-white/5 grid place-items-center">
         {hit.coverUrl ? (
            
           <img src={hit.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
         ) : (
-          <Music2 className="h-5 w-5 text-muted-foreground/70" />
+          <Music2 className="h-5 w-5 text-white/40" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-foreground font-medium truncate">{highlight(hit.title, query)}</div>
-        <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+        <div className="text-sm text-white font-medium truncate">{highlight(hit.title, query)}</div>
+        <div className="text-[11px] text-white/50 truncate mt-0.5">
           {highlight(hit.artist, query)}
           {hit.album && hit.album !== hit.title && <span> · {hit.album}</span>}
         </div>
       </div>
-      <div className="text-[10px] text-muted-foreground/70 shrink-0 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 uppercase">
+      <div className="text-[10px] text-white/40 shrink-0 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 uppercase">
         {hit.source}
       </div>
     </ResultRow>
@@ -900,13 +900,13 @@ function ChatRow({
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-foreground font-medium truncate">{highlight(hit.name, query)}</div>
-        <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+        <div className="text-sm text-white font-medium truncate">{highlight(hit.name, query)}</div>
+        <div className="text-[11px] text-white/50 truncate mt-0.5">
           {hit.lastMessagePreview ? highlight(hit.lastMessagePreview, query) : 'Нет сообщений'}
           {hit.lastMessageAt && <span> · {timeAgo(hit.lastMessageAt)}</span>}
         </div>
       </div>
-      <MessageSquare className="h-4 w-4 text-muted-foreground/50 shrink-0" />
+      <MessageSquare className="h-4 w-4 text-white/30 shrink-0" />
     </ResultRow>
   )
 }
@@ -929,14 +929,14 @@ function UserRow({
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-foreground font-medium truncate">
+        <div className="text-sm text-white font-medium truncate">
           {highlight(hit.displayName || hit.username, query)}
         </div>
-        <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+        <div className="text-[11px] text-white/50 truncate mt-0.5">
           @{highlight(hit.username, query)}
         </div>
       </div>
-      <UserIcon className="h-4 w-4 text-muted-foreground/50 shrink-0" />
+      <UserIcon className="h-4 w-4 text-white/30 shrink-0" />
     </ResultRow>
   )
 }
@@ -952,18 +952,18 @@ function PageRow({
 }) {
   return (
     <ResultRow onClick={onClick}>
-      <div className="h-10 w-10 rounded-lg shrink-0 grid place-items-center bg-foreground/5">
-        <FileText className="h-4 w-4 text-muted-foreground/70" />
+      <div className="h-10 w-10 rounded-lg shrink-0 grid place-items-center bg-white/5">
+        <FileText className="h-4 w-4 text-white/40" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm text-foreground font-medium truncate">{highlight(hit.title, query)}</div>
+        <div className="text-sm text-white font-medium truncate">{highlight(hit.title, query)}</div>
         {hit.subtitle && (
-          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+          <div className="text-[11px] text-white/50 truncate mt-0.5">
             {highlight(hit.subtitle, query)}
           </div>
         )}
       </div>
-      <ChevronRight className="h-4 w-4 text-muted-foreground/50 shrink-0" />
+      <ChevronRight className="h-4 w-4 text-white/30 shrink-0" />
     </ResultRow>
   )
 }
@@ -972,7 +972,7 @@ function Avatar({ src, name }: { src: string | null; name: string }) {
   const fallback = initials(name) || '?'
   if (src) {
     return (
-      <div className="h-11 w-11 rounded-full overflow-hidden shrink-0 bg-foreground/5">
+      <div className="h-11 w-11 rounded-full overflow-hidden shrink-0 bg-white/5">
         { }
         <img src={assetUrl(src)} alt="" className="h-full w-full object-cover" loading="lazy" />
       </div>
@@ -980,7 +980,7 @@ function Avatar({ src, name }: { src: string | null; name: string }) {
   }
   return (
     <div
-      className="h-11 w-11 rounded-full shrink-0 grid place-items-center text-foreground text-sm font-semibold"
+      className="h-11 w-11 rounded-full shrink-0 grid place-items-center text-white text-sm font-semibold"
       style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }}
     >
       {fallback}
@@ -1014,13 +1014,13 @@ function InitialContent({
       {recents.length > 0 && (
         <div className="mb-6">
           <div className="flex items-center gap-2 px-2 mb-2">
-            <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-            <div className="text-xs font-semibold text-foreground/80 uppercase tracking-wide">
+            <Clock className="h-3.5 w-3.5 text-white/50" />
+            <div className="text-xs font-semibold text-white/70 uppercase tracking-wide">
               Недавние
             </div>
             <button
               onClick={onClearRecents}
-              className="ml-auto text-[11px] text-muted-foreground/70 hover:text-foreground/80"
+              className="ml-auto text-[11px] text-white/40 hover:text-white/70"
             >
               Очистить
             </button>
@@ -1030,7 +1030,7 @@ function InitialContent({
               <button
                 key={i}
                 onClick={() => onPickRecent(q)}
-                className="px-3 py-1.5 rounded-full text-xs text-foreground/80 bg-foreground/5 hover:bg-foreground/10 transition-colors"
+                className="px-3 py-1.5 rounded-full text-xs text-white/70 bg-white/5 hover:bg-white/10 transition-colors"
               >
                 {q}
               </button>
@@ -1041,14 +1041,14 @@ function InitialContent({
 
       <div>
         <div className="flex items-center gap-2 px-2 mb-3">
-          <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
-          <div className="text-xs font-semibold text-foreground/80 uppercase tracking-wide">
+          <TrendingUp className="h-3.5 w-3.5 text-white/50" />
+          <div className="text-xs font-semibold text-white/70 uppercase tracking-wide">
             Что можно искать
           </div>
           {activeScope !== 'all' && (
             <button
               onClick={() => onPickScope('all')}
-              className="ml-auto text-[11px] text-muted-foreground/70 hover:text-foreground/80 underline underline-offset-2"
+              className="ml-auto text-[11px] text-white/40 hover:text-white/70 underline underline-offset-2"
             >
               Все источники
             </button>
@@ -1084,7 +1084,7 @@ function InitialContent({
                     opacity: isActive ? 1 : 0.85,
                   }}
                 >
-                  <c.icon className="h-4 w-4 text-foreground" />
+                  <c.icon className="h-4 w-4 text-white" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div
@@ -1093,7 +1093,7 @@ function InitialContent({
                   >
                     {c.label}
                   </div>
-                  <div className="text-[10px] text-muted-foreground/70 truncate">
+                  <div className="text-[10px] text-white/40 truncate">
                     {c.key === 'products' && 'Каталог'}
                     {c.key === 'films' && 'Сериалы и кино'}
                     {c.key === 'audio' && 'Треки и радио'}
@@ -1104,7 +1104,7 @@ function InitialContent({
                 </div>
                 {isActive && (
                   <span
-                    className="shrink-0 grid place-items-center h-5 w-5 rounded-full text-foreground text-[10px] font-bold"
+                    className="shrink-0 grid place-items-center h-5 w-5 rounded-full text-white text-[10px] font-bold"
                     style={{ background: c.gradient }}
                   >
                     ✓
@@ -1116,7 +1116,7 @@ function InitialContent({
         </div>
 
         <div className="mt-6 px-3 py-3 rounded-xl bg-white/[0.02] border border-white/5">
-          <div className="text-[11px] text-muted-foreground leading-relaxed">
+          <div className="text-[11px] text-white/50 leading-relaxed">
             💡 Нажмите на карточку выше, чтобы искать только в этом разделе.
             Голосом — кнопка 🎤 в строке поиска.
           </div>
