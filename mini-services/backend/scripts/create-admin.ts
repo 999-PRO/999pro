@@ -95,7 +95,6 @@ async function main() {
       data: {
         email,
         username,
-        phone: '+79990000000',
         password: hash,
         displayName: 'Administrator',
         role: 'admin',

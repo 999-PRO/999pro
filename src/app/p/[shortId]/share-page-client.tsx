@@ -76,12 +76,13 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
     // would break OS-level interception.
     const targetUrl = `${window.location.origin}/?product=${encodeURIComponent(product.id)}`
 
+    // v25.12: use window.location.replace — replaces the current history entry
+    // (no back-button loop), navigates to the SPA which opens the product.
+    // We use replace instead of pushState because /p/[shortId] is a server-rendered
+    // page — pushState+popstate doesn't work across server/client boundary.
     const timer = setTimeout(() => {
-      // Same-tab navigation: on iOS/Android with PWA installed, the OS
-      // intercepts (Universal Link / App Link). On desktop / no PWA, the
-      // SPA loads and opens the Product Viewer.
-      window.location.href = targetUrl
-    }, 300)
+      window.location.replace(targetUrl)
+    }, 500)
 
     return () => clearTimeout(timer)
   }, [product.id, shortId])
@@ -94,13 +95,14 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
   const handleManualOpen = () => {
     if (typeof window === 'undefined') return
     const targetUrl = `${window.location.origin}/?product=${encodeURIComponent(product.id)}`
-    window.location.href = targetUrl
+    window.location.replace(targetUrl)
   }
 
   return (
     <main
-      className="min-h-[100dvh] flex items-center justify-center p-6 bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950"
+      className="min-h-[100dvh] flex items-center justify-center p-6"
       style={{
+        background: 'linear-gradient(135deg, #EC4899 0%, #A855F7 50%, #9333EA 100%)',
         // Prevent body scroll while splash is visible.
         overscrollBehavior: 'none',
       }}
@@ -111,19 +113,20 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
         transition={{ duration: 0.4, ease: 'easeOut' }}
         className="w-full max-w-md text-center"
       >
-        {/* Brand mark */}
-        <div className="inline-flex h-16 w-16 rounded-2xl gradient-brand grid place-items-center shadow-glow-lg mb-6">
-          <span className="text-2xl font-black text-white tracking-tighter">999</span>
+        {/* v25.12: TRI999 — plain white text */}
+        <div className="mb-6">
+          <span className="text-3xl font-extrabold tracking-tight text-white">
+            TRI999
+          </span>
         </div>
 
         {/* Title */}
-        <h1 className="text-2xl font-bold text-foreground mb-2">Открываем товар</h1>
+        <h1 className="text-2xl font-bold mb-2 text-white">Открываем товар</h1>
 
-        {/* Product hint — minimal text only, NO image / NO price box.
-            The full product UI is shown in the SPA's Product Viewer. */}
-        <p className="text-sm text-muted-foreground line-clamp-2 mb-1">{product.title}</p>
+        {/* Product hint */}
+        <p className="text-sm line-clamp-2 mb-1 text-white/80">{product.title}</p>
         {product.price > 0 && (
-          <p className="text-base font-semibold text-primary mb-6">
+          <p className="text-base font-semibold mb-6 text-white">
             {formatPrice(product.price, product.currency)}
           </p>
         )}
@@ -134,12 +137,12 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-6"
+            className="flex items-center justify-center gap-2 text-sm text-white/80 mb-6"
           >
             <motion.span
               animate={{ rotate: 360 }}
               transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
-              className="inline-block h-4 w-4 rounded-full border-2 border-muted-foreground/30 border-t-primary"
+              className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white"
             />
             Перенаправляем в приложение…
           </motion.div>
@@ -148,7 +151,7 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
         {/* Manual fallback button (tappable if auto-redirect fails) */}
         <button
           onClick={handleManualOpen}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full gradient-brand text-white font-semibold text-sm shadow-glow hover:scale-[1.02] active:scale-95 transition-transform"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-[#A02070] font-semibold text-sm shadow-lg hover:scale-[1.02] active:scale-95 transition-transform"
         >
           Открыть в приложении
           <ArrowRight className="h-4 w-4" />

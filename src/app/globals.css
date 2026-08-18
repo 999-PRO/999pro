@@ -82,7 +82,7 @@
   --popover-foreground: oklch(0.18 0.02 250);
 
   /* Primary: vivid sky blue */
-  --primary: oklch(0.62 0.18 245);
+  --primary: #A02070;  /* v25.12: deep magenta */
   --primary-foreground: oklch(0.99 0.01 240);
 
   --secondary: oklch(0.96 0.01 240);
@@ -115,7 +115,7 @@
   --sidebar-ring: oklch(0.62 0.18 245);
 
   /* Brand gradient used for hero / banner / chips */
-  --gradient-brand: linear-gradient(135deg, #38bdf8 0%, #2563eb 50%, #7c3aed 100%);
+  --gradient-brand: linear-gradient(135deg, #EC4899 0%, #A855F7 50%, #9333EA 100%);  /* v25.12: pink → purple */
   --gradient-soft: linear-gradient(135deg, rgba(56,189,248,0.18) 0%, rgba(124,58,237,0.12) 100%);
 }
 
@@ -137,7 +137,7 @@
   --popover: oklch(0.21 0.025 250);
   --popover-foreground: oklch(0.97 0.01 240);
 
-  --primary: oklch(0.72 0.16 240);
+  --primary: #C026D3;  /* v25.12: lighter magenta for dark mode */
   --primary-foreground: oklch(0.16 0.02 250);
 
   --secondary: oklch(0.27 0.025 250);
@@ -169,7 +169,7 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.72 0.16 240);
 
-  --gradient-brand: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 50%, #8b5cf6 100%);
+  --gradient-brand: linear-gradient(135deg, #EC4899 0%, #A855F7 50%, #9333EA 100%);  /* v25.12 */
   --gradient-soft: linear-gradient(135deg, rgba(14,165,233,0.22) 0%, rgba(139,92,246,0.18) 100%);
 }
 
@@ -559,11 +559,10 @@
     overscroll-behavior: contain;
   }
 
-  /* Main content has NO top padding on mobile — it scrolls UNDER the fixed
-     translucent glass header (Telegram-style). The header is glassy so
-     content shows through it as you scroll. Each page's first section
-     adds its own top padding so its content isn't hidden behind the header
-     on first paint. */
+  /* v25.12: app-main has NO top padding — each view adds .page-top-padding
+     itself (mobile: 4.5rem for fixed header, desktop: 0). This was the
+     original design; reverting because some views (chat) manage their own
+     layout and adding padding here caused double-padding issues. */
   .app-main {
     padding-top: 0;
   }
@@ -575,9 +574,8 @@
 }
 
 @layer utilities {
-  /* page-top-padding — moved to utilities layer so it WINS over Tailwind's
-     py-* utilities (which are also in utilities layer, but our !important
-     guarantees the safe-area padding is applied). */
+  /* page-top-padding — mobile: 4.5rem for fixed MobileHeader (~72px).
+     Desktop: 4rem for sticky TopBar (64px). */
   .page-top-padding {
     padding-top: calc(env(safe-area-inset-top) + 4.5rem) !important;
   }
@@ -591,7 +589,7 @@
 
   @media (min-width: 768px) {
     .page-top-padding {
-      padding-top: 0 !important;
+      padding-top: 4rem !important; /* v25.12: 64px for sticky TopBar */
     }
   }
   .glass {

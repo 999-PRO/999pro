@@ -3,12 +3,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import { AppShell } from '@/components/app-shell'
-import { Stories } from '@/components/stories'
-import { PromoBannerCarousel } from '@/components/promo-banner'
-import { Hero } from '@/components/hero'
-import { ProductsGrid } from '@/components/products-grid'
-import { DesktopHome } from '@/components/desktop-home'
-import { SmartBlocks } from '@/components/smart-blocks'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/notifications'
 import { haptic } from '@/lib/haptic'
@@ -18,10 +12,13 @@ import { useNotificationsStore } from '@/lib/use-notifications'
 import { usePushNotifications } from '@/lib/use-push'
 import { useAuthStore } from '@/lib/auth-store'
 import { useIsDesktop } from '@/lib/use-media-query'
-import { useHomeLayout } from '@/lib/home-layout'
 import { RetryableErrorBoundary } from '@/components/retryable-error-boundary'
-import { InlineSearch } from '@/components/search/inline-search'
-import { FloatingLiveInfo } from '@/components/floating-live-info'
+// v25.11: unified HomeView for both mobile and desktop (replaces DesktopHome + old mobile HomeView)
+import { HomeView } from '@/components/home/home-view'
+// v25.11: new CatalogPage with server-side filters + pagination
+import { CatalogPage } from '@/components/catalog/catalog-page'
+// v25.12: Price lists page (public)
+import { PriceListsPage } from '@/components/price-lists/price-lists-page'
 
 // v12.3: the Feed module has been removed and replaced by the 999 CLUB module.
 // The entire CLUB module is code-split via `next/dynamic` — if the user never
@@ -55,7 +52,7 @@ const PrivacyView = dynamic(() => import('@/components/privacy-view').then((m) =
 const AboutView = dynamic(() => import('@/components/about-view').then((m) => m.AboutView), { ssr: false })
 const InfoPageView = dynamic(() => import('@/components/info-page-view').then((m) => m.InfoPageView), { ssr: false })
 
-type View = 'home' | 'catalog' | 'club' | 'chat' | 'profile' | 'search' | 'studio' | 'orders' | 'reviews' | 'support' | 'contacts' | 'settings' | 'privacy' | 'about' | 'info' | 'admin-login' | 'analytics'
+type View = 'home' | 'catalog' | 'club' | 'chat' | 'profile' | 'search' | 'studio' | 'orders' | 'reviews' | 'support' | 'contacts' | 'settings' | 'privacy' | 'about' | 'info' | 'admin-login' | 'analytics' | 'price'
 
 function getInitialView(): View {
   if (typeof window === 'undefined') return 'home'
@@ -64,7 +61,7 @@ function getInitialView(): View {
   // v25.6: 'support' is kept as a valid view for backward-compat with deep
   // links, but it now resolves to ContactsView (see routing below). Old
   // bookmarks /?view=support still work — they show Contacts.
-  const validViews: View[] = ['home', 'catalog', 'club', 'chat', 'profile', 'search', 'studio', 'orders', 'reviews', 'support', 'contacts', 'settings', 'privacy', 'about', 'info', 'admin-login']
+  const validViews: View[] = ['home', 'catalog', 'club', 'chat', 'profile', 'search', 'studio', 'orders', 'reviews', 'support', 'contacts', 'settings', 'privacy', 'about', 'info', 'admin-login', 'price']
   if (v && validViews.includes(v as View)) return v as View
   return 'home'
 }
@@ -498,33 +495,24 @@ export default function Home() {
         {/* Phase 23: main-content anchor for skip-to-content link */}
         {view === 'home' && (
           <>
-            {/* Desktop: premium bento layout (md+) — gated on viewport
-                to avoid mounting the desktop subtree (and its 3 API calls)
-                on phones where it's CSS-hidden anyway. */}
-            {isDesktop && (
-              <DesktopHome
-                key="desktop-home"
-                onNavigate={navigate}
-                onOpenProduct={openProduct}
-                onOpenSearch={openSearch}
-              />
-            )}
-            {/* Mobile: original HomeView (below md) */}
-            {!isDesktop && (
-              <div key="mobile-home">
-                <HomeView
-                  onNavigate={navigate}
-                  onAuth={() => setAuthOpen(true)}
-                  onOpenProduct={openProduct}
-                  onStartConversation={handleStartConversation}
-                />
-              </div>
-            )}
+            {/* v25.11: unified HomeView for both mobile and desktop.
+                Replaces the separate DesktopHome + mobile HomeView. */}
+            <HomeView
+              key="unified-home"
+              onNavigate={navigate}
+              onOpenProduct={openProduct}
+              onOpenSearch={openSearch}
+            />
           </>
         )}
         {view === 'catalog' && (
           <RetryableErrorBoundary key="catalog">
-            <CatalogView key="catalog-children" onOpenProduct={openProduct} />
+            <CatalogPage key="catalog-children" onOpenProduct={openProduct} />
+          </RetryableErrorBoundary>
+        )}
+        {view === 'price' && (
+          <RetryableErrorBoundary key="price">
+            <PriceListsPage key="price-children" onNavigate={navigate} />
           </RetryableErrorBoundary>
         )}
         {view === 'club' && (
@@ -641,166 +629,13 @@ export default function Home() {
   )
 }
 
-function HomeView({
-  onNavigate,
-  onAuth,
-  onOpenProduct,
-  onStartConversation,
-}: {
-  onNavigate: (v: string) => void
-  onAuth: () => void
-  onOpenProduct: (id: string) => void
-  onStartConversation?: (userId: string) => void
-}) {
-  // v12.6.3: inline search state. When the user types a query, we hide
-  // Stories / Banners / SmartBlocks and show only the search results
-  // (which InlineSearch renders below itself, in normal flow). This
-  // matches the catalog UX exactly: type → results filter in place.
-  const [searchActive, setSearchActive] = useState(false)
-
-  // v16.5: Home page layout config — admin controls block order/visibility
-  // via Studio → "Главная". We only use isVisible() here; SmartBlocks already
-  // renders all 10 blocks internally, so we only gate the top-level sections.
-  const { isVisible } = useHomeLayout()
-
-  const handleQueryChange = useCallback((query: string, _hasResults: boolean) => {
-    // Search is "active" when there's a query with ≥2 chars (regardless of
-    // whether results have loaded yet). InlineSearch only shows results when
-    // hasQuery is true, so we mirror that here.
-    setSearchActive(query.trim().length >= 2)
-  }, [])
-
-  return (
-    <div className="pb-28 md:pb-0 page-top-padding">
-      {/* v18.4: Floating Live Info — "живая" информационная строка между
-          Header и Search. Текст парит в пространстве (без карточек/рамок),
-          ротация: погода → финансы → категории магазина → персональные.
-          Показывается только на главной странице. */}
-      <FloatingLiveInfo />
-
-      {/* v12.6.3: InlineSearch — reusable inline search, identical UX to the
-          catalog ("999 Store"). An inline <input> in normal flow; typing
-          filters results in place below the bar. NO overlay, NO modal, NO
-          page navigation. When active, the surrounding content (Stories,
-          Banners, SmartBlocks) is hidden so only results show — same as the
-          catalog. Sits directly below the Header, scrolls with the page. */}
-      <InlineSearch
-        onOpenProduct={onOpenProduct}
-        onStartConversation={onStartConversation}
-        onQueryChange={handleQueryChange}
-      />
-
-      {/* When search is NOT active, show the normal Home content.
-          When search IS active (query ≥ 2 chars), hide everything except
-          the search results (which InlineSearch renders itself). */}
-      {!searchActive && (
-        <>
-          {/* Hero header (desktop) — managed via Studio → "Hero блок" */}
-          {isVisible('hero') && <Hero onNavigate={onNavigate} />}
-
-          {/* v12.3.1: Stories component RESTORED (standalone module — not Feed). */}
-          {isVisible('stories') && <Stories />}
-
-          {/* Promo banner */}
-          {isVisible('banner') && <PromoBannerCarousel />}
-
-          {/* Smart blocks — single API call returns 10 personalized blocks.
-              v16.5: individual smart-block visibility is controlled inside
-              SmartBlocks via the homeLayout config (passed through). The
-              top-level isVisible('trending') etc. gates are handled by
-              SmartBlocks filtering its own blocks based on the same config. */}
-          <SmartBlocks onOpenProduct={onOpenProduct} limit={12} />
-
-          {/* Catalog CTA + Feed CTA — side-by-side on desktop, stacked on mobile. */}
-          <div className="px-4 md:px-6 py-3 grid sm:grid-cols-2 gap-3">
-            <div className="rounded-2xl gradient-soft p-6 md:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <div className="flex-1">
-                <h3 className="text-xl font-bold mb-1">Полный каталог</h3>
-                <p className="text-sm text-muted-foreground">
-                  Сотни товаров с большими фото, ценами и быстрой покупкой в один клик.
-                </p>
-              </div>
-              <Button
-                onClick={() => onNavigate('catalog')}
-                className="rounded-full gradient-brand text-white font-semibold shadow-glow h-11 px-6"
-              >
-                Открыть каталог
-              </Button>
-            </div>
-
-            {/* v25.10 (Task #3): Fullscreen feed CTA — Reels / TikTok style. */}
-            <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 md:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-4 text-white relative overflow-hidden">
-              <div
-                className="absolute inset-0 opacity-30"
-                style={{
-                  background:
-                    'radial-gradient(circle at 20% 20%, rgba(99,102,241,0.4) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(168,85,247,0.4) 0%, transparent 50%)',
-                }}
-              />
-              <div className="flex-1 relative">
-                <h3 className="text-xl font-bold mb-1">Лента товаров</h3>
-                <p className="text-sm text-white/70">
-                  Вертикальная лента в стиле Reels — листайте товары жестом, смотрите видео, открывайте описание.
-                </p>
-              </div>
-              <Button
-                onClick={() => {
-                  haptic.tap()
-                  window.dispatchEvent(new CustomEvent('open-feed'))
-                }}
-                className="rounded-full bg-white text-black font-semibold shadow-glow h-11 px-6 hover:bg-white/90 relative"
-              >
-                Открыть ленту
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* v12.3: Feed preview block removed. The 999 CLUB module replaces
-          the old feed — the bottom nav now has a 💎 CLUB button. */}
-    </div>
-  )
+function HomeViewLegacy() {
+  // v25.11: kept as a no-op placeholder — the real HomeView is imported
+  // from '@/components/home/home-view'. This stub exists only to keep
+  // backward-compatible references until all call sites are updated.
+  return null
 }
-
-function CatalogView({ onOpenProduct }: { onOpenProduct: (id: string) => void }) {
-  return (
-    <div className="pb-28 md:pb-12 page-top-padding">
-      {/* v12.6: clean catalog header — only "999 Store" title, no badge,
-          no subtitle, no category list. Categories live in the filter bar
-          below (kept intact). The previous "Реклама · Подарки · Мебель ·
-          Печать · Дизайн · Интерьер · Наружная реклама · Полиграфия" subtitle
-          duplicated info already visible in the category chips. */}
-      <div className="hidden md:block max-w-[1440px] mx-auto px-8 lg:px-12 xl:px-16 pt-8 lg:pt-10 pb-2">
-        <h1 className="text-3xl lg:text-4xl font-bold tracking-tight">999 Store</h1>
-      </div>
-      <div className="hidden md:block max-w-[1440px] mx-auto px-8 lg:px-12 xl:px-16">
-        <ProductsGrid
-          endpoint="/api/products"
-          title=""
-          limit={48}
-          showCategories
-          limitToProjectCategories
-          onOpenProduct={onOpenProduct}
-          live
-          seedOffset={5000}
-        />
-      </div>
-      {/* Mobile: original layout */}
-      <div className="md:hidden">
-        <ProductsGrid
-          endpoint="/api/products"
-          title="999 Store"
-          limit={48}
-          showCategories
-          limitToProjectCategories
-          onOpenProduct={onOpenProduct}
-          live
-          seedOffset={5000}
-        />
-      </div>
-    </div>
-  )
-}
+// v25.11: CatalogView moved to '@/components/catalog/catalog-page' (CatalogPage)
+// — the legacy in-page CatalogView is removed.
 
 

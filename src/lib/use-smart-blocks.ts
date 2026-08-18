@@ -27,7 +27,7 @@ interface CacheState {
   fetchedAt: number
 }
 
-const CACHE_TTL = 60_000 // 60 seconds
+const CACHE_TTL = 30_000 // v25.12: reduced from 60s to 30s for more "alive" feel
 const cache: CacheState = { data: null, loading: false, error: null, promise: null, fetchedAt: 0 }
 const subscribers = new Set<() => void>()
 
@@ -44,10 +44,14 @@ if (typeof window !== 'undefined') {
     cache.data = null
     cache.fetchedAt = 0
     cache.error = null
-    // Trigger a fresh fetch so subscribers immediately see updated products.
+    cache.promise = null // v25.12: clear pending promise so fetchBlocks starts fresh
+    cache.loading = false
+    // Trigger a fresh fetch with a NEW random seed so products change order.
     fetchBlocks().catch(() => {/* error already in cache */})
   }
   window.addEventListener('999pro:products-changed', invalidate)
+  // v25.12: pull-to-refresh → invalidate cache → new seed → new product order
+  window.addEventListener('999pro:refresh', invalidate)
 }
 
 function fetchBlocks(): Promise<SmartBlocksData> {
