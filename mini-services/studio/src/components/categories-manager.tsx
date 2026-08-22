@@ -63,8 +63,11 @@ export function CategoriesManager() {
   const [editing, setEditing] = useState<Category | null>(null)
   const [creating, setCreating] = useState(false)
   const [seeding, setSeeding] = useState(false)
+  // v25.13 (categories runtime crash fix): same issue as price-lists-manager.
+  // openConfirm() was called WITHOUT arguments and <StudioConfirmDialog {...confirmDialog} ... />
+  // was passed as FLAT PROPS — both crash with "Cannot read properties of undefined (reading 'open')".
+  // Now we pass proper arguments to openConfirm() and use the correct <StudioConfirmDialog dialog onClose /> API.
   const { dialog: confirmDialog, confirm: openConfirm, close: closeConfirm } = useConfirmDialog()
-  const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -87,18 +90,27 @@ export function CategoriesManager() {
     return () => window.removeEventListener('999pro:categories-changed', onCatsChanged as EventListener)
   }, [load])
 
-  const handleDelete = async () => {
-    if (!deleteId) return
+  const handleDelete = async (id: string) => {
     try {
-      await api.delete(`/api/categories/${deleteId}`, { auth: true })
+      await api.delete(`/api/categories/${id}`, { auth: true })
       toast.success('Категория удалена')
-      setCategories(categories.filter((c) => c.id !== deleteId))
+      setCategories(categories.filter((c) => c.id !== id))
     } catch {
       toast.error('Ошибка удаления')
     } finally {
-      setDeleteId(null)
       closeConfirm()
     }
+  }
+
+  // v25.13: trigger the confirm dialog with proper arguments.
+  const requestDelete = (cat: Category) => {
+    openConfirm({
+      title: 'Удалить категорию?',
+      message: 'Товары в этой категории останутся, но потеряют привязку. Их можно будет привязать к другой категории позже.',
+      confirmLabel: 'Удалить',
+      variant: 'danger',
+      onConfirm: () => { void handleDelete(cat.id) },
+    })
   }
 
   const moveBlock = async (idx: number, dir: -1 | 1) => {
@@ -278,7 +290,7 @@ export function CategoriesManager() {
 
               {/* Delete */}
               <button
-                onClick={() => { setDeleteId(cat.id); openConfirm() }}
+                onClick={() => requestDelete(cat)}
                 title="Удалить"
                 className="h-9 w-9 rounded-lg grid place-items-center bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors shrink-0"
               >
@@ -306,14 +318,8 @@ export function CategoriesManager() {
         />
       )}
 
-      <StudioConfirmDialog
-        {...confirmDialog}
-        title="Удалить категорию?"
-        description="Товары в этой категории останутся, но потеряют привязку. Их можно будет привязать к другой категории позже."
-        confirmLabel="Удалить"
-        danger
-        onConfirm={handleDelete}
-      />
+      {/* v25.13: pass dialog + onClose to StudioConfirmDialog (correct API). */}
+      <StudioConfirmDialog dialog={confirmDialog} onClose={closeConfirm} />
     </div>
   )
 }

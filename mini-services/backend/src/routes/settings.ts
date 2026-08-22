@@ -49,6 +49,13 @@ const heroBlockValueSchema = z.object({
   useGradient: z.boolean().default(true),
   // Background image URL (optional — if null, only the gradient renders).
   image: z.string().max(2048).nullable(),
+  // v25.13 (multi-image hero): array of image URLs for crossfade carousel.
+  // Backward-compatible: if empty or missing, frontend uses the single
+  // `image` field (legacy behaviour). When 2+ images are present, the
+  // hero auto-rotates through them every 8-10 seconds with a cinematic
+  // fade transition. Admin can upload multiple images via Studio
+  // (hero-manager) — the array is persisted here.
+  images: z.array(z.string().max(2048)).max(10).default([]).optional(),
   // Gradient ID — must match one of the GRADIENTS in the frontend map.
   gradient: z.string().max(200).default('from-sky-400 via-blue-500 to-indigo-600'),
   // Small badge text above the title (e.g. "Новый дроп уже здесь").

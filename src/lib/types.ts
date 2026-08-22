@@ -49,7 +49,7 @@ export interface Product {
     address?: string | null
     managerName?: string | null
   } | null
-  // v25.8 (TRI999 launch): product colors with per-color image.
+  // v25.8 (999PRO launch): product colors with per-color image.
   colors?: ProductColor[]
   // v25.10 (Task #6): vertical (3:4) product video — admin-only upload.
   // NULL = no video (image gallery only). When set, the Product Viewer shows
@@ -344,6 +344,10 @@ export interface HeroBlockSetting {
   // image as-is with no overlay (raw image).
   useGradient: boolean
   image: string | null
+  // v25.13 (multi-image hero): array of image URLs for crossfade carousel.
+  // Backward-compatible: empty/undefined → fall back to single `image`.
+  // 2+ images → auto-rotate every ~8-10s with cinematic fade transition.
+  images?: string[]
   gradient: string
   // v12.6.4: all text fields are now optional (nullable). A hero can be
   // image-only (no badge, no title, no description, no buttons).

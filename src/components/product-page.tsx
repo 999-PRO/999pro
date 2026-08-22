@@ -72,7 +72,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [imgIndex, setImgIndex] = useState(0)
-  // v25.8 (TRI999 launch): selected color index — when set, the main image
+  // v25.8 (999PRO launch): selected color index — when set, the main image
   // switches to that color's photo. null = use the regular image gallery.
   const [selectedColorIdx, setSelectedColorIdx] = useState<number | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
@@ -508,7 +508,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                 </div>
               )}
 
-              {/* v25.8 (TRI999 launch): Color selector — clicking a color
+              {/* v25.8 (999PRO launch): Color selector — clicking a color
                   instantly switches the main image to that color's photo. */}
               {product.colors && product.colors.length > 0 && (
                 <div className="py-2">

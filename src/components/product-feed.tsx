@@ -37,10 +37,15 @@ interface MediaItem {
 }
 
 const MOCK_AUTHORS = [
-  { name: 'Менеджер Анна', timeAgo: '1 дн назад', views: '6.4K' },
-  { name: 'Менеджер Иван', timeAgo: '3 дн назад', views: '2.1K' },
-  { name: 'Менеджер Ольга', timeAgo: '5 дн назад', views: '8.7K' },
-  { name: 'Менеджер Петр', timeAgo: '1 нед назад', views: '12K' },
+  // v25.13 (real metrics): removed fake `views` field. The MOCK_AUTHORS
+  // array now only carries the author name + time-ago label — view counts
+  // are no longer shown because the backend doesn't expose per-product
+  // view counts yet. When /api/products returns a real `views` field,
+  // we'll surface it; until then, hiding the metric is honest.
+  { name: 'Менеджер Анна', timeAgo: '1 дн назад' },
+  { name: 'Менеджер Иван', timeAgo: '3 дн назад' },
+  { name: 'Менеджер Ольга', timeAgo: '5 дн назад' },
+  { name: 'Менеджер Петр', timeAgo: '1 нед назад' },
 ]
 
 // v25.12: theme-aware colors for the feed overlay
@@ -377,21 +382,21 @@ function FeedSlide({
     touchStartY.current = null
   }
 
-  const baseCount = (str: string, base: number) => {
-    let h = 0
-    for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0
-    return base + Math.abs(h) % 500
-  }
-  const likes = baseCount(item.id, 380)
-  const comments = baseCount(item.id + 'c', 12)
-  const shares = baseCount(item.id + 'sh', 20)
+  // v25.13 (real metrics): REMOVED `baseCount` / `likes` / `comments` /
+  // `shares` fake-number generators. These were deterministic-hash
+  // pseudo-counts that gave every product a fake 380-880 likes + 12-512
+  // comments + 20-520 shares — dishonest. The backend does NOT expose
+  // per-product view/like/share counts yet, so we hide those metrics
+  // entirely until real data is available.
+  //
+  // `commentsList` (fetched from /api/reviews) is REAL and is shown.
+  // `favorited` is a local state (real — user's own action).
 
   return (
     <section
       data-idx={idx}
       className="snap-start h-[100dvh] w-full relative snap-always flex flex-col"
       style={{ scrollSnapAlign: 'start', background: t.bg }}
-      style={{ scrollSnapAlign: 'start' }}
     >
       {/* === TOP: Author row — CENTERED, so back arrow (left) + counter (right) don't overlap === */}
       <div
@@ -408,7 +413,7 @@ function FeedSlide({
               <span className="font-semibold text-xs truncate" style={{ color: t.text }}>{author.name}</span>
               <span className="text-[10px]" style={{ color: t.textMuted }}>· {author.timeAgo}</span>
             </div>
-            <span className="text-[10px]" style={{ color: t.textMuted }}>{author.views} просмотров</span>
+            {/* v25.13 (real metrics): removed fake `{author.views} просмотров` line. */}
           </div>
         </div>
       </div>
@@ -499,19 +504,20 @@ function FeedSlide({
             <span className="h-9 w-9 rounded-full grid place-items-center backdrop-blur transition-all" style={{ background: favorited ? 'rgba(239,68,68,0.4)' : t.buttonBg }}>
               <Heart className={`h-5 w-5 ${favorited ? 'text-[#FF3B30]' : ''}`} style={{ color: favorited ? '#FF3B30' : t.buttonText }} fill={favorited ? 'currentColor' : 'none'} />
             </span>
-            <span className="text-[9px] font-medium drop-shadow" style={{ color: t.text }}>{likes + (favorited ? 1 : 0)}</span>
+            {/* v25.13 (real metrics): removed fake likes count — only show the heart icon. */}
           </button>
           <button onClick={toggleComments} className="flex flex-col items-center gap-0.5">
             <span className="h-9 w-9 rounded-full grid place-items-center backdrop-blur transition-all" style={{ background: showComments ? 'rgba(168,85,247,0.4)' : t.buttonBg }}>
               <MessageCircle className="h-5 w-5" style={{ color: showComments ? '#A855F7' : t.buttonText }} />
             </span>
-            <span className="text-[9px] font-medium drop-shadow" style={{ color: t.text }}>{comments + commentsList.length}</span>
+            {/* v25.13 (real metrics): commentsList.length is the REAL count fetched from /api/reviews. */}
+            <span className="text-[9px] font-medium drop-shadow" style={{ color: t.text }}>{commentsList.length}</span>
           </button>
           <button onClick={(e) => { e.stopPropagation(); haptic.tap(); if (navigator.share) navigator.share({ title: item.title, url: `${window.location.origin}/?product=${item.id}` }).catch(()=>{}); else { navigator.clipboard?.writeText(`${window.location.origin}/?product=${item.id}`); toast.success('Ссылка скопирована') } }} className="flex flex-col items-center gap-0.5">
             <span className="h-9 w-9 rounded-full grid place-items-center backdrop-blur" style={{ background: t.buttonBg }}>
               <Share2 className="h-5 w-5" style={{ color: t.buttonText }} />
             </span>
-            <span className="text-[9px] font-medium drop-shadow" style={{ color: t.text }}>{shares}</span>
+            {/* v25.13 (real metrics): removed fake shares count — only show the share icon. */}
           </button>
         </div>
       </div>
@@ -584,7 +590,6 @@ function FeedSlide({
       <div
         className="shrink-0 px-3 pt-2 pb-3 space-y-1.5 z-20"
         style={{ background: `linear-gradient(to top, ${t.panelFrom} 0%, ${t.panelVia} 50%, transparent 100%)`, paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)' }}
-        style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)' }}
       >
         {/* Title + price */}
         <div className="flex items-center gap-2">

@@ -4,8 +4,8 @@ import { Bot, ChevronDown, Mic, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { haptic } from '@/lib/haptic'
 
-// v25.12: AIAssistantSection — встроенный AI-чат "Зои" на главной.
-// Как на IMG_3192: светло-бежевый фон, аватар Зои + статус online,
+// v25.12: AIAssistantSection — встроенный AI-чат "999PRO" на главной.
+// Как на IMG_3192: светло-бежевый фон, аватар 999PRO + статус online,
 // speech bubble с приветствием, горизонтальные quick action pills.
 
 interface AIAssistantSectionProps {
@@ -44,7 +44,7 @@ export function AIAssistantSection({ onOpenAI, onQuickAction }: AIAssistantSecti
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="font-bold text-[#1A1A1A] text-base">Зои · ИИ-гид</h3>
+              <h3 className="font-bold text-[#1A1A1A] text-base">999PRO · ИИ-агент</h3>
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-semibold">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                 online
@@ -62,7 +62,7 @@ export function AIAssistantSection({ onOpenAI, onQuickAction }: AIAssistantSecti
             {/* Speech bubble */}
             <div className="mt-4 bg-white rounded-2xl p-4 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)]">
               <p className="text-sm md:text-[15px] text-[#374151] leading-relaxed">
-                Здравствуйте! Я Зои — ваш ИИ-гид по бутику TRI999 🌸
+                Здравствуйте! Я — ИИ-агент 999PRO — ваш ИИ-агент по бутику 999PRO 🌸
                 <br /><br />
                 Помогу подобрать рекламную продукцию, подарки или мебель. Напишите текстом или нажмите 🎤 и скажите голосом — что вы ищете?
               </p>
@@ -74,7 +74,7 @@ export function AIAssistantSection({ onOpenAI, onQuickAction }: AIAssistantSecti
               className="w-full mt-3 flex items-center gap-2 bg-white rounded-full px-4 py-3 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)] text-left"
             >
               <Sparkles className="h-4 w-4 text-[#A02070] shrink-0" />
-              <span className="flex-1 text-sm text-[#9CA3AF] truncate">Спросите Зои…</span>
+              <span className="flex-1 text-sm text-[#9CA3AF] truncate">Спросите 999PRO…</span>
               <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#EC4899] to-[#9333EA] grid place-items-center shrink-0">
                 <Mic className="h-4 w-4 text-white" />
               </div>

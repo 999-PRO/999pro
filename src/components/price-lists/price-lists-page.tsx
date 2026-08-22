@@ -108,14 +108,14 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="mb-5">
-          <div className="flex items-center gap-1.5 text-xs text-[#666666] mb-1">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
             <FileSpreadsheet className="h-3.5 w-3.5" />
             <span>Документы</span>
           </div>
-          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-[#1A1A1A]">
+          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-foreground">
             Прайс-листы
           </h1>
-          <p className="text-sm text-[#666666] mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             {items.length > 0
               ? `${items.length} ${pluralize(items.length, 'документ', 'документа', 'документов')} доступно для скачивания`
               : 'Пока нет загруженных прайс-листов'}
@@ -130,8 +130,8 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
               className={cn(
                 'shrink-0 inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium transition-all border',
                 !filterCategory
-                  ? 'bg-[#A02070] text-white border-[#A02070] shadow-md'
-                  : 'bg-white text-[#4A4A4A] border-[#E5E7EB] hover:border-[#A02070]/40',
+                  ? 'bg-primary text-primary-foreground border-primary shadow-md'
+                  : 'bg-card text-card-foreground border-border hover:border-primary/40',
               )}
             >
               Все
@@ -143,8 +143,8 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
                 className={cn(
                   'shrink-0 inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium transition-all border',
                   filterCategory === cat
-                    ? 'bg-[#A02070] text-white border-[#A02070] shadow-md'
-                    : 'bg-white text-[#4A4A4A] border-[#E5E7EB] hover:border-[#A02070]/40',
+                    ? 'bg-primary text-primary-foreground border-primary shadow-md'
+                    : 'bg-card text-card-foreground border-border hover:border-primary/40',
                 )}
               >
                 {cat}
@@ -156,11 +156,11 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
         {/* Empty state */}
         {items.length === 0 && (
           <div className="py-16 text-center rounded-2xl border border-dashed border-border">
-            <div className="h-20 w-20 rounded-full bg-[#F5F5F7] grid place-items-center mx-auto mb-4">
-              <FileSpreadsheet className="h-10 w-10 text-[#9CA3AF]" />
+            <div className="h-20 w-20 rounded-full bg-muted grid place-items-center mx-auto mb-4">
+              <FileSpreadsheet className="h-10 w-10 text-muted-foreground" />
             </div>
             <h3 className="text-lg font-bold mb-1">Прайс-листы скоро появятся</h3>
-            <p className="text-sm text-[#666666]">
+            <p className="text-sm text-muted-foreground">
               Админ ещё не загрузил прайс-листы. Загляните позже.
             </p>
           </div>
@@ -176,14 +176,14 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
                 <button
                   key={item.id}
                   onClick={() => handleOpen(item)}
-                  className="group relative overflow-hidden rounded-2xl bg-white border border-[#E5E7EB] hover:border-[#A02070]/40 hover:shadow-[0_8px_24px_-8px_rgba(160,32,112,0.2)] transition-all text-left p-4 flex items-start gap-3"
+                  className="group relative overflow-hidden rounded-2xl bg-card border border-border hover:border-primary/40 hover:shadow-[0_8px_24px_-8px_rgba(160,32,112,0.2)] transition-all text-left p-4 flex items-start gap-3"
                 >
                   <div className={cn('h-14 w-14 rounded-2xl bg-gradient-to-br grid place-items-center text-white shadow-md shrink-0', colorClass)}>
                     <Icon className="h-7 w-7" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold text-sm md:text-base text-[#111827] truncate flex-1">
+                      <h3 className="font-semibold text-sm md:text-base text-card-foreground truncate flex-1">
                         {item.title}
                       </h3>
                       <span className="px-1.5 py-0.5 rounded bg-foreground/5 text-[10px] font-medium text-muted-foreground shrink-0">
@@ -191,11 +191,11 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
                       </span>
                     </div>
                     {item.description && (
-                      <p className="text-xs text-[#666666] line-clamp-2 mb-2">
+                      <p className="text-xs text-muted-foreground line-clamp-2 mb-2">
                         {item.description}
                       </p>
                     )}
-                    <div className="flex items-center gap-3 text-[11px] text-[#9CA3AF]">
+                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                       {item.category && (
                         <span className="inline-flex items-center gap-1">
                           <Tag className="h-3 w-3" />
@@ -212,7 +212,7 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="h-8 w-8 rounded-lg bg-foreground/5 grid place-items-center text-[#6B7280]" title="Открыть">
+                    <div className="h-8 w-8 rounded-lg bg-foreground/5 grid place-items-center text-muted-foreground" title="Открыть">
                       <Eye className="h-4 w-4" />
                     </div>
                   </div>
@@ -225,11 +225,11 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
         {/* CTA */}
         {items.length > 0 && (
           <div className="mt-8 rounded-3xl bg-gradient-to-br from-[#FFF5F7] to-[#FFE4EC] p-6 text-center">
-            <h3 className="text-lg font-bold text-[#1A1A1A] mb-1">Не нашли нужный прайс?</h3>
-            <p className="text-sm text-[#666666] mb-4">Свяжитесь с нами — отправим актуальный прайс-лист напрямую</p>
+            <h3 className="text-lg font-bold text-foreground mb-1">Не нашли нужный прайс?</h3>
+            <p className="text-sm text-muted-foreground mb-4">Свяжитесь с нами — отправим актуальный прайс-лист напрямую</p>
             <button
               onClick={() => { haptic.tap(); onNavigate?.('contacts') }}
-              className="inline-flex items-center gap-2 h-11 px-6 rounded-full bg-[#A02070] hover:bg-[#880E4F] text-white font-semibold text-sm shadow-[0_6px_20px_-6px_rgba(160,32,112,0.5)] active:scale-95 transition-all"
+              className="inline-flex items-center gap-2 h-11 px-6 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-sm shadow-[0_6px_20px_-6px_rgba(160,32,112,0.5)] active:scale-95 transition-all"
             >
               Связаться с нами
             </button>

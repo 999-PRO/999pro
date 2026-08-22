@@ -15,7 +15,7 @@ import { useModuleAccess, isModuleEnabled } from '@/lib/use-module-access'
 // Sticky horizontal bar at the top with text labels (not icon-only).
 //
 // Layout:
-//   [Logo TRI999] [Home] [Catalog] [Media Hub] [Chat] [Profile] ... [Search] [Cart] [AI] [CLUB] [Avatar]
+//   [Logo 999PRO] [Home] [Catalog] [Media Hub] [Chat] [Profile] ... [Search] [Cart] [AI] [CLUB] [Avatar]
 //
 // Mobile uses MobileHeader + BottomNav — this bar is desktop-only (md+).
 
@@ -58,7 +58,7 @@ export function TopBar({ view, onNavigate, onMore, onOpenSearch }: TopBarProps) 
         <button
           onClick={() => onNavigate('home')}
           className="shrink-0 flex items-center"
-          aria-label="TRI999 — на главную"
+          aria-label="999PRO — на главную"
         >
           <span
             className="font-extrabold text-xl tracking-tight"
@@ -70,7 +70,7 @@ export function TopBar({ view, onNavigate, onMore, onOpenSearch }: TopBarProps) 
               filter: 'drop-shadow(0 2px 8px rgba(160,32,112,0.4))',
             }}
           >
-            TRI999
+            999PRO
           </span>
         </button>
 

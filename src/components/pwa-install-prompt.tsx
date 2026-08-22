@@ -167,7 +167,7 @@ export function PwaInstallPrompt() {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-semibold text-sm mb-0.5">
-                  Установить TRI999
+                  Установить 999PRO
                 </h3>
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   {showIosHint

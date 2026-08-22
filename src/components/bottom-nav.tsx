@@ -71,7 +71,7 @@ export function BottomNav({
       <div className="relative px-2 py-2">
         <div className="flex items-center justify-around">
           {/* Left: Home + Catalog */}
-          {visibleNav.filter((i) => !i.isFeed).map((item) => {
+          {visibleNav.filter((i) => !(i as any).isFeed).map((item) => {
             const Icon = item.icon
             const active = view === item.id
             return (

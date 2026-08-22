@@ -58,11 +58,11 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
 
   return (
     <aside className="hidden md:flex w-[76px] xl:w-[88px] shrink-0 fixed top-0 left-0 h-screen flex-col items-center z-50 premium-rail">
-      {/* Brand mark — TRI999 wordmark (gradient). */}
+      {/* Brand mark — 999PRO wordmark (gradient). */}
       <button
         onClick={() => onNavigate('home')}
         className="mt-6 mb-8 px-1 py-2 group flex flex-col items-center"
-        aria-label="TRI999 — на главную"
+        aria-label="999PRO — на главную"
       >
         <span
           className="block font-extrabold text-base leading-none tracking-tight"
@@ -74,7 +74,7 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
             filter: 'drop-shadow(0 2px 8px rgba(99,102,241,0.4))',
           }}
         >
-          TRI999
+          999PRO
         </span>
       </button>
 

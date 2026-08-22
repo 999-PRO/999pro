@@ -38,7 +38,7 @@ export function QrModal({ open, onClose, url, title, shortId }: Props) {
         foreground: '#0f172a',
         background: '#ffffff',
         padding: 32,
-        // Center logo overlay (small TRI999 logo) — drawn after the QR.
+        // Center logo overlay (small 999PRO logo) — drawn after the QR.
         // The logo is small enough (32×32 in a 256px QR) that error correction
         // handles the occluded modules.
         logo: true,
@@ -155,8 +155,8 @@ export function QrModal({ open, onClose, url, title, shortId }: Props) {
 
           {/* App promo */}
           <div className="mt-4 rounded-2xl bg-gradient-to-br from-sky-500 via-blue-600 to-violet-700 p-3 text-white text-center">
-            <div className="text-xs font-semibold">TRI999</div>
-            <div className="text-[11px] text-white/80 mt-0.5">Открой больше товаров в приложении TRI999</div>
+            <div className="text-xs font-semibold">999PRO</div>
+            <div className="text-[11px] text-white/80 mt-0.5">Открой больше товаров в приложении 999PRO</div>
           </div>
         </div>
       </motion.div>

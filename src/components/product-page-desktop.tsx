@@ -297,11 +297,11 @@ export function ProductPageDesktop({ productId, onClose }: ProductPageDesktopPro
                       <div
                         ref={galleryRef}
                         className="relative aspect-[3/4] w-full max-w-[560px] max-h-[calc(100vh-12rem)] rounded-[20px] overflow-hidden bg-slate-100/60 dark:bg-slate-900/40 select-none cursor-zoom-in ring-1 ring-white/30 dark:ring-white/10 shadow-[0_24px_70px_-24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
-                        onMouseMove={() => {
+                        onMouseMove={(e) => {
                           // v25.12: disable zoom if current slide is video
                           const videoPos = product.videoPosition ?? 0
                           const isVideoSlide = product.videoUrl && imgIndex === videoPos
-                          if (!isVideoSlide) handleMouseMove()
+                          if (!isVideoSlide) handleMouseMove(e)
                         }}
                         onMouseEnter={() => {
                           const videoPos = product.videoPosition ?? 0

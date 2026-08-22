@@ -1,14 +1,33 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
-import { Flame, Clock, Zap, ArrowRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Flame, ArrowRight } from 'lucide-react'
 import { api } from '@/lib/api'
 import { ProductCard } from '../product-card'
 import { haptic } from '@/lib/haptic'
 
-// v25.12: HotDealsSection — секция "Горячие скидки" с таймером.
-// Светло-розовый фон, заголовок + красный -33% бейдж, таймер обратного отсчёта,
-// горизонтальный скролл товаров со скидкой.
+// v25.13 (desktop redesign): simplified Hot Deals section.
+//
+// Problems with the old Hot Deals section (per user feedback):
+//   • Big rounded pink/peach gradient card — looked like a "promo box"
+//     floating on the page, visually heavy.
+//   • The countdown timer (Часы : Минуты : Секунды) felt childish and
+//     scammy ("HURRY! Only today!"). Premium e-commerce doesn't do this.
+//   • Horizontal-scroll carousel — on desktop with 1920px width, the
+//     carousel wasted 80% of horizontal space showing only 5-6 products
+//     at a time with hidden scroll buttons.
+//   • Hard-coded `-33%` badge in the header — irrelevant if no product
+//     actually has a 33% discount.
+//
+// New design:
+//   • NO gradient background, NO timer, NO fixed discount badge.
+//   • Header is a simple inline: icon + title + "Все скидки →" link.
+//   • Products are shown in the SAME responsive grid as SmartSection
+//     (2 cols mobile / 3 tablet / 4 desktop / 5 xl). The "-X%" red badge
+//     on each ProductCard itself carries the urgency — no need for a
+//     screaming countdown.
+//   • Looks like a natural section of the home page, not a separate
+//     "promo block".
 
 interface Product {
   id: string
@@ -28,11 +47,8 @@ interface HotDealsSectionProps {
 export function HotDealsSection({ onOpenProduct, onViewAll }: HotDealsSectionProps) {
   const [items, setItems] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
-  // Таймер: 23:55:06 по умолчанию (как на скриншоте). Можно сделать dynamic позже.
-  const [timeLeft, setTimeLeft] = useState({ h: 0, m: 55, s: 6 })
-  const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Загрузка товаров со скидкой
+  // Load discounted products
   useEffect(() => {
     api.get<{ items: Product[]; total: number }>('/api/products', {
       query: { hasDiscount: 'true', sort: 'popular', limit: 12 },
@@ -59,109 +75,58 @@ export function HotDealsSection({ onOpenProduct, onViewAll }: HotDealsSectionPro
     }
   }, [])
 
-  // Тик таймера каждую секунду
-  useEffect(() => {
-    const t = setInterval(() => {
-      setTimeLeft((prev) => {
-        let { h, m, s } = prev
-        s -= 1
-        if (s < 0) { s = 59; m -= 1 }
-        if (m < 0) { m = 59; h -= 1 }
-        if (h < 0) { h = 23; m = 59; s = 59 }
-        return { h, m, s }
-      })
-    }, 1000)
-    return () => clearInterval(t)
-  }, [])
-
-  const pad = (n: number) => String(n).padStart(2, '0')
-
   if (!loading && items.length === 0) return null
 
   return (
-    <section className="px-4 pt-1.5">
-      <div className="rounded-3xl bg-gradient-to-br from-[#FFF0F3] via-[#FFE4EC] to-[#FFF5F7] p-4 md:p-5">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-1">
-          <div className="h-10 w-10 md:h-11 md:w-11 rounded-2xl bg-gradient-to-br from-[#FF5722] to-[#FF3B30] grid place-items-center shadow-lg">
+    <section>
+      {/* Header — inline, no decorative card */}
+      <div className="flex items-end justify-between gap-4 mb-3 md:mb-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 md:h-11 md:w-11 rounded-2xl bg-gradient-to-br from-[#FF5722] to-[#FF3B30] grid place-items-center shadow-lg shadow-orange-500/30 shrink-0">
             <Flame className="h-5 w-5 text-white" />
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-lg md:text-xl font-bold text-[#1A1A1A]">Горячие скидки</h2>
-              <span className="inline-block px-2 py-0.5 rounded-full bg-[#FF3B30] text-white text-xs font-bold">
-                -33%
-              </span>
-            </div>
-            <p className="text-xs md:text-sm text-[#666666] mt-0.5">
+          <div className="min-w-0">
+            <h2 className="text-lg md:text-xl lg:text-2xl font-bold tracking-tight text-foreground">
+              Горячие скидки
+            </h2>
+            <p className="text-xs md:text-sm text-muted-foreground mt-0.5">
               Только сегодня — успейте купить выгодно
             </p>
           </div>
         </div>
-
-        {/* Timer */}
-        <div className="flex items-center gap-3 mt-3">
-          <Clock className="h-4 w-4 text-[#9B2D9B]" />
-          <div className="flex items-center gap-1.5">
-            {[
-              { val: timeLeft.h, label: 'Ч' },
-              { val: timeLeft.m, label: 'М' },
-              { val: timeLeft.s, label: 'С' },
-            ].map((t, i) => (
-              <div key={t.label} className="flex items-center gap-1.5">
-                <div className="flex flex-col items-center">
-                  <div className="h-10 w-10 md:h-11 md:w-11 rounded-full bg-[#FFE4E6] grid place-items-center">
-                    <span className="text-[#880E4F] font-bold text-base md:text-lg">{pad(t.val)}</span>
-                  </div>
-                  <span className="text-[10px] text-[#666666] mt-1">{t.label}</span>
-                </div>
-                {i < 2 && <span className="text-[#666666] font-bold">:</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Carousel */}
-        <div
-          ref={scrollRef}
-          className="flex gap-3 overflow-x-auto no-scrollbar -mx-1 px-1 mt-4 pb-1"
-        >
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="w-[160px] md:w-[180px] shrink-0">
-                <div className="rounded-xl bg-white p-3 shadow-sm">
-                  <div className="aspect-[3/4] rounded-lg skeleton" />
-                  <div className="h-3 w-3/4 rounded skeleton mt-2" />
-                  <div className="h-4 w-1/2 rounded skeleton mt-2" />
-                </div>
-              </div>
-            ))
-          ) : (
-            items.map((p) => (
-              <div key={p.id} className="w-[160px] md:w-[180px] shrink-0">
-                <ProductCard product={p} onOpen={onOpenProduct} variant="deal" />
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between mt-4 pt-3 border-t border-[#FFD0DC]/50">
-          <div className="flex items-center gap-1.5 text-xs text-[#666666]">
-            <Zap className="h-3.5 w-3.5 text-[#F59E0B]" />
-            <span>Обновляется каждый день</span>
-          </div>
-          {onViewAll && (
-            <button
-              onClick={() => { haptic.tap(); onViewAll() }}
-              className="text-xs md:text-sm font-semibold text-[#DC2626] hover:underline flex items-center gap-1"
-            >
-              Все скидки
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        {onViewAll && (items.length > 0 || loading) && (
+          <button
+            onClick={() => { haptic.tap(); onViewAll() }}
+            className="shrink-0 inline-flex items-center gap-1 text-xs md:text-sm font-semibold text-primary hover:underline"
+          >
+            Все скидки
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
+
+      {/* Loading skeleton — matches grid layout */}
+      {loading ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="rounded-xl overflow-hidden bg-card border border-border/40">
+              <div className="aspect-[3/4] skeleton" />
+              <div className="p-3 space-y-2">
+                <div className="h-4 w-3/4 rounded skeleton" />
+                <div className="h-3 w-1/2 rounded skeleton" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* v25.13: same responsive grid as SmartSection — consistency across
+           all product sections on the home page. */
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
+          {items.map((p) => (
+            <ProductCard key={p.id} product={p as any} onOpen={onOpenProduct} variant="deal" />
+          ))}
+        </div>
+      )}
     </section>
   )
 }

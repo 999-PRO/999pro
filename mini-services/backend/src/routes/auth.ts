@@ -557,6 +557,31 @@ router.post(
     await auditLogRaw(user.id, req, 'auth', user.id, 'login_success', {
       after: { username: user.username, role: user.role },
     })
+    // v25.13 (hidden Studio access): if the user is an admin, set a
+    // `studio-access` cookie matching STUDIO_ACCESS_TOKEN env var. The
+    // Studio middleware (proxy.ts) checks this cookie and returns 404 to
+    // anyone without it — so /studio is hidden from non-admins and from
+    // random visitors who don't know the URL.
+    //
+    // The cookie is httpOnly:true so client-side JS can't read the secret
+    // token directly, and SameSite=Lax so it's sent on same-origin iframe
+    // navigations (which is how the main app's studio-view.tsx embeds
+    // /studio). It's scoped to path=/ so both / and /studio receive it.
+    //
+    // If STUDIO_ACCESS_TOKEN env var is NOT set, this code is a no-op —
+    // Studio remains publicly accessible at /studio as before (existing
+    // behaviour). This is opt-in hidden-Studio.
+    const STUDIO_ACCESS_TOKEN = process.env.STUDIO_ACCESS_TOKEN
+    if (STUDIO_ACCESS_TOKEN && (user.role === 'admin' || user.role === 'manager')) {
+      const isProd = process.env.NODE_ENV === 'production'
+      res.cookie('studio-access', STUDIO_ACCESS_TOKEN, {
+        httpOnly: true,
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days — matches JWT expiry
+        sameSite: 'lax',
+        secure: isProd,
+      })
+    }
     res.json({ token, user: publicUser(user, { includeContact: true }) })
   }),
 )
@@ -665,6 +690,13 @@ router.post(
       } catch {
         // Token already invalid — non-fatal.
       }
+    }
+    // v25.13 (hidden Studio access): clear the studio-access cookie so the
+    // user's session is fully logged out — without this, the cookie would
+    // linger for 7 days and the user would still be able to open /studio
+    // without re-logging in.
+    if (process.env.STUDIO_ACCESS_TOKEN) {
+      res.clearCookie('studio-access', { path: '/' })
     }
     res.json({ ok: true })
   }),
@@ -943,6 +975,20 @@ router.post(
     await auditLogRaw(user.id, req, 'auth', user.id, 'setup_admin', {
       after: { username: user.username, email: user.email, note: 'First admin created via setup-admin (web wizard)' },
     })
+    // v25.13 (hidden Studio access): same cookie as /login. Sets the
+    // studio-access cookie for the first admin so they can immediately open
+    // /studio after the wizard completes (without re-logging in).
+    const STUDIO_ACCESS_TOKEN = process.env.STUDIO_ACCESS_TOKEN
+    if (STUDIO_ACCESS_TOKEN) {
+      const isProd = process.env.NODE_ENV === 'production'
+      res.cookie('studio-access', STUDIO_ACCESS_TOKEN, {
+        httpOnly: true,
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        sameSite: 'lax',
+        secure: isProd,
+      })
+    }
     res.status(201).json({ token, user: publicUser(user, { includeContact: true }) })
   }),
 )

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useDeferredValue, useRef, useMemo } from 'react'
 import { Plus, Pencil, Trash2, Eye, EyeOff, Search, Package, CheckSquare, Square, CheckCheck, X, Video, Loader2, Film } from 'lucide-react'
-import { api, assetUrl } from '@/lib/api'
+import { api, assetUrl, buildUploadUrl } from '@/lib/api'
 import type { Product, ProductColor } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,6 +20,8 @@ import { cn } from '@/lib/utils'
 import { toast } from '@/lib/notifications'
 // v8: Studio AI Assistant — встроенный AI-помощник для редактора товара
 import { StudioAIAssistant } from './studio-ai-assistant'
+// v25.13 (login+upload regression fix): auth store for upload token
+import { useAuthStore } from '@/lib/auth-store'
 
 const CATEGORIES = [
   'Реклама', 'Подарки', 'Мебель', 'Печать', 'Дизайн', 'Интерьер', 'Наружная реклама', 'Полиграфия',
@@ -440,7 +442,7 @@ function ProductEditor({ product, existingCategories, dbCategories, onClose, onS
   const [videoUrl, setVideoUrl] = useState<string | null>(product?.videoUrl || null)
   const [videoPoster, setVideoPoster] = useState<string | null>(product?.videoPoster || null)
   // v25.12: video position in carousel (0 = first, 1 = after 1st image, etc.)
-  const [videoPosition, setVideoPosition] = useState<number>(product?.videoPosition ?? 0)
+  const [videoPosition, setVideoPosition] = useState<number>((product as any)?.videoPosition ?? 0)
   const [videoUploading, setVideoUploading] = useState(false)
   const [inStock, setInStock] = useState(product?.inStock ?? true)
   // v11: physical stock quantity — used to show "В наличии" / "Заканчивается" / "Нет в наличии".
@@ -896,9 +898,18 @@ function ProductVideoUploader({
       const result = await new Promise<{ url: string; posterUrl: string | null; warning?: string }>(
         (resolve, reject) => {
           const xhr = new XMLHttpRequest()
-          xhr.open('POST', '/api/upload/video')
-          // Auth token — read from localStorage (matches studio auth-store).
-          const token = localStorage.getItem('999pro-studio-token')
+          // v25.13 (login+upload regression fix): use buildUploadUrl() so the
+          // URL gets the /studio prefix (matches the basePath-aware rewrite)
+          // and XTransformPort for sandbox preview. Previously this was a
+          // raw '/api/upload/video' string which returned 404 in production
+          // because the rewrite only matches /studio/api/upload/video.
+          xhr.open('POST', buildUploadUrl('/api/upload/video'))
+          // Auth token — read from the Zustand auth store (single source of
+          // truth). Previously this read localStorage.getItem('999pro-studio-token')
+          // — but the auth store persists under '999pro-studio-auth' (with
+          // {state: {token}} shape), so the wrong key always returned null
+          // and the upload silently failed with 401.
+          const token = useAuthStore.getState().token
           if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
           xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100))

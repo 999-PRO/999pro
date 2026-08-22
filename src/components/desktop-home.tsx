@@ -580,7 +580,7 @@ function ClosingCTA({ onNavigate }: { onNavigate: (v: string) => void }) {
           Готовы начать?
         </h2>
         <p className="text-muted-foreground text-base mb-8">
-          Создайте аккаунт за минуту и получите доступ ко всем возможностям TRI999
+          Создайте аккаунт за минуту и получите доступ ко всем возможностям 999PRO
         </p>
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <button

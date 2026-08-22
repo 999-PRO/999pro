@@ -147,7 +147,7 @@ function VerifyEmailContent() {
         </h1>
         <p className="text-muted-foreground mb-7 leading-relaxed">
           Ваш адрес электронной почты успешно подтверждён. Теперь вам доступны
-          все возможности TRI999 — чат, CLUB, заказы и push-уведомления.
+          все возможности 999PRO — чат, CLUB, заказы и push-уведомления.
         </p>
         <Button
           onClick={() => router.push('/')}
@@ -168,7 +168,7 @@ function VerifyEmailContent() {
         </div>
         <h1 className="text-2xl font-bold mb-3">Ссылка недействительна</h1>
         <p className="text-muted-foreground mb-7 leading-relaxed">
-          В ссылке отсутствует код подтверждения. Откройте письмо от TRI999 и
+          В ссылке отсутствует код подтверждения. Откройте письмо от 999PRO и
           нажмите кнопку «Подтвердить email».
         </p>
         <Button

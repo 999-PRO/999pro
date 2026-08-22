@@ -16,7 +16,7 @@ interface PromoTopBarProps {
 export function PromoTopBar({ className }: PromoTopBarProps) {
   const [closed, setClosed] = useState(false)
   const [leftText, setLeftText] = useState('Бесплатная доставка по Москве')
-  const [rightText, setRightText] = useState('ИИ-агент Зои')
+  const [rightText, setRightText] = useState('ИИ-агент 999PRO')
 
   // Load from settings (optional — admin can override)
   useEffect(() => {

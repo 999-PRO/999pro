@@ -42,7 +42,10 @@ export function SmartSection({
   if (!loading && items.length === 0) return null
 
   return (
-    <section className="px-4 md:px-6 py-1 md:py-2">
+    // v25.13: section has NO horizontal padding — the parent home-view.tsx
+    // container provides px-4/md:px-6/lg:px-8 + max-w-7xl. Adding px-* here
+    // would cause double-padding (visible gap inside the section).
+    <section className="py-1 md:py-2">
       {/* Header */}
       <div className="flex items-end justify-between gap-4 mb-1.5 md:mb-2">
         <div className="flex items-center gap-3 min-w-0">
@@ -91,9 +94,11 @@ export function SmartSection({
           ))}
         </div>
       ) : (
-        /* v25.12: unified grid for ALL screen sizes.
-           2 cols mobile, 4 on tablet, 5-6 on desktop (compact, not huge) */
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-4">
+        /* v25.13 (desktop redesign): tighter column count for premium feel.
+           Old grid was 2/4/5/6 cols — felt crowded on desktop with 6 cols
+           at 1920px width. New: 2 mobile / 3 tablet / 4 desktop / 5 xl.
+           Cards stay readable with generous whitespace between them. */
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
           {items.map((p) => (
             <ProductCard key={p.id} product={p} onOpen={onOpenProduct} />
           ))}

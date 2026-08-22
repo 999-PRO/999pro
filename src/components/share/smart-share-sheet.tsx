@@ -13,7 +13,7 @@
 //      or downloads it (iOS Safari).
 //    • Analytics tracking — every tap on a platform records a `share` event
 //      on the backend, with the platform name for attribution.
-//    • Premium glass design with TRI999 branding.
+//    • Premium glass design with 999PRO branding.
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react'
@@ -440,7 +440,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             <div className="h-1.5 w-12 rounded-full bg-slate-200 dark:bg-slate-700" />
           </div>
 
-          {/* Header — v25.12: TRI999 gradient logo, no "9" */}
+          {/* Header — v25.12: 999PRO gradient logo, no "9" */}
           <div className="px-5 pb-3 flex items-start justify-between gap-3 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="h-9 w-9 rounded-xl grid place-items-center text-white font-extrabold text-xs shrink-0" style={{ background: 'linear-gradient(135deg, #EC4899, #A855F7, #9333EA)' }}>
@@ -532,7 +532,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
                 <div>
                   <div className="font-bold text-sm mb-0.5">Smart Story</div>
                   <div className="text-xs text-white/80 leading-tight">
-                    Создать красивую историю 1080×1440 с логотипом TRI999 и QR-кодом
+                    Создать красивую историю 1080×1440 с логотипом 999PRO и QR-кодом
                   </div>
                 </div>
                 <button
@@ -560,7 +560,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             </div>
           </div>
 
-          {/* Footer branding — v25.12: only TRI999, no "9" badge */}
+          {/* Footer branding — v25.12: only 999PRO, no "9" badge */}
           <div className="px-5 py-3 border-t border-slate-200/60 dark:border-slate-800/60 shrink-0">
             <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500">
               <span
@@ -571,7 +571,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
                   WebkitTextFillColor: 'transparent',
                 }}
               >
-                TRI999
+                999PRO
               </span>
             </div>
           </div>

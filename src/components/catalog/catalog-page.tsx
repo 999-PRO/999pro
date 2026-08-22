@@ -143,7 +143,7 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Название, артикул, описание…"
-            className="w-full h-10 pl-9 pr-3 rounded-full bg-[#F5F5F7] border border-transparent outline-none focus:border-[#A02070]/40 focus:bg-white transition-all text-sm"
+            className="w-full h-10 pl-9 pr-3 rounded-full bg-muted border border-transparent outline-none focus:border-primary/40 focus:bg-card transition-all text-sm"
           />
         </div>
       </div>
@@ -151,9 +151,9 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
       <div>
         <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">Цена</label>
         <div className="flex items-center gap-2">
-          <input type="number" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="от" className="w-full h-10 px-3 rounded-lg bg-[#F5F5F7] border border-transparent outline-none focus:border-[#A02070]/40 focus:bg-white transition-all text-sm" />
+          <input type="number" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="от" className="w-full h-10 px-3 rounded-lg bg-muted border border-transparent outline-none focus:border-primary/40 focus:bg-card transition-all text-sm" />
           <span className="text-muted-foreground">—</span>
-          <input type="number" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} placeholder="до" className="w-full h-10 px-3 rounded-lg bg-[#F5F5F7] border border-transparent outline-none focus:border-[#A02070]/40 focus:bg-white transition-all text-sm" />
+          <input type="number" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} placeholder="до" className="w-full h-10 px-3 rounded-lg bg-muted border border-transparent outline-none focus:border-primary/40 focus:bg-card transition-all text-sm" />
         </div>
       </div>
 
@@ -181,14 +181,14 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
       {/* H1 Header */}
       <div className="px-4 md:px-6 pt-4 md:pt-6 pb-3">
         <div className="max-w-[1440px] mx-auto">
-          <div className="flex items-center gap-1.5 text-xs text-[#666666] mb-1">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
             <Grid2x2 className="h-3.5 w-3.5" />
             <span>Каталог</span>
           </div>
-          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-[#1A1A1A]">
+          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-foreground">
             Все товары
           </h1>
-          <p className="text-sm text-[#666666] mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             {total > 0 ? `${total} ${pluralize(total, 'товар', 'товара', 'товаров')}` : 'Загрузка…'}
           </p>
         </div>
@@ -198,13 +198,13 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
       <div className="px-4 md:px-6 pb-3">
         <div className="max-w-[1440px] mx-auto">
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#9CA3AF]" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Поиск по названию, артикулу, описанию"
-              className="w-full h-12 pl-11 pr-4 rounded-full bg-[#F5F5F7] border border-transparent outline-none focus:border-[#A02070]/40 focus:bg-white transition-all text-sm"
+              className="w-full h-12 pl-11 pr-4 rounded-full bg-muted border border-transparent outline-none focus:border-primary/40 focus:bg-card transition-all text-sm"
             />
           </div>
         </div>
@@ -219,8 +219,8 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
               className={cn(
                 'shrink-0 inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium transition-all border',
                 !category
-                  ? 'bg-[#A02070] text-white border-[#A02070] shadow-md'
-                  : 'bg-white text-[#4A4A4A] border-[#E5E7EB] hover:border-[#A02070]/40',
+                  ? 'bg-primary text-primary-foreground border-primary shadow-md'
+                  : 'bg-card text-card-foreground border-border hover:border-primary/40',
               )}
             >
               <Grid2x2 className="h-3.5 w-3.5" />
@@ -233,8 +233,8 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
                 className={cn(
                   'shrink-0 inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-sm font-medium transition-all border',
                   category === cat.name
-                    ? 'bg-[#A02070] text-white border-[#A02070] shadow-md'
-                    : 'bg-white text-[#4A4A4A] border-[#E5E7EB] hover:border-[#A02070]/40',
+                    ? 'bg-primary text-primary-foreground border-primary shadow-md'
+                    : 'bg-card text-card-foreground border-border hover:border-primary/40',
                 )}
               >
                 {cat.name}
@@ -252,18 +252,18 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
         <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-3">
           <button
             onClick={() => setShowFiltersMobile(true)}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-white border border-[#E5E7EB] text-sm font-medium text-[#1A1A1A] hover:border-[#A02070]/40"
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-card border border-border text-sm font-medium text-foreground hover:border-primary/40"
           >
             <SlidersHorizontal className="h-4 w-4" />
             <span className="hidden sm:inline">Фильтры</span>
-            {hasActiveFilters && <span className="h-1.5 w-1.5 rounded-full bg-[#A02070]" />}
+            {hasActiveFilters && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
           </button>
 
           {/* Desktop sort */}
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as SortOption)}
-            className="hidden md:block h-9 px-3 rounded-full bg-white border border-[#E5E7EB] text-sm font-medium outline-none cursor-pointer"
+            className="hidden md:block h-9 px-3 rounded-full bg-card border border-border text-sm font-medium outline-none cursor-pointer"
           >
             {(Object.keys(SORT_LABELS) as SortOption[]).map((s) => (
               <option key={s} value={s}>{SORT_LABELS[s]}</option>
@@ -272,17 +272,17 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
 
           <div className="flex items-center gap-2">
             {/* View mode toggle */}
-            <div className="flex items-center bg-white border border-[#E5E7EB] rounded-full p-0.5">
+            <div className="flex items-center bg-card border border-border rounded-full p-0.5">
               <button
                 onClick={() => setViewMode('grid')}
-                className={cn('h-8 w-8 rounded-full grid place-items-center transition-all', viewMode === 'grid' ? 'bg-[#A02070] text-white' : 'text-[#6B7280] hover:text-[#1A1A1A]')}
+                className={cn('h-8 w-8 rounded-full grid place-items-center transition-all', viewMode === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
                 aria-label="Сетка"
               >
                 <Grid2x2 className="h-4 w-4" />
               </button>
               <button
                 onClick={() => setViewMode('list')}
-                className={cn('h-8 w-8 rounded-full grid place-items-center transition-all', viewMode === 'list' ? 'bg-[#A02070] text-white' : 'text-[#6B7280] hover:text-[#1A1A1A]')}
+                className={cn('h-8 w-8 rounded-full grid place-items-center transition-all', viewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
                 aria-label="Список"
               >
                 <List className="h-4 w-4" />
@@ -295,8 +295,8 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
               className={cn(
                 'inline-flex items-center gap-1.5 h-9 px-3 rounded-full border text-sm font-medium transition-all',
                 showFavorites
-                  ? 'bg-[#A02070] text-white border-[#A02070]'
-                  : 'bg-white text-[#4A4A4A] border-[#E5E7EB] hover:border-[#A02070]/40',
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-card text-card-foreground border-border hover:border-primary/40',
               )}
             >
               <Heart className="h-4 w-4" fill={showFavorites ? 'currentColor' : 'none'} />
@@ -312,7 +312,7 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
           {loading ? (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
               {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="rounded-xl bg-white shadow-sm overflow-hidden">
+                <div key={i} className="rounded-xl bg-card shadow-sm overflow-hidden">
                   <div className="aspect-[3/4] skeleton" />
                   <div className="p-3 space-y-2">
                     <div className="h-3 w-3/4 rounded skeleton" />
@@ -324,17 +324,17 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
             </div>
           ) : displayProducts.length === 0 ? (
             <div className="py-20 text-center">
-              <div className="h-20 w-20 rounded-full bg-[#F5F5F7] grid place-items-center mx-auto mb-4">
+              <div className="h-20 w-20 rounded-full bg-muted grid place-items-center mx-auto mb-4">
                 {showFavorites ? (
-                  <Heart className="h-10 w-10 text-[#9CA3AF]" />
+                  <Heart className="h-10 w-10 text-muted-foreground" />
                 ) : (
-                  <Search className="h-10 w-10 text-[#9CA3AF]" />
+                  <Search className="h-10 w-10 text-muted-foreground" />
                 )}
               </div>
               <h3 className="text-lg font-bold mb-1">
                 {showFavorites ? 'В избранном пока пусто' : 'Ничего не найдено'}
               </h3>
-              <p className="text-sm text-[#666666] mb-4">
+              <p className="text-sm text-muted-foreground mb-4">
                 {showFavorites
                   ? 'Нажмите ♥ на товаре, чтобы добавить его в избранное'
                   : 'Попробуйте изменить фильтры или поисковый запрос'}
@@ -368,7 +368,7 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
               <button
                 onClick={() => { haptic.tap(); setPage((p) => Math.max(0, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
                 disabled={page === 0}
-                className="h-10 w-10 rounded-full bg-white border border-[#E5E7EB] grid place-items-center disabled:opacity-30 hover:border-[#A02070]/40 transition-colors"
+                className="h-10 w-10 rounded-full bg-card border border-border grid place-items-center disabled:opacity-30 hover:border-primary/40 transition-colors"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -376,7 +376,7 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
               <button
                 onClick={() => { haptic.tap(); setPage((p) => Math.min(totalPages - 1, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
                 disabled={page >= totalPages - 1}
-                className="h-10 w-10 rounded-full bg-white border border-[#E5E7EB] grid place-items-center disabled:opacity-30 hover:border-[#A02070]/40 transition-colors"
+                className="h-10 w-10 rounded-full bg-card border border-border grid place-items-center disabled:opacity-30 hover:border-primary/40 transition-colors"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -389,10 +389,10 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
       {showFiltersMobile && (
         <div className="fixed inset-0 z-[400] md:hidden flex items-end">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowFiltersMobile(false)} />
-          <div className="relative w-full bg-white rounded-t-3xl max-h-[85vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white px-4 py-3 border-b border-[#F3F4F6] flex items-center justify-between">
+          <div className="relative w-full bg-card rounded-t-3xl max-h-[85vh] overflow-y-auto">
+            <div className="sticky top-0 bg-card px-4 py-3 border-b border-border flex items-center justify-between">
               <h3 className="font-semibold">Фильтры</h3>
-              <button onClick={() => setShowFiltersMobile(false)} className="h-8 w-8 rounded-full hover:bg-[#F5F5F7] grid place-items-center">
+              <button onClick={() => setShowFiltersMobile(false)} className="h-8 w-8 rounded-full hover:bg-muted grid place-items-center">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -404,7 +404,7 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
                 <select
                   value={sort}
                   onChange={(e) => setSort(e.target.value as SortOption)}
-                  className="w-full h-10 px-3 rounded-lg bg-[#F5F5F7] border border-transparent outline-none focus:border-[#A02070]/40 focus:bg-white text-sm font-medium"
+                  className="w-full h-10 px-3 rounded-lg bg-muted border border-transparent outline-none focus:border-primary/40 focus:bg-card text-sm font-medium"
                 >
                   {(Object.keys(SORT_LABELS) as SortOption[]).map((s) => (
                     <option key={s} value={s}>{SORT_LABELS[s]}</option>
@@ -412,8 +412,8 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
                 </select>
               </div>
             </div>
-            <div className="sticky bottom-0 bg-white p-4 border-t border-[#F3F4F6]">
-              <Button onClick={() => setShowFiltersMobile(false)} className="w-full bg-[#A02070] hover:bg-[#880E4F] text-white rounded-full h-11">
+            <div className="sticky bottom-0 bg-card p-4 border-t border-border">
+              <Button onClick={() => setShowFiltersMobile(false)} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-full h-11">
                 Показать {total} {pluralize(total, 'товар', 'товара', 'товаров')}
               </Button>
             </div>

@@ -43,18 +43,25 @@ const geistMono = Geist_Mono({
 // v9-audit-fix: fail-safe fallback to localhost instead of uncontrolled 999.pro domain.
 const APP_PUBLIC_URL = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '')
 
+// v25.13 (share metadata): removed marketing phrases like "Marketplace нового
+// поколения" — replaced with serious, business-accurate copy reflecting what
+// 999PRO actually is: рекламная продукция + мебель + подарки.
+const SITE_TITLE = '999PRO'
+const SITE_DESCRIPTION = '999PRO — рекламная продукция, мебель и подарки. Каталог, чат с продавцом, заявки и доставка по России.'
+
 export const metadata: Metadata = {
   // v9-audit-fix: metadataBase ensures all relative OG/Twitter image URLs are
   // resolved to absolute URLs. Without this, WhatsApp/Facebook/Telegram/X
   // crawlers can't resolve relative image URLs and show no preview image.
   metadataBase: new URL(APP_PUBLIC_URL),
-  // v12.6: minimal title "999 Store" per Phase 6 spec. Description kept short
+  // v25.12: minimal title "999PRO" per Phase 6 spec. Description kept short
   // and on-brand for SEO/social cards.
-  title: 'TRI999',
-  description: 'TRI999 — современный маркетплейс товаров и услуг с AI-ассистентом.',
-  applicationName: 'TRI999',
-  authors: [{ name: 'TRI999 Team' }],
-  keywords: ['TRI999', 'маркетплейс', 'магазин', 'каталог', 'чат', 'AI'],
+  // v25.13: changed title to "999PRO" (was "999PRO" — rebrand per user).
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_TITLE,
+  authors: [{ name: '999PRO Team' }],
+  keywords: ['999PRO', 'реклама', 'мебель', 'подарки', 'каталог', 'чат', 'AI'],
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
@@ -62,7 +69,7 @@ export const metadata: Metadata = {
     // background (html/body blue) shows through it — no white strip above
     // the header when the app runs as a PWA. Requires viewport-fit=cover.
     statusBarStyle: 'black-translucent',
-    title: 'TRI999',
+    title: SITE_TITLE,
   },
   icons: {
     icon: [
@@ -97,25 +104,25 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: 'TRI999',
-    description: 'TRI999 — современный маркетплейс товаров и услуг с AI-ассистентом.',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
     type: 'website',
     locale: 'ru_RU',
-    siteName: 'TRI999',
+    siteName: SITE_TITLE,
     url: APP_PUBLIC_URL,
     images: [
       {
         url: '/og',
         width: 1200,
         height: 630,
-        alt: 'TRI999',
+        alt: SITE_TITLE,
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'TRI999',
-    description: 'TRI999 — современный маркетплейс товаров и услуг с AI-ассистентом.',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
     images: ['/og'],
   },
   alternates: {
@@ -316,16 +323,17 @@ const SPLASH_BOOTSTRAP = `
       var logoWrap = document.createElement('div');
       logoWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:12px;animation:app-splash-fadeIn .6s ease;';
 
-      // TRI999 wordmark — white with glow
+      // 999PRO wordmark — white with glow
+      // v25.13 (rebrand): 999PRO → 999PRO per user request.
       var logo = document.createElement('div');
       logo.style.cssText = 'font-size:42px;font-weight:900;letter-spacing:-0.03em;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;text-shadow:0 4px 24px rgba(0,0,0,0.25);animation:app-splash-pulse 2s ease-in-out infinite;';
-      logo.textContent = 'TRI999';
+      logo.textContent = '999PRO';
       logoWrap.appendChild(logo);
 
       // Tagline
       var tagline = document.createElement('div');
       tagline.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.8);font-weight:500;letter-spacing:0.05em;text-transform:uppercase;';
-      tagline.textContent = 'Маркетплейс нового поколения';
+      tagline.textContent = 'Реклама · Мебель · Подарки';
       logoWrap.appendChild(tagline);
 
       s.appendChild(logoWrap);
@@ -420,7 +428,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             __html: JSON.stringify({
               '@context': 'https://schema.org',
               '@type': 'Organization',
-              name: 'TRI999',
+              name: SITE_TITLE,
               url: APP_PUBLIC_URL,
               logo: `${APP_PUBLIC_URL}/icons/icon-512.png`,
             }).replace(/</g, '\\u003c'),
@@ -433,7 +441,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               '@context': 'https://schema.org',
               '@type': 'LocalBusiness',
               '@id': `${APP_PUBLIC_URL}/#localbusiness`,
-              name: 'TRI999',
+              name: SITE_TITLE,
               image: `${APP_PUBLIC_URL}/icons/screenshot-phone-1.png`,
               url: APP_PUBLIC_URL,
               telephone: process.env.NEXT_PUBLIC_BUSINESS_PHONE || undefined,
@@ -480,7 +488,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               '@context': 'https://schema.org',
               '@type': 'WebSite',
               url: APP_PUBLIC_URL,
-              name: 'TRI999',
+              name: SITE_TITLE,
               potentialAction: {
                 '@type': 'SearchAction',
                 target: `${APP_PUBLIC_URL}/?view=search&q={search_term_string}`,

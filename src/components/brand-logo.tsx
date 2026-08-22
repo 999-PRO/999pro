@@ -1,9 +1,9 @@
 'use client'
 
 // ============================================================================
-// BrandLogo — компонент логотипа бренда TRI999.
+// BrandLogo — компонент логотипа бренда 999PRO.
 // ----------------------------------------------------------------------------
-// v25.8 (TRI999 launch): одна строка "TRI999" (gradient optional).
+// v25.8 (999PRO launch): одна строка "999PRO" (gradient optional).
 // Поддерживает размеры (sm/md/lg) и адаптацию под тёмную/светлую тему.
 // ============================================================================
 
@@ -90,7 +90,7 @@ export function brandHtml(opts?: { numSize?: string; color?: string }): string {
   const color = opts?.color ?? '#ffffff'
   return (
     `<div style="display:flex;align-items:center;line-height:1;">` +
-    `<div style="font-size:${numSize};font-weight:800;letter-spacing:-0.02em;color:${color};">TRI999</div>` +
+    `<div style="font-size:${numSize};font-weight:800;letter-spacing:-0.02em;color:${color};">999PRO</div>` +
     `</div>`
   )
 }

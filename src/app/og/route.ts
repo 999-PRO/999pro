@@ -18,7 +18,7 @@ export async function GET() {
     </defs>
     <rect width="1200" height="630" fill="url(#bg)"/>
     <text x="600" y="320" font-family="Arial, sans-serif" font-size="180" font-weight="800"
-          fill="#ffffff" text-anchor="middle">TRI999</text>
+          fill="#ffffff" text-anchor="middle">999PRO</text>
   </svg>`
 
   try {

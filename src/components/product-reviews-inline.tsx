@@ -613,7 +613,7 @@ function ReviewCard({
           replies via Prisma `include: { replies: true }` on GET /api/reviews.
           Each reply is rendered as a smaller, indented card with an
           "Администратор" badge. Replies have no rating (rating=0).
-          v25.8 (TRI999 launch): admin can delete any reply (own or another
+          v25.8 (999PRO launch): admin can delete any reply (own or another
           admin's). The backend's DELETE /api/reviews/:id allows admin to
           delete any review including replies. */}
       {review.replies && review.replies.length > 0 && (

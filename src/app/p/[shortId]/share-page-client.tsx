@@ -113,10 +113,10 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
         transition={{ duration: 0.4, ease: 'easeOut' }}
         className="w-full max-w-md text-center"
       >
-        {/* v25.12: TRI999 — plain white text */}
+        {/* v25.12: 999PRO — plain white text */}
         <div className="mb-6">
           <span className="text-3xl font-extrabold tracking-tight text-white">
-            TRI999
+            999PRO
           </span>
         </div>
 

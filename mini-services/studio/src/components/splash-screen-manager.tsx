@@ -17,7 +17,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Save, Loader2, Image as ImageIcon, Trash2, Upload, Eye, EyeOff, Smartphone } from 'lucide-react'
-import { api } from '@/lib/api'
+import { api, buildUploadUrl } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -85,7 +85,12 @@ export function SplashScreenManager() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch('/api/upload', {
+      // v25.13 (login+upload regression fix): use buildUploadUrl() so the URL
+      // gets the /studio prefix (matches the basePath-aware rewrite) and
+      // XTransformPort for sandbox preview. Previously this was a raw
+      // '/api/upload' string which returned 404 in production because the
+      // rewrite only matches /studio/api/upload.
+      const res = await fetch(buildUploadUrl('/api/upload'), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${useAuthStore.getState().token}`,

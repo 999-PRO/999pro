@@ -94,39 +94,69 @@ router.post('/upload', requireAuth, requireAdmin, asyncHandler(async (req: Authe
   const Busboy = (await import('busboy')).default
   const bb = Busboy({ headers: req.headers, limits: { fileSize: 50 * 1024 * 1024 } }) // 50 MB max
 
-  let savedFile: { url: string; type: string; size: number; name: string } | null = null
+  // v25.13 (price-lists upload regression fix): RACE CONDITION.
+  // Previously this used a callback-based pattern where `bb.on('finish')`
+  // fired BEFORE `writeStream.on('close')` had a chance to set `savedFile`.
+  // For small files the writeStream close event lands on a later tick of
+  // the event loop than busboy's 'finish' event — so the handler saw
+  // `savedFile === null` and returned 400 "No file uploaded" even though
+  // the file WAS actually received and saved on disk.
+  //
+  // Fix: collect each file's write-completion into a Promise, and wait
+  // for ALL of them to resolve before responding. This mirrors the pattern
+  // used in routes/upload.ts (which works correctly for product images).
+  type SavedFile = { url: string; type: string; size: number; name: string }
+  const filePromises: Promise<SavedFile>[] = []
+  let sawFileField = false
 
   bb.on('file', (_fieldname, file, info) => {
-    const safeName = info.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
-    const ext = path.extname(safeName)
-    const baseName = path.basename(safeName, ext)
-    const finalName = `${Date.now()}-${baseName}${ext}`
-    const filePath = path.join(UPLOADS_DIR, finalName)
-    const writeStream = fs.createWriteStream(filePath)
-    let size = 0
+    sawFileField = true
+    filePromises.push(
+      new Promise<SavedFile>((resolve, reject) => {
+        const safeName = info.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+        const ext = path.extname(safeName)
+        const baseName = path.basename(safeName, ext)
+        const finalName = `${Date.now()}-${baseName}${ext}`
+        const filePath = path.join(UPLOADS_DIR, finalName)
+        const writeStream = fs.createWriteStream(filePath)
+        let size = 0
 
-    file.on('data', (chunk: Buffer) => { size += chunk.length })
-    file.pipe(writeStream)
+        file.on('data', (chunk: Buffer) => { size += chunk.length })
+        file.pipe(writeStream)
 
-    writeStream.on('close', () => {
-      savedFile = {
-        url: `/uploads/price-lists/${finalName}`,
-        type: detectFileType(info.filename),
-        size,
-        name: info.filename,
-      }
-    })
-    writeStream.on('error', (err) => {
-      logger.error('Price list upload failed', { module: 'price-lists', error: err })
-      res.status(500).json({ error: 'Upload failed' })
-    })
+        writeStream.on('close', () => {
+          resolve({
+            url: `/uploads/price-lists/${finalName}`,
+            type: detectFileType(info.filename),
+            size,
+            name: info.filename,
+          })
+        })
+        writeStream.on('error', (err) => {
+          logger.error('Price list upload failed', { module: 'price-lists', error: err })
+          // Try to clean up the partial file
+          try { fs.unlink(filePath, () => {}) } catch {}
+          reject(err)
+        })
+      }),
+    )
   })
 
-  bb.on('finish', () => {
-    if (!savedFile) {
+  bb.on('finish', async () => {
+    // v25.13: wait for all writeStreams to close BEFORE checking the result.
+    // Without this, small files race the busboy 'finish' event and the
+    // handler returns 400 "No file uploaded" even though the file IS saved.
+    if (!sawFileField || filePromises.length === 0) {
       return res.status(400).json({ error: 'No file uploaded' })
     }
-    res.json(savedFile)
+    try {
+      const saved = await Promise.all(filePromises)
+      const savedFile = saved[0]
+      res.json(savedFile)
+    } catch (err) {
+      logger.error('Price list upload failed (await)', { module: 'price-lists', error: err instanceof Error ? err : new Error(String(err)) })
+      res.status(500).json({ error: 'Upload failed' })
+    }
   })
 
   bb.on('error', (err) => {

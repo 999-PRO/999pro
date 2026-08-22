@@ -170,6 +170,43 @@ export function assetUrl(path: string | null | undefined): string {
   return path
 }
 
+/**
+ * v25.13 (login+upload regression fix): Build a URL for RAW fetch() / XHR
+ * upload calls (NOT through apiFetch()).
+ *
+ * Studio has basePath='/studio' + assetPrefix='/studio/'. Next.js rewrites
+ * auto-prefix their source patterns with basePath — so the rewrite `/api/:path*`
+ * matches `/studio/api/:path*` ONLY.
+ *
+ * When the browser is at http://host/studio and JS calls `fetch('/api/upload')`,
+ * the browser resolves this to http://host/api/upload (absolute path from URL
+ * root) — NOT http://host/studio/api/upload. This bypasses the rewrite and
+ * returns 404.
+ *
+ * This helper prepends '/studio' to /api/* paths when running in the browser
+ * (so the rewrite matches), and ALSO adds the XTransformPort query param for
+ * sandbox preview (*.space-z.ai).
+ *
+ * Use this for ALL raw fetch/XHR upload calls (products-manager video upload,
+ * splash-screen image upload, price-lists file upload, etc.).
+ */
+export function buildUploadUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  // Sandbox (*.space-z.ai) — use relative /api/* with XTransformPort query.
+  // The rewrite rule also auto-prefixes with basePath, so we must include
+  // /studio here too (same as buildUrl()).
+  if (typeof window !== 'undefined' && isSandboxHost(window.location.hostname)) {
+    const sep = cleanPath.includes('?') ? '&' : '?'
+    return `/studio${cleanPath}${sep}XTransformPort=${SANDBOX_BACKEND_PORT}`
+  }
+  // Browser non-sandbox: prepend /studio so the rewrite matches.
+  if (typeof window !== 'undefined' && LOCAL_API_BASE === '') {
+    return `/studio${cleanPath}`
+  }
+  // Server-side or non-browser: use LOCAL_API_BASE (http://localhost:4000 in dev)
+  return `${LOCAL_API_BASE}${cleanPath}`
+}
+
 export class ApiError extends Error {
   status: number
   details?: unknown

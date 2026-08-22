@@ -34,7 +34,7 @@ generator client {
 
 datasource db {
   // v25.8 (TRI999 launch): PostgreSQL is the ONLY production database provider.
-  provider = "sqlite"
+  provider = "postgresql"
   url = env("DATABASE_URL")
 }
 

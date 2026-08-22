@@ -83,11 +83,18 @@ const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardPr
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpen() } }}
-      className="group relative rounded-xl overflow-hidden bg-white shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)] hover:shadow-[0_8px_24px_-8px_rgba(160,32,112,0.2)] transition-all cursor-pointer hover:-translate-y-0.5"
+      // v25.13 (theme regression fix): use bg-card / shadow via CSS vars so
+      // the card adapts to light/dark/neon themes. Previously this was a
+      // hard-coded `bg-white` — which made every product card a bright white
+      // "island" on top of the dark/neon app background. The text inside was
+      // also hard-coded to dark (`text-[#111827]`) which is fine on white
+      // but invisible on the dark card surface once the surface followed
+      // the theme. Now both surface AND text follow the theme.
+      className="group relative rounded-xl overflow-hidden bg-card shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.4)] hover:shadow-[0_8px_24px_-8px_rgba(160,32,112,0.2)] transition-all cursor-pointer hover:-translate-y-0.5"
     >
       {/* Image carousel — v25.12: 3:4 aspect ratio (was square) */}
       <div className={cn(
-        'relative overflow-hidden bg-[#F3F4F6]',
+        'relative overflow-hidden bg-muted',
         'aspect-[3/4]',
       )}>
         <div
@@ -198,7 +205,11 @@ const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardPr
       {/* Body */}
       <div className="p-3 space-y-1.5">
         {/* Title */}
-        <h3 className="font-semibold text-sm leading-tight line-clamp-2 text-[#111827] min-h-[2.4em]">
+        {/* v25.13 (theme regression fix): use text-card-foreground so the
+            title is readable on every theme (light card / dark card / neon
+            card). Previously this was `text-[#111827]` (hard-coded dark
+            gray) — fine on a white card but invisible on a dark card. */}
+        <h3 className="font-semibold text-sm leading-tight line-clamp-2 text-card-foreground min-h-[2.4em]">
           {product.title}
         </h3>
 
@@ -206,9 +217,9 @@ const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardPr
         {product.rating > 0 && (
           <div className="flex items-center gap-1 text-xs">
             <Star className="h-3.5 w-3.5 fill-[#FBBF24] text-[#FBBF24]" />
-            <span className="font-semibold text-[#111827]">{product.rating.toFixed(1)}</span>
-            <span className="text-[#9CA3AF]">·</span>
-            <span className="text-[#9CA3AF]">{formatCompactNumber(product.reviewsCount)} отз.</span>
+            <span className="font-semibold text-card-foreground">{product.rating.toFixed(1)}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">{formatCompactNumber(product.reviewsCount)} отз.</span>
           </div>
         )}
 
@@ -216,19 +227,25 @@ const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardPr
         <div className="flex items-end justify-between gap-2 pt-1">
           <div className="min-w-0">
             {product.oldPrice && product.oldPrice > product.price && (
-              <div className="text-[11px] text-[#9CA3AF] line-through">
+              <div className="text-[11px] text-muted-foreground line-through">
                 {formatPrice(product.oldPrice, product.currency)}
               </div>
             )}
-            <div className="text-base md:text-lg font-bold text-[#A02070]">
+            {/* v25.13: text-primary adapts to theme (light: deep magenta,
+                dark: lighter magenta, neon: violet). Previously hard-coded
+                `text-[#A02070]` which was unreadable on neon theme. */}
+            <div className="text-base md:text-lg font-bold text-primary">
               {formatPrice(product.price, product.currency)}
             </div>
           </div>
           {/* Round purple cart button */}
+          {/* v25.13: use gradient-brand so the cart button adapts to theme
+              (gradient uses CSS var --gradient-brand). Previously
+              hard-coded `bg-[#A02070]` — fine in light/dark, off-style in neon. */}
           <button
             onClick={handleCart}
             aria-label="В список заявок"
-            className="h-9 w-9 md:h-10 md:w-10 rounded-full bg-[#A02070] hover:bg-[#880E4F] grid place-items-center shadow-[0_4px_12px_-4px_rgba(160,32,112,0.5)] active:scale-90 transition-all shrink-0"
+            className="h-9 w-9 md:h-10 md:w-10 rounded-full gradient-brand grid place-items-center shadow-[0_4px_12px_-4px_rgba(160,32,112,0.5)] active:scale-90 transition-all shrink-0"
           >
             <ShoppingCart className="h-4 w-4 text-white" />
           </button>

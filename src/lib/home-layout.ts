@@ -25,8 +25,46 @@ export const DEFAULT_HOME_LAYOUT: HomeBlockConfig[] = [
   { id: 'new', visible: true, pinned: false, order: 8 },
 ]
 
+// v25.13 (FOUC fix): localStorage cache key for the home layout.
+// Without this cache, on every page load the hook starts with
+// DEFAULT_HOME_LAYOUT (where EVERY block is `visible: true`) and then
+// `fetchLayout()` overwrites it with the actual server-side config.
+// If the admin has hidden some blocks via Studio, those blocks flash
+// briefly before disappearing — a classic FOUC (Flash Of Unstyled Content).
+//
+// Fix: hydrate the initial state from localStorage so the FIRST paint
+// matches the LAST known server-side config. Then fetch the fresh config
+// in the background; if it changed, the hook re-renders with the new layout.
+const LAYOUT_CACHE_KEY = '999pro-home-layout-cache-v1'
+
+function loadCachedLayout(): HomeBlockConfig[] | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as HomeBlockConfig[]
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveCachedLayout(layout: HomeBlockConfig[]) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(LAYOUT_CACHE_KEY, JSON.stringify(layout))
+  } catch {
+    // ignore quota / serialization errors
+  }
+}
+
 export function useHomeLayout() {
-  const [layout, setLayout] = useState<HomeBlockConfig[]>(DEFAULT_HOME_LAYOUT)
+  // v25.13 (FOUC fix): start from the cached layout (or DEFAULT if no cache).
+  // The first paint will use the cached config, so hidden blocks DON'T flash.
+  const [layout, setLayout] = useState<HomeBlockConfig[]>(
+    () => loadCachedLayout() || DEFAULT_HOME_LAYOUT,
+  )
   const [loading, setLoading] = useState(true)
 
   const fetchLayout = useCallback(async () => {
@@ -39,10 +77,14 @@ export function useHomeLayout() {
             ? { ...d, visible: saved.visible, pinned: saved.pinned, order: saved.order ?? d.order }
             : d
         })
-        setLayout(merged.sort((a, b) => a.order - b.order))
+        const sorted = merged.sort((a, b) => a.order - b.order)
+        setLayout(sorted)
+        // v25.13: persist to localStorage so the NEXT page load uses this
+        // layout as the initial state — no FOUC.
+        saveCachedLayout(sorted)
       }
     } catch {
-      // use defaults
+      // use defaults (or cached)
     } finally {
       setLoading(false)
     }
@@ -60,6 +102,12 @@ export function useHomeLayout() {
   }, [fetchLayout])
 
   const isVisible = useCallback((id: string) => {
+    // v25.13 (FOUC fix): if we're still loading the fresh config AND we
+    // have a cached layout, use the cached layout's visibility. This prevents
+    // a flash of "everything visible" while the API is being fetched.
+    // If we have NO cache (first-ever visit), we fall back to the DEFAULT
+    // layout — which is "everything visible" — but that's the only honest
+    // initial state when we don't know any better.
     const block = layout.find((b) => b.id === id)
     return block ? block.visible : true
   }, [layout])

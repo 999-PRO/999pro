@@ -182,7 +182,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
       case 'share':
         if (typeof navigator !== 'undefined' && navigator.share) {
           try {
-            await navigator.share({ title: 'TRI999', text: 'Современный маркетплейс нового поколения с голосовым AI-агентом', url: window.location.origin })
+            await navigator.share({ title: '999PRO', text: 'Современный маркетплейс нового поколения с голосовым AI-агентом', url: window.location.origin })
           } catch {}
         } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
           try {
@@ -219,7 +219,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         {/* Header */}
         <div className="text-left">
           <h1 className="text-2xl font-extrabold">Ещё</h1>
-          <p className="text-sm text-muted-foreground">Дополнительные разделы и настройки TRI999</p>
+          <p className="text-sm text-muted-foreground">Дополнительные разделы и настройки 999PRO</p>
         </div>
 
         {/* User card (если авторизован) */}
@@ -419,7 +419,7 @@ export function MoreSheet({ open, onOpenChange, onNavigate, onNavigateToInfoPage
         )}
 
         <div className="text-center text-xs text-muted-foreground pt-1 pb-1">
-          TRI999 · версия 25.12
+          999PRO · версия 25.12
         </div>
       </div>
     </div>

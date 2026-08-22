@@ -88,8 +88,8 @@ export function ReferralSheet({
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'TRI999 — приглашаю тебя!',
-          text: 'Присоединяйся к TRI999 и получи бонус при регистрации по моей ссылке:',
+          title: '999PRO — приглашаю тебя!',
+          text: 'Присоединяйся к 999PRO и получи бонус при регистрации по моей ссылке:',
           url: referralLink,
         })
       } catch {}
@@ -100,13 +100,13 @@ export function ReferralSheet({
 
   const handleWhatsApp = useCallback(() => {
     haptic.tap()
-    const text = encodeURIComponent(`Присоединяйся к TRI999! Регистрируйся по ссылке и получи бонус: ${referralLink}`)
+    const text = encodeURIComponent(`Присоединяйся к 999PRO! Регистрируйся по ссылке и получи бонус: ${referralLink}`)
     window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer')
   }, [referralLink])
 
   const handleTelegram = useCallback(() => {
     haptic.tap()
-    const text = encodeURIComponent('Присоединяйся к TRI999 и получи бонус при регистрации!')
+    const text = encodeURIComponent('Присоединяйся к 999PRO и получи бонус при регистрации!')
     window.open(`https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${text}`, '_blank', 'noopener,noreferrer')
   }, [referralLink])
 

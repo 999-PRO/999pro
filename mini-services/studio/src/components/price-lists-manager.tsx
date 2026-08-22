@@ -19,9 +19,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Trash2, Pencil, ArrowUp, ArrowDown, Eye, EyeOff, Loader2,
-  FileText, FileSpreadsheet, FileImage, Upload, Download, ExternalLink, File,
+  FileText, FileSpreadsheet, FileImage, Upload, ExternalLink, File,
 } from 'lucide-react'
-import { api, assetUrl } from '@/lib/api'
+import { api, assetUrl, buildUploadUrl } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -32,6 +32,8 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from '@/lib/notifications'
 import { cn } from '@/lib/utils'
+// v25.13 (login+upload regression fix): auth store for upload token
+import { useAuthStore } from '@/lib/auth-store'
 
 interface PriceList {
   id: string
@@ -85,8 +87,17 @@ export function PriceListsManager() {
   const [saving, setSaving] = useState(false)
   const [editing, setEditing] = useState<PriceList | null>(null)
   const [creating, setCreating] = useState(false)
+  // v25.13 (price-lists runtime crash fix): useConfirmDialog() returns
+  // { dialog, confirm, close }. Previously this destructured `confirm` as
+  // `openConfirm` and called it WITHOUT arguments (`openConfirm()`) — but
+  // the hook's `confirm` signature is `(opts: Omit<ConfirmDialogState, 'open'>) => void`.
+  // Calling it with no arguments set `dialog.title`/`dialog.message`/`dialog.onConfirm`
+  // all to `undefined`, then `<StudioConfirmDialog {...dialog} title="..." onConfirm={...}/>` was
+  // passed as FLAT PROPS instead of `dialog={dialog} onClose={closeConfirm}` — which crashed
+  // the StudioConfirmDialog component with:
+  //   "TypeError: Cannot read properties of undefined (reading 'open')"
+  // the moment the PriceListsManager mounted. After this fix, the manager loads.
   const { dialog: confirmDialog, confirm: openConfirm, close: closeConfirm } = useConfirmDialog()
-  const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -102,18 +113,30 @@ export function PriceListsManager() {
 
   useEffect(() => { load() }, [load])
 
-  const handleDelete = async () => {
-    if (!deleteId) return
+  const handleDelete = async (id: string) => {
     try {
-      await api.delete(`/api/price-lists/${deleteId}`, { auth: true })
+      await api.delete(`/api/price-lists/${id}`, { auth: true })
       toast.success('Прайс-лист удалён')
-      setItems(items.filter((i) => i.id !== deleteId))
+      setItems(items.filter((i) => i.id !== id))
     } catch {
       toast.error('Ошибка удаления')
     } finally {
-      setDeleteId(null)
       closeConfirm()
     }
+  }
+
+  // v25.13: trigger the confirm dialog with proper arguments. Previously
+  // this was `setDeleteId(item.id); openConfirm()` — openConfirm() was
+  // called with no arguments, leaving dialog.title/message/onConfirm all
+  // undefined and crashing StudioConfirmDialog.
+  const requestDelete = (item: PriceList) => {
+    openConfirm({
+      title: 'Удалить прайс-лист?',
+      message: 'Файл будет удалён с сервера. Это действие нельзя отменить.',
+      confirmLabel: 'Удалить',
+      variant: 'danger',
+      onConfirm: () => { void handleDelete(item.id) },
+    })
   }
 
   const moveBlock = async (idx: number, dir: -1 | 1) => {
@@ -270,7 +293,7 @@ export function PriceListsManager() {
 
                 {/* Delete */}
                 <button
-                  onClick={() => { setDeleteId(item.id); openConfirm() }}
+                  onClick={() => requestDelete(item)}
                   title="Удалить"
                   className="h-9 w-9 rounded-lg grid place-items-center bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors shrink-0"
                 >
@@ -296,14 +319,12 @@ export function PriceListsManager() {
         />
       )}
 
-      <StudioConfirmDialog
-        {...confirmDialog}
-        title="Удалить прайс-лист?"
-        description="Файл будет удалён с сервера. Это действие нельзя отменить."
-        confirmLabel="Удалить"
-        danger
-        onConfirm={handleDelete}
-      />
+      {/* v25.13: pass dialog + onClose to StudioConfirmDialog (correct API).
+          Previously this was `<StudioConfirmDialog {...confirmDialog} title=... />`
+          which spread dialog state as FLAT PROPS — but StudioConfirmDialog
+          expects exactly `{ dialog, onClose }` and crashed when it tried to
+          read `dialog.open` from undefined. */}
+      <StudioConfirmDialog dialog={confirmDialog} onClose={closeConfirm} />
     </div>
   )
 }
@@ -345,8 +366,17 @@ function PriceListEditor({
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const token = typeof window !== 'undefined' ? localStorage.getItem('999pro-studio-token') : null
-      const res = await fetch('/api/price-lists/upload', {
+      // v25.13 (login+upload regression fix): use buildUploadUrl() so the URL
+      // gets the /studio prefix (matches the basePath-aware rewrite) and
+      // XTransformPort for sandbox preview. Previously this was a raw
+      // '/api/price-lists/upload' string which returned 404 in production
+      // because the rewrite only matches /studio/api/price-lists/upload.
+      // Also fixed: the auth token is now read from the Zustand auth store
+      // (single source of truth) instead of the wrong localStorage key
+      // '999pro-studio-token' which never existed (the store uses
+      // '999pro-studio-auth' with a {state: {token}} JSON shape).
+      const token = useAuthStore.getState().token
+      const res = await fetch(buildUploadUrl('/api/price-lists/upload'), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
