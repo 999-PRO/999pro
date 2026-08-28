@@ -144,7 +144,7 @@ export function SettingsView({ onNavigate }: SettingsViewProps) {
     // The "Ссылка скопирована" toast is shown ONLY after a successful copy —
     // not when Web Share API is cancelled (AbortError) or fails.
     const shareData = {
-      title: '999PRO',
+      title: 'TRI999',
       text: language === 'ru'
         ? 'Современный маркетплейс нового поколения'
         : 'A modern next-gen marketplace',
@@ -192,7 +192,7 @@ export function SettingsView({ onNavigate }: SettingsViewProps) {
           </div>
           <div className="flex-1 min-w-0">
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">{t('settings.title')}</h1>
-            <p className="text-sm text-muted-foreground">999PRO</p>
+            <p className="text-sm text-muted-foreground">TRI999</p>
           </div>
         </div>
 
@@ -406,7 +406,7 @@ export function SettingsView({ onNavigate }: SettingsViewProps) {
         </Section>
 
         <div className="text-center text-xs text-muted-foreground pt-2 pb-4">
-          999PRO · версия 1.0.0
+          TRI999 · версия 1.0.0
         </div>
       </div>
 

@@ -18,8 +18,12 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* v25.27 (TRI999): дизайнерские шрифты — Onest (текст) + Unbounded (бренд).
+     Fallback-стек сохраняет совместимость, если кастомный шрифт не успел
+     загрузиться (display:swap). */
+  --font-sans: var(--font-onest), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: var(--font-unbounded), var(--font-onest), -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -55,6 +59,13 @@
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 12px);
   --radius-3xl: calc(var(--radius) + 24px);
+}
+
+/* v25.27 (TRI999): дисплейная гарнитура бренда — логотипы и крупные
+   заголовки. Курсив не используется; трекинг тугой, размеры аккуратные. */
+@utility font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
 }
 
 :root {
@@ -1099,6 +1110,35 @@
     animation: menu-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
 
+  /* v25.21: pop-in анимация бейджа непрочитанных (nav «Общение», сайдбар «Чат») */
+  @keyframes badge-pop {
+    0% { opacity: 0; transform: scale(0.4); }
+    60% { opacity: 1; transform: scale(1.18); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  /* v25.21: блик-shine на премиум-карточках категорий (главная) */
+  .cat-shine::after {
+    content: '';
+    position: absolute;
+    top: -60%;
+    left: -80%;
+    width: 55%;
+    height: 220%;
+    transform: rotate(24deg);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    transition: left 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+    z-index: 5;
+  }
+  .cat-shine:hover::after {
+    left: 130%;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cat-shine::after { display: none; }
+  }
+
+
   @keyframes pulse-glow {
     0%, 100% { opacity: 0.5; transform: scale(1); }
     50% { opacity: 1; transform: scale(1.15); }
@@ -1804,3 +1844,103 @@
 }
 
 
+
+/* ============================================================================
+   v25.18 — Ken Burns ambient для фото товаров (главная, каталог, страница
+   товара). Медленный «живой» зум-пан на АКТИВНОМ слайде карточки — как в
+   ленте (owner: «даже если не открыл карточку, пусть картинки анимированы,
+   как в ленте — параллакс»). Только transform — GPU, дёшево. При
+   prefers-reduced-motion отключается.
+   ========================================================================== */
+@keyframes kb-ambient-a {
+  0%   { transform: scale(1)    translate(0, 0); }
+  50%  { transform: scale(1.07) translate(-1.6%, 1.2%); }
+  100% { transform: scale(1.045) translate(1.4%, -1%); }
+}
+@keyframes kb-ambient-b {
+  0%   { transform: scale(1.045) translate(1.4%, -1%); }
+  50%  { transform: scale(1)    translate(1.2%, 1.6%); }
+  100% { transform: scale(1.065) translate(-1.5%, -1.2%); }
+}
+.kb-ambient-a { animation: kb-ambient-a 14s ease-in-out infinite alternate; will-change: transform; }
+.kb-ambient-b { animation: kb-ambient-b 16s ease-in-out infinite alternate; will-change: transform; }
+@media (prefers-reduced-motion: reduce) {
+  .kb-ambient-a, .kb-ambient-b { animation: none; }
+}
+
+/* v25.18 — анимации экранов звонков */
+@keyframes call-ring {
+  0%   { transform: scale(0.82); opacity: 0.7; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+@keyframes call-ring-fill {
+  0%   { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* кольца остаются статичными */
+}
+
+/* v25.19 — «нейро-генерация»: световой скан при появлении карточки */
+.neuro-scan::after {
+  content: '';
+  position: absolute;
+  left: -8%;
+  right: -8%;
+  top: 0;
+  height: 34%;
+  background: linear-gradient(
+    to bottom,
+    rgba(236, 72, 153, 0) 0%,
+    rgba(168, 85, 247, 0.16) 45%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(168, 85, 247, 0.16) 55%,
+    rgba(236, 72, 153, 0) 100%
+  );
+  filter: blur(4px);
+  transform: translateY(-120%);
+  animation: neuro-scan-sweep 0.9s cubic-bezier(0.33, 1, 0.68, 1) 0.12s forwards;
+}
+@keyframes neuro-scan-sweep {
+  to { transform: translateY(360%); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .neuro-scan::after { animation: none; opacity: 0; }
+}
+
+/* v25.22 — «SABER»: светящийся градиентный прогресс сторис (владелец:
+   «линия, которая идёт, сделай цветным градиентом типа как эффект saber»).
+   Активный сегмент — градиент cyan→indigo→fuchsia с внешним свечением и
+   белой «горячей» точкой-наконечником на движущемся крае; пройденные —
+   мягкий приглушённый градиент. */
+.saber-fill {
+  background: linear-gradient(90deg, #22d3ee 0%, #818cf8 45%, #e879f9 100%);
+  box-shadow:
+    0 0 6px rgba(129, 140, 248, 0.9),
+    0 0 14px rgba(34, 211, 238, 0.45);
+  border-radius: 999px;
+  position: relative;
+  transition: box-shadow 0.2s ease;
+}
+.saber-fill::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 0 8px 2px rgba(255, 255, 255, 0.95);
+}
+.saber-done {
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.75) 0%, rgba(232, 121, 249, 0.75) 100%);
+  border-radius: 999px;
+}
+
+/* v25.24: подъём шариков в «Пузырях» — чистый CSS, без framer */
+@keyframes bubble-rise {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(-100vh - 200px)); }
+}

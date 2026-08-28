@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Sparkles, Eye, EyeOff, Save, Loader2 } from 'lucide-react'
+import { Sparkles, Eye, EyeOff, Save, Loader2, Smartphone } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
-import type { HeroBlockSetting } from '@/lib/types'
+import type { HeroBlockSetting, MobileHeroBlockSetting } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -31,6 +31,10 @@ const VIEW_OPTIONS = [
   // v12.3: 'feed' option removed — Feed module deleted, replaced by 999 CLUB.
   { id: 'club', label: '999 CLUB' },
   { id: 'chat', label: 'Чат' },
+  // v25.22 (owner): «нажимаю price в hero — ничего не открывается». Пункта
+  // «Прайс-листы» не было в списке — владелец не мог выбрать раздел price.
+  { id: 'price', label: 'Прайс-листы' },
+  { id: 'contacts', label: 'Контакты' },
   { id: 'profile', label: 'Профиль' },
   { id: 'orders', label: 'Мои заказы' },
   { id: 'support', label: 'Поддержка' },
@@ -54,10 +58,24 @@ const DEFAULT_HERO: HeroBlockSetting = {
   mode: 'image-text',
 }
 
+// v25.21: дефолт мобильного hero-баннера — выключен, всё пусто.
+const DEFAULT_MOBILE_HERO: MobileHeroBlockSetting = {
+  enabled: false,
+  media: [],
+  badge: null,
+  title: null,
+  description: null,
+  primaryButton: null,
+  secondaryButton: null,
+}
+
 export function HeroManager() {
   const [hero, setHero] = useState<HeroBlockSetting>(DEFAULT_HERO)
+  // v25.21: отдельный мобильный hero-баннер.
+  const [mobileHero, setMobileHero] = useState<MobileHeroBlockSetting>(DEFAULT_MOBILE_HERO)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [savingMobile, setSavingMobile] = useState(false)
 
   // v25.9.6: ALL hooks must be called BEFORE any early return — otherwise
   // React throws "Rendered more hooks than during the previous render" when
@@ -79,6 +97,14 @@ export function HeroManager() {
         // network/backend errors, leaving the manager stuck on defaults.
         console.error('[hero-manager] load failed:', e)
       })
+    api
+      .get<{ value: MobileHeroBlockSetting | null }>('/api/settings/mobileHeroBlock', { auth: true })
+      .then((d) => {
+        if (d.value && typeof d.value === 'object') {
+          setMobileHero({ ...DEFAULT_MOBILE_HERO, ...d.value })
+        }
+      })
+      .catch((e) => console.error('[hero-manager] mobileHero load failed:', e))
       .finally(() => setLoading(false))
   }, [])
 
@@ -92,6 +118,19 @@ export function HeroManager() {
       toast.error('Ошибка', { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setSaving(false)
+    }
+  }
+
+  // v25.21: сохранение мобильного hero-баннера (отдельная настройка).
+  const saveMobile = async () => {
+    setSavingMobile(true)
+    try {
+      await api.put('/api/settings/mobileHeroBlock', { json: mobileHero, auth: true })
+      toast.success('Мобильный hero сохранён')
+    } catch (e: unknown) {
+      toast.error('Ошибка', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setSavingMobile(false)
     }
   }
 
@@ -267,16 +306,48 @@ export function HeroManager() {
           </div>
         </div>
 
-        {/* Image uploader */}
+        {/* Image uploader — v25.14: MULTIPLE images → hero carousel with
+            automatic crossfade rotation in the app (9s per slide) */}
         <div>
           <ImageUploader
-            value={hero.image ? [hero.image] : []}
+            multiple
+            max={10}
+            value={
+              Array.isArray(hero.images) && hero.images.length > 0
+                ? hero.images
+                : hero.image
+                  ? [hero.image]
+                  : []
+            }
             onChange={(urls) =>
-              setHero((h) => ({ ...h, image: urls[0] || null }))
+              setHero((h) => ({ ...h, images: urls, image: urls[0] || null }))
             }
             aspect="banner"
-            label="Фоновое изображение (опционально)"
+            label="Изображения hero-блока (до 10 — карусель с автосменой)"
           />
+          {Array.isArray(hero.images) && hero.images.length > 1 && (
+            <div className="text-xs text-muted-foreground mt-1">
+              Загружено {hero.images.length} изображения — в приложении они будут сменяться автоматически (карусель)
+            </div>
+          )}
+        </div>
+
+        {/* v25.21: ВИДЕО hero — владелец просил «добавить туда видео или GIF».
+            Видео — отдельный загрузчик (autoplay muted loop в приложении).
+            GIF-анимации грузятся в ИЗОБРАЖЕНИЯ выше — они рендерятся как есть. */}
+        <div>
+          <ImageUploader
+            multiple
+            max={5}
+            kind="video"
+            value={Array.isArray(hero.videos) ? hero.videos : []}
+            onChange={(urls) => setHero((h) => ({ ...h, videos: urls }))}
+            aspect="video"
+            label="Видео для hero (до 5 — автопроигрывание без звука, зациклено)"
+          />
+          <div className="text-xs text-muted-foreground mt-1">
+            GIF-анимации загружайте в блок «Изображения» выше — они анимируются сами. Видео добавляются после картинок в порядке карусели.
+          </div>
         </div>
 
         {/* Gradient picker — only meaningful when useGradient=true AND image-text mode */}
@@ -387,6 +458,119 @@ export function HeroManager() {
               </>
             )}
           </Button>
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════
+          v25.21: МОБИЛЬНЫЙ HERO-БАННЕР — отдельный блок для телефонов.
+          Владелец: «на десктопе hero чётко, на мобильном слишком большой —
+          сделай размером как баннеры, с картинками/видео и кнопками».
+          ═══════════════════════════════════════════════════════════════ */}
+      <div className="mt-10 pt-6 border-t border-border/60">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#F59E0B] to-[#EA580C] grid place-items-center text-white shrink-0">
+            <Smartphone className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-extrabold tracking-tight">Мобильный hero (баннер)</h2>
+            <p className="text-xs text-muted-foreground">
+              Компактный баннер вместо большого hero на телефонах. Десктоп не меняется.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-5 mt-4">
+          {/* Enable toggle */}
+          <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Использовать мобильный баннер</div>
+              <div className="text-xs text-muted-foreground">
+                На телефонах вместо большого hero показывается этот баннер (высота ~176px)
+              </div>
+            </div>
+            <Switch
+              checked={mobileHero.enabled}
+              onCheckedChange={(v) => setMobileHero((m) => ({ ...m, enabled: v }))}
+            />
+          </div>
+
+          {/* Media uploader — картинки (вкл. GIF) + видео вперемешку */}
+          <ImageUploader
+            multiple
+            max={10}
+            kind="any"
+            value={Array.isArray(mobileHero.media) ? mobileHero.media : []}
+            onChange={(urls) => setMobileHero((m) => ({ ...m, media: urls }))}
+            aspect="banner"
+            label="Медиа баннера (картинки, GIF и видео — до 10, карусель со свайпом)"
+          />
+
+          {/* Texts — all optional */}
+          <div className="space-y-1.5">
+            <Label htmlFor="m-badge">Бейдж (необязательно)</Label>
+            <Input
+              id="m-badge"
+              value={mobileHero.badge || ''}
+              onChange={(e) => setMobileHero((m) => ({ ...m, badge: e.target.value || null }))}
+              className="rounded-2xl"
+              placeholder="Скидки до 30%"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="m-title">Заголовок (необязательно)</Label>
+            <Input
+              id="m-title"
+              value={mobileHero.title || ''}
+              onChange={(e) => setMobileHero((m) => ({ ...m, title: e.target.value || null }))}
+              className="rounded-2xl"
+              placeholder="Акция недели"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="m-desc">Описание (необязательно)</Label>
+            <textarea
+              id="m-desc"
+              value={mobileHero.description ?? ''}
+              onChange={(e) => setMobileHero((m) => ({ ...m, description: e.target.value || null }))}
+              rows={2}
+              className="w-full rounded-2xl bg-accent/30 border border-border/40 px-4 py-3 text-sm outline-none focus:border-primary resize-none"
+              placeholder="Оставьте пустым — баннер будет чисто медийным"
+            />
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Если не заполнять ни текст, ни кнопки — баннер покажет только медиа на всю площадь.
+          </div>
+
+          {/* Buttons — optional */}
+          <ButtonEditor
+            title="Кнопка баннера (основная)"
+            button={mobileHero.primaryButton}
+            onChange={(b) => setMobileHero((m) => ({ ...m, primaryButton: b }))}
+          />
+          <ButtonEditor
+            title="Кнопка баннера (дополнительная)"
+            button={mobileHero.secondaryButton}
+            onChange={(b) => setMobileHero((m) => ({ ...m, secondaryButton: b }))}
+          />
+
+          {/* Save mobile */}
+          <div className="flex gap-2 pt-2 sticky bottom-4 z-10">
+            <Button
+              className="flex-1 rounded-full gradient-brand text-white shadow-glow h-12"
+              onClick={saveMobile}
+              disabled={savingMobile}
+            >
+              {savingMobile ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Сохранение…
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" /> Сохранить мобильный hero
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
     </div>

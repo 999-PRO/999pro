@@ -1,10 +1,10 @@
 'use client'
 
 // ============================================================================
-// BrandLogo — компонент логотипа бренда 999PRO.
+// BrandLogo — компонент логотипа бренда TRI999.
 // ----------------------------------------------------------------------------
-// v25.8 (999PRO launch): одна строка "999PRO" (gradient optional).
-// Поддерживает размеры (sm/md/lg) и адаптацию под тёмную/светлую тему.
+// v25.27: ребрендинг «TRI999» → «TRI999». Дизайнерский шрифт Unbounded
+// (var(--font-display)) — фирменная гарнитура бренда, аккуратные размеры.
 // ============================================================================
 
 import { motion } from 'framer-motion'
@@ -25,12 +25,14 @@ interface BrandLogoProps {
   onClick?: () => void
 }
 
+// v25.27: аккуратные размеры («шрифты красивые НЕ большого размера»);
+// фирменная гарнитура Unbounded через var(--font-display) + tight tracking.
 const sizeMap: Record<BrandLogoSize, { num: string }> = {
-  xs: { num: 'text-base' },
-  sm: { num: 'text-lg' },
-  md: { num: 'text-2xl' },
-  lg: { num: 'text-4xl' },
-  xl: { num: 'text-5xl sm:text-6xl' },
+  xs: { num: 'text-sm' },
+  sm: { num: 'text-base' },
+  md: { num: 'text-xl' },
+  lg: { num: 'text-3xl' },
+  xl: { num: 'text-4xl sm:text-5xl' },
 }
 
 export function BrandLogo({
@@ -56,7 +58,7 @@ export function BrandLogo({
       )}
       <span
         className={cn(
-          'font-extrabold tracking-tight leading-none',
+          'font-extrabold leading-none tracking-tight font-display',
           s.num,
           numGradient,
         )}
@@ -90,7 +92,7 @@ export function brandHtml(opts?: { numSize?: string; color?: string }): string {
   const color = opts?.color ?? '#ffffff'
   return (
     `<div style="display:flex;align-items:center;line-height:1;">` +
-    `<div style="font-size:${numSize};font-weight:800;letter-spacing:-0.02em;color:${color};">999PRO</div>` +
+    `<div style="font-size:${numSize};font-weight:800;letter-spacing:-0.02em;color:${color};font-family:var(--font-display),-apple-system,BlinkMacSystemFont,sans-serif;">TRI999</div>` +
     `</div>`
   )
 }

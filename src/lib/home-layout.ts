@@ -2,6 +2,8 @@
 // v25.12: restructured to match IMG_3191 design:
 //   hero, categories, deals (with timer), ai-assistant, recently-viewed,
 //   stories, banner, popular, new
+// v25.17 (owner): «Сторисы должны быть под хедер-блок» — stories теперь
+// идут СРАЗУ после hero (order 1), categories сдвинута на 2 и т.д.
 
 import { useEffect, useState, useCallback } from 'react'
 import { api } from './api'
@@ -13,16 +15,30 @@ export interface HomeBlockConfig {
   order: number
 }
 
+// v25.26: ключ кэша поднят до v2 — у давно установленных PWA мог остаться
+// закэшированный layout от старых версий (со скрытой/несуществующей
+// «Категории»), из-за чего владелец не видел свои карточки категорий на
+// главной. Новый ключ игнорирует старый кэш целиком.
+const LAYOUT_CACHE_KEY = '999pro-home-layout-cache-v2'
+
+export function sortHomeLayout<T extends { pinned?: boolean; order: number }>(items: T[]): T[] {
+  return [...items].sort(
+    (a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false) || a.order - b.order,
+  )
+}
+
+// v25.20 (owner): блок «ИИ-агент» на главной удалён — агент живёт на
+// плавающей кнопке. Из дефолтов убран; home-view дополнительно фильтрует
+// старый id из сохранённых layout'ов.
 export const DEFAULT_HOME_LAYOUT: HomeBlockConfig[] = [
   { id: 'hero', visible: true, pinned: true, order: 0 },
-  { id: 'categories', visible: true, pinned: false, order: 1 },
-  { id: 'deals', visible: true, pinned: false, order: 2 },
-  { id: 'ai-assistant', visible: true, pinned: false, order: 3 },
+  { id: 'stories', visible: true, pinned: false, order: 1 },
+  { id: 'categories', visible: true, pinned: false, order: 2 },
+  { id: 'deals', visible: true, pinned: false, order: 3 },
   { id: 'recently-viewed', visible: true, pinned: false, order: 4 },
-  { id: 'stories', visible: true, pinned: false, order: 5 },
-  { id: 'banner', visible: true, pinned: false, order: 6 },
-  { id: 'popular', visible: true, pinned: false, order: 7 },
-  { id: 'new', visible: true, pinned: false, order: 8 },
+  { id: 'banner', visible: true, pinned: false, order: 5 },
+  { id: 'popular', visible: true, pinned: false, order: 6 },
+  { id: 'new', visible: true, pinned: false, order: 7 },
 ]
 
 // v25.13 (FOUC fix): localStorage cache key for the home layout.
@@ -35,7 +51,11 @@ export const DEFAULT_HOME_LAYOUT: HomeBlockConfig[] = [
 // Fix: hydrate the initial state from localStorage so the FIRST paint
 // matches the LAST known server-side config. Then fetch the fresh config
 // in the background; if it changed, the hook re-renders with the new layout.
-const LAYOUT_CACHE_KEY = '999pro-home-layout-cache-v1'
+// v25.16: единая сортировка «закреплённые — первыми, затем по order».
+// Используется и здесь, и в home-view.tsx, и в Студии (home-manager.tsx) —
+// чтобы то, что видит владелец при перетаскивании блоков, совпадало с тем,
+// что рендерится клиентам. Раньше порядок из Студии игнорировался фронтендом
+// полностью (баг: «переставляю блоки местами — ничего не меняется»).
 
 function loadCachedLayout(): HomeBlockConfig[] | null {
   if (typeof window === 'undefined') return null
@@ -77,11 +97,19 @@ export function useHomeLayout() {
             ? { ...d, visible: saved.visible, pinned: saved.pinned, order: saved.order ?? d.order }
             : d
         })
-        const sorted = merged.sort((a, b) => a.order - b.order)
+        const sorted = sortHomeLayout(merged)
         setLayout(sorted)
         // v25.13: persist to localStorage so the NEXT page load uses this
         // layout as the initial state — no FOUC.
         saveCachedLayout(sorted)
+      } else {
+        // v25.26 (owner: «куда пропали мои категории?»): сервер НЕ имеет
+        // сохранённого layout — значит, правильное состояние = дефолт со ВСЕМИ
+        // блоками видимыми. Раньше мы оставляли закэшированный layout, и если
+        // он был испорчен (categories.visible=false из старой сессии Студии),
+        // категории навсегда пропадали с главной. Теперь дефолт побеждает.
+        setLayout(sortHomeLayout(DEFAULT_HOME_LAYOUT))
+        saveCachedLayout(sortHomeLayout(DEFAULT_HOME_LAYOUT))
       }
     } catch {
       // use defaults (or cached)

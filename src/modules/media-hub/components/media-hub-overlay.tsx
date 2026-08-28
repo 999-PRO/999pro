@@ -16,13 +16,16 @@
 // opens. Both Audio Hub and Video Hub are fully native app modules —
 // no websites, no iframes (except for HTML5 video for streaming, which is
 // native to the browser, not a third-party site).
+//  v25.18 (owner, повторно): «открой доступ к видео хаб, доступ к видео хаб
+//  у меня закрыто почему-то» — Video Hub теперь ПОЛНОСТЬЮ ОТКРЫТ для всех:
+//  снят админ-замок в UI и надпись «Скоро». Роли проверяются только на
+//  сервере для загрузки/управления контентом.
 // ============================================================================
 
 import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Music2, Film as FilmIcon, X, Lock } from 'lucide-react'
+import { Music2, Film as FilmIcon, X } from 'lucide-react'
 import { useScrollLock } from '@/lib/use-scroll-lock'
-import { useAuthStore } from '@/lib/auth-store'
 import { toast } from '@/lib/notifications'
 import { AudioSearchOverlay } from '@/modules/audio-hub/components/audio-search-overlay'
 import { FilmSearchOverlay } from '@/modules/films/components/film-search-overlay'
@@ -62,10 +65,10 @@ export function MediaHubOverlay({
   const [section, setSection] = useState<Section>(null)
   const [showSelector, setShowSelector] = useState(true)
 
-  // v18.11: Video Hub is admin-only. Non-admin users see a "coming soon"
-  // toast and the Video Hub button shows a lock icon + "скоро" label.
-  const userRole = useAuthStore((s) => s.user?.role)
-  const isAdmin = userRole === 'admin'
+  // v25.18: Video Hub ОТКРЫТ для всех пользователей — никаких замков.
+  const handleVideoHubClick = () => {
+    openSection('films')
+  }
 
   // ---- If initialSection is set, open that section directly ----
   // (used by global overlay when user wants to skip the selector)
@@ -74,18 +77,7 @@ export function MediaHubOverlay({
     setShowSelector(false)
   }, [])
 
-  // v25.10 (Task #15): Video Hub — open for ALL users (was admin-only).
-  // The films module is already wired and functional — the previous
-  // admin-only gate was a holdover from when the module was unstable.
-  // Now that the films player (HLS/DASH/iframe/native adapters) is stable,
-  // all users can browse and watch. Admin-only restrictions are still
-  // enforced server-side for film UPLOADS (POST /api/films requires admin).
-  const handleVideoHubClick = () => {
-    openSection('films')
-  }
-
-  // ---- If initialFilmId is set, jump straight to films section ----
-  // We don't open the selector in that case.
+  // ---- If initialFilmId / initialSection is set, jump straight there ----
   if (initialFilmId && open && section !== 'films') {
     setSection('films')
     setShowSelector(false)
@@ -94,7 +86,6 @@ export function MediaHubOverlay({
     setSection(initialSection)
     setShowSelector(false)
   }
-
   // ---- Close handler — closes everything ----
   const handleClose = useCallback(() => {
     setSection(null)
@@ -187,8 +178,7 @@ export function MediaHubOverlay({
                   </motion.button>
                 </div>
 
-                {/* Video Hub button — v18.11: admin-only. Non-admins see a
-                    lock icon + "скоро" label and get a toast on click. */}
+                {/* Video Hub button — v25.18: ОТКРЫТ для всех (без замка) */}
                 <div className="px-3 pb-4">
                   <motion.button
                     whileTap={{ scale: 0.98 }}
@@ -200,31 +190,20 @@ export function MediaHubOverlay({
                     }}
                   >
                     <div
-                      className="relative grid place-items-center h-11 w-11 rounded-xl shrink-0"
+                      className="grid place-items-center h-11 w-11 rounded-xl shrink-0"
                       style={{
                         background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%)',
                         boxShadow: '0 6px 20px -4px rgba(99,102,241,0.5)',
-                        opacity: isAdmin ? 1 : 0.6,
                       }}
                     >
                       <FilmIcon className="h-5 w-5 text-white" />
-                      {!isAdmin && (
-                        <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-amber-500 grid place-items-center ring-2 ring-slate-900">
-                          <Lock className="h-2.5 w-2.5 text-white" strokeWidth={2.5} />
-                        </span>
-                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-white">Video Hub</span>
-                        {!isAdmin && (
-                          <span className="px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[9px] font-bold uppercase tracking-wide">
-                            Скоро
-                          </span>
-                        )}
                       </div>
                       <div className="text-[11px] text-white/55 mt-0.5 truncate">
-                        {isAdmin ? 'Фильмы и сериалы в открытом архиве' : 'Раздел в разработке'}
+                        Фильмы и сериалы в открытом архиве
                       </div>
                     </div>
                   </motion.button>

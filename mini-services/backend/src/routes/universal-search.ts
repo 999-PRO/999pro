@@ -153,11 +153,14 @@ async function searchProducts(q: string): Promise<UniversalProductHit[]> {
       where: {
         deletedAt: null,
         OR: [
-          // v25.10: mode:'insensitive' for Postgres (Cyrillic case-insensitive).
-          // SQLite ignores this flag — we JS-filter below to compensate.
-          { title: { contains: q, mode: 'insensitive' } },
-          { description: { contains: q, mode: 'insensitive' } },
-          { category: { contains: q, mode: 'insensitive' } },
+          // v25.14: dropped mode:'insensitive' — it is unsupported by the
+          // SQLite dev provider (throws at runtime) and redundant for
+          // Postgres because we JS-filter case-insensitively below anyway.
+          { title: { contains: q } },
+          { description: { contains: q } },
+          { category: { contains: q } },
+          // v25.15: поиск по АРТИКУЛУ (product.id, lowercase в БД)
+          { id: { contains: q.toLowerCase() } },
         ],
       },
       orderBy: [{ isPopular: 'desc' }, { views: 'desc' }, { createdAt: 'desc' }],
@@ -187,7 +190,14 @@ async function searchProducts(q: string): Promise<UniversalProductHit[]> {
     const title = (p.title || '').toLowerCase()
     const desc = (p.description || '').toLowerCase()
     const cat = (p.category || '').toLowerCase()
-    return title.includes(needle) || desc.includes(needle) || cat.includes(needle)
+    return (
+      title.includes(needle) ||
+      desc.includes(needle) ||
+      cat.includes(needle) ||
+      // v25.15: ARTICLE MATCH — «AB12CD34» находит товар мгновенно
+      p.id.toLowerCase().includes(needle) ||
+      p.id.slice(-8).toLowerCase().startsWith(needle.replace(/\s+/g, '')) && needle.length >= 3
+    )
   })
 
   return filtered.slice(0, LIMIT).map((p) => {
@@ -410,8 +420,9 @@ async function searchPages(q: string): Promise<UniversalPageHit[]> {
       where: {
         isPublished: true,
         OR: [
-          { title: { contains: q, mode: 'insensitive' } },
-          { subtitle: { contains: q, mode: 'insensitive' } },
+          // v25.14: see searchProducts — no `mode`, JS filter compensates.
+          { title: { contains: q } },
+          { subtitle: { contains: q } },
         ],
       },
       orderBy: [{ order: 'asc' }, { title: 'asc' }],

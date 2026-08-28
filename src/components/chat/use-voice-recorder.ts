@@ -130,14 +130,13 @@ export function useVoiceRecorder({
       const recorder = mimeType
         ? new MediaRecorder(stream, {
             mimeType,
-            // v18.6: cap audio bitrate at 64 kbps — Opus/Opus-in-WebM at 64k
-            // is indistinguishable from 128k for human speech on phone
-            // speakers, but uploads 2x faster. Previous default was
-            // 128-256 kbps which produced 0.5-1MB voice messages that took
-            // 5-10 seconds to upload on 3G/4G edges.
-            audioBitsPerSecond: 64_000,
+            // v25.24 (owner): «голосовые очень долго грузятся». Режем битрейт:
+            // Opus 32k (webm/ogg) и AAC 48k (mp4) — речь остаётся чистой,
+            // файл и загрузка примерно вдвое меньше, чем на 64k. Просмотр
+            // на слабых сетях начинается заметно быстрее.
+            audioBitsPerSecond: mimeType.startsWith('audio/mp4') ? 48_000 : 32_000,
           })
-        : new MediaRecorder(stream, { audioBitsPerSecond: 64_000 })
+        : new MediaRecorder(stream, { audioBitsPerSecond: 32_000 })
       // File extension derived from the chosen mime type for upload.
       const ext = mimeType.startsWith('audio/mp4')
         ? 'mp4'

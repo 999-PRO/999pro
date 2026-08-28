@@ -112,6 +112,7 @@ function ChatListItemImpl({
       onTouchStart={onLongPress ? handleTouchStart : undefined}
       onTouchMove={onLongPress ? handleTouchMove : undefined}
       onTouchEnd={onLongPress ? handleTouchEnd : undefined}
+      onTouchCancel={onLongPress ? cancelLongPress : undefined}
       onMouseDown={onLongPress ? handleMouseDown : undefined}
       onMouseUp={onLongPress ? handleMouseUp : undefined}
       onMouseLeave={onLongPress ? handleMouseUp : undefined}
@@ -184,7 +185,7 @@ function ChatListItemImpl({
                   style={{ background: 'linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)' }}
                   title="Закреплённый чат с поддержкой"
                 >
-                  999PRO
+                  TRI999
                 </span>
               )}
               <div className="text-sm font-semibold truncate text-foreground">

@@ -459,6 +459,37 @@ function ProductEditor({ product, existingCategories, dbCategories, onClose, onS
   const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([])
   const [saving, setSaving] = useState(false)
 
+  // v25.20 («как в Инстаграме»): фоновая музыка товара — трек из Audio Hub.
+  const [productMusic, setProductMusic] = useState<{ id: string; title: string; artist?: string | null; url: string } | null>(
+    () => {
+      const raw = (product as any)?.music
+      if (!raw) return null
+      return typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return null } })() : raw
+    },
+  )
+  const [musicQuery, setMusicQuery] = useState('')
+  const [musicResults, setMusicResults] = useState<Array<{ id: string; title: string; artist?: string | null; fullUrl?: string; previewUrl?: string }>>([])
+  const [musicSearching, setMusicSearching] = useState(false)
+  const musicDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Поиск треков с дебаунсом (тот же бэкенд, что в Media Hub)
+  useEffect(() => {
+    if (musicDebounceRef.current) clearTimeout(musicDebounceRef.current)
+    const q = musicQuery.trim()
+    if (q.length < 2) { setMusicResults([]); return }
+    musicDebounceRef.current = setTimeout(() => {
+      setMusicSearching(true)
+      api.get<{ items: Array<{ id: string; title: string; artist?: string | null; fullUrl?: string; previewUrl?: string }> }>(
+        `/api/audio-hub/search?q=${encodeURIComponent(q)}&type=music&limit=8`,
+        { auth: true },
+      )
+        .then((d) => setMusicResults(d.items || []))
+        .catch(() => setMusicResults([]))
+        .finally(() => setMusicSearching(false))
+    }, 450)
+    return () => { if (musicDebounceRef.current) clearTimeout(musicDebounceRef.current) }
+  }, [musicQuery])
+
   // v24.4: load departments for selector
   useEffect(() => {
     api.get<{ items: Array<{ id: string; name: string }> }>('/api/departments', { auth: true })
@@ -528,6 +559,23 @@ const save = async () => {
 
     setSaving(true)
     try {
+      // v25.17 (owner: «когда добавляю товар и написал новую категорию, он так
+      // же должен создаться и в каталоге»): если введённой категории ещё нет
+      // в БД — сначала создаём её (POST /api/categories), затем сохраняем
+      // товар. Бэкенд сам свяжет товар с categoryId по имени.
+      const trimmedCategory = category.trim()
+      const existsInDb = dbCategories.some(
+        (c) => c.name.trim().toLowerCase() === trimmedCategory.toLowerCase(),
+      )
+      if (trimmedCategory && !existsInDb) {
+        try {
+          await api.post('/api/categories', { json: { name: trimmedCategory }, auth: true })
+          toast.info(`Категория «${trimmedCategory}» создана в каталоге`)
+        } catch (catErr: unknown) {
+          // Категория могла быть создана параллельно — не блокируем товар.
+          console.warn('Category auto-create skipped:', catErr)
+        }
+      }
       const body = {
         title: title.trim(),
         description: description.trim() || undefined,
@@ -550,6 +598,8 @@ const save = async () => {
         videoPoster,
         // v25.12: video position in carousel
         videoPosition: videoUrl ? videoPosition : null,
+        // v25.20: фоновая музыка товара (null = убрана)
+        music: productMusic ?? null,
       }
       if (product) {
         // QW3 (S-BUG-002): encode product id — slugs may contain "/" (e.g. "листовки-а5,-плотность-200-г/м²")
@@ -619,6 +669,74 @@ const save = async () => {
               setVideoPoster(null)
             }}
           />
+
+          {/* v25.20 («как в Инстаграме»): фоновая музыка товара.
+              Поиск по Audio Hub (тот же, что в Media Hub) → выбор трека.
+              Играет при просмотре ФОТО товара; у видео — свой звук. */}
+          <div className="space-y-1.5 rounded-2xl border border-border/50 p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <Label>🎵 Музыка товара</Label>
+              {productMusic && (
+                <button
+                  type="button"
+                  onClick={() => { setProductMusic(null); toast.success('Музыка убрана') }}
+                  className="text-[11px] font-semibold text-destructive hover:underline"
+                >
+                  Убрать
+                </button>
+              )}
+            </div>
+
+            {productMusic ? (
+              <div className="flex items-center gap-3 rounded-xl bg-muted/50 p-2.5">
+                <div className="h-10 w-10 rounded-lg gradient-brand grid place-items-center text-white shrink-0">♪</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate">{productMusic.title}</div>
+                  <div className="text-xs text-muted-foreground truncate">{productMusic.artist || 'Audio Hub'}</div>
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400 shrink-0">
+                  играет на фото
+                </span>
+              </div>
+            ) : (
+              <>
+                <Input
+                  value={musicQuery}
+                  onChange={(e) => setMusicQuery(e.target.value)}
+                  placeholder="Найти трек в Audio Hub: название или исполнитель…"
+                  className="rounded-2xl"
+                />
+                {musicSearching && <p className="text-[11px] text-muted-foreground">Ищем треки…</p>}
+                {!musicSearching && musicResults.length > 0 && (
+                  <div className="rounded-xl border border-border/40 divide-y divide-border/30 max-h-56 overflow-y-auto">
+                    {musicResults.map((t) => {
+                      const url = t.fullUrl || t.previewUrl
+                      if (!url) return null
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            setProductMusic({ id: t.id, title: t.title, artist: t.artist || null, url })
+                            setMusicQuery('')
+                            setMusicResults([])
+                            toast.success(`Трек «${t.title}» прикреплён к товару`)
+                          }}
+                          className="w-full text-left px-3 py-2.5 hover:bg-accent/50 transition-colors"
+                        >
+                          <div className="text-sm font-medium truncate">{t.title}</div>
+                          <div className="text-[11px] text-muted-foreground truncate">{t.artist || '—'}</div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  Тихо играет при просмотре фото товара (страница и лента). У видео — свой звук. Можно не добавлять.
+                </p>
+              </>
+            )}
+          </div>
 
           {/* v25.12: video position selector — only shown if video is uploaded */}
           {videoUrl && (
@@ -734,7 +852,7 @@ const save = async () => {
               })()}
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Управлять списком категорий можно в разделе «Категории». Можно также ввести свою.
+              Управлять списком категорий можно в разделе «Категории». Если ввести новую — она будет автоматически создана в каталоге при сохранении.
             </p>
           </div>
 

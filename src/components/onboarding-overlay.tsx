@@ -4,32 +4,26 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 // v13.2 (audit P1-12 fix): subscribe to auth store instead of reading
-// localStorage only on mount. Previously the effect ran once on mount —
-// if the user logged in later (without a hard reload), onboarding never
-// appeared. Now we reactively subscribe to isAuthenticated.
+// localStorage only on mount.
 import { useAuthStore } from '@/lib/auth-store'
 import {
-  ShoppingBag, MessageCircle, Heart, Phone, X,
-  ChevronRight, ChevronLeft, Sparkles,
+  ShoppingBag, MessageCircle, Crown, ChevronRight, ChevronLeft,
+  Sparkles, LayoutGrid, Star,
 } from 'lucide-react'
 
 // ============================================================================
 // OnboardingOverlay — first-time user onboarding.
-// ----------------------------------------------------------------------------
-// Shows a 4-slide carousel explaining the app's key features when the user
-// first logs in. Dismissed state is persisted in localStorage so it never
-// shows again (unless the user clears site data).
 //
-// Slides:
-//   1. Welcome — brand intro
-//   2. Catalog — browse products, add to favorites & cart
-//   3. Chat — find any user by nickname, start conversations
-//   4. Support — pinned support chat with the team
-//
-// Triggers:
-//   - Shows on first login (after registration or first login of existing user)
-//   - The parent component decides when to show (e.g. after fetchMe succeeds)
-//   - Once dismissed, the localStorage flag prevents re-showing
+// v25.16 PREMIUM REDESIGN (owner: «окна с подсказками… сделай красивыми»):
+//   • Полноэкранный сценовый фон: мягкое анимированное mesh-свечение
+//     под цвет слайда + плавающие орбы — как в дорогих финтех-приложениях.
+//   • Гигантская иконка в многослойном стеклянном медальоне с тормозящей
+//     пружиной и параллаксом при смене слайда (вместо плоского блока).
+//   • Верхний ПРОГРЕСС-БАР сегментами (как в сторис) вместо точек снизу.
+//   • Мягкие карточные формы (rounded-[32px]), типографика крупнее,
+//     буллеты-плюсы (что получит пользователь), аккуратный футер.
+//   • Функционально всё то же: показ на первом входе, флаг completed в
+//     localStorage, 4 слайда, кнопки Назад/Далее/Начать/Пропустить.
 // ============================================================================
 
 const ONBOARDING_KEY = '999pro-onboarding-completed-v1'
@@ -39,60 +33,59 @@ interface Slide {
   emoji: string
   title: string
   description: string
-  gradient: string
+  bullets: string[]
+  gradient: [string, string]
 }
 
 const SLIDES: Slide[] = [
   {
     icon: Sparkles,
     emoji: '✨',
-    title: 'Добро пожаловать в 999PRO',
+    title: 'Добро пожаловать в TRI999',
     description:
-      'Современный маркетплейс с каталогом товаров, историями, живым чатом с аудио- и видеозвонками, и эксклюзивным клубом привилегий 999 CLUB. Всё, что нужно — в одном приложении.',
-    gradient: 'linear-gradient(135deg, #38bdf8 0%, #2563eb 50%, #7c3aed 100%)',
+      'Современный маркетплейс, где всё главное — в одном приложении.',
+    bullets: ['Каталог и живая лента товаров', 'Чат с аудио- и видеозвонками', 'Эксклюзивный клуб привилегий'],
+    gradient: ['#38BDF8', '#8B5CF6'],
   },
   {
     icon: ShoppingBag,
     emoji: '🛍️',
-    title: 'Каталог и покупки',
+    title: 'Покупайте в пару касаний',
     description:
-      'Откройте каталог, чтобы увидеть сотни товаров. Нажмите ♥, чтобы добавить в избранное. Добавьте в корзину и оформите заказ с доставкой и купонами на скидку.',
-    gradient: 'linear-gradient(135deg, #f97316 0%, #ef4444 100%)',
+      'Находите нужное в каталоге, добавляйте в избранное и отправляйте заявку за секунды.',
+    bullets: ['♥ — избранное на любой карточке', 'Корзина и купоны на скидку', 'Доставка и статусы заказа'],
+    gradient: ['#FB923C', '#EF4444'],
   },
   {
     icon: MessageCircle,
     emoji: '💬',
-    title: 'Чат с продавцами',
+    title: 'Живое общение',
     description:
-      'Найдите любого пользователя по нику в чате. Отправляйте текст, фото, видео и голосовые сообщения. Аудио- и видеозвонки прямо из чата.',
-    gradient: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+      'Общайтесь голосом: текст, фото, видео и голосовые сообщения в одном чате.',
+    bullets: ['Аудио- и видеозвонки', 'Фото, видео, музыка в диалогах', 'Мгновенные push-уведомления'],
+    gradient: ['#10B981', '#0D9488'],
   },
   {
-    icon: Sparkles,
+    icon: Crown,
     emoji: '💎',
     title: '999 CLUB — привилегии для вас',
     description:
-      'Зарабатывайте баллы за покупки и задания. Получайте подарки, участвуйте в бесплатных розыгрышах, активируйте купоны на скидки и приглашайте друзей за бонусы.',
-    gradient: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%)',
+      'Зарабатывайте баллы и открывайте бонусы, подарки и розыгрыши.',
+    bullets: ['Баллы за покупки и задания', 'Купоны и бесплатные розыгрыши', 'Приглашайте друзей за бонусы'],
+    gradient: ['#F59E0B', '#EC4899'],
   },
 ]
 
 export function OnboardingOverlay() {
   const [visible, setVisible] = useState(false)
   const [slide, setSlide] = useState(0)
-  // v13.2: reactive auth subscription — re-evaluates when login state changes.
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
 
   useEffect(() => {
-    // Only show onboarding if:
-    //   1. The user has never completed it before (localStorage flag)
-    //   2. The user is authenticated (we don't want to onboard logged-out visitors)
     if (!isAuthenticated) return
     try {
       const completed = localStorage.getItem(ONBOARDING_KEY)
       if (completed) return
-
-      // User is authenticated AND has not seen onboarding → show it.
       // Small delay so it doesn't conflict with the splash overlay fade-out.
       const t = setTimeout(() => setVisible(true), 800)
       return () => clearTimeout(t)
@@ -109,14 +102,13 @@ export function OnboardingOverlay() {
   }
 
   const next = () => {
-    if (slide < SLIDES.length - 1) {
-      setSlide(slide + 1)
-    } else {
-      complete()
-    }
+    hapticLite()
+    if (slide < SLIDES.length - 1) setSlide(slide + 1)
+    else complete()
   }
 
   const prev = () => {
+    hapticLite()
     if (slide > 0) setSlide(slide - 1)
   }
 
@@ -134,113 +126,202 @@ export function OnboardingOverlay() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-          style={{ background: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(12px)' }}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-hidden"
+          style={{ background: 'rgba(2, 6, 23, 0.92)', backdropFilter: 'blur(16px)' }}
         >
-          {/* Skip button — top right */}
+          {/* ═══ Сценовый фон: mesh-свечение в цветах слайда + орбы ═══ */}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`bg-${slide}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.7 }}
+              aria-hidden
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background:
+                  `radial-gradient(60% 50% at 25% 20%, ${current.gradient[0]}30 0%, transparent 60%),` +
+                  `radial-gradient(55% 45% at 80% 80%, ${current.gradient[1]}38 0%, transparent 65%)`,
+              }}
+            />
+          </AnimatePresence>
+          {/* Плавающие орбы */}
+          {[0, 1, 2].map((i) => (
+            <motion.span
+              key={`orb-${i}`}
+              aria-hidden
+              className="absolute rounded-full pointer-events-none"
+              style={{
+                width: 180 + i * 90,
+                height: 180 + i * 90,
+                left: `${[8, 62, 34][i]}%`,
+                top: `${[12, 55, 74][i]}%`,
+                background: `radial-gradient(circle at 30% 30%, ${current.gradient[i % 2]}22, transparent 70%)`,
+                filter: 'blur(28px)',
+              }}
+              animate={{ y: [0, -18, 0], scale: [1, 1.06, 1] }}
+              transition={{ duration: 9 + i * 2.5, repeat: Infinity, ease: 'easeInOut' }}
+            />
+          ))}
+
+          {/* Пропустить — стеклянная пилюля сверху справа */}
           <button
             onClick={skip}
-            className="absolute top-4 right-4 text-white/70 hover:text-white text-sm font-medium transition-colors z-10"
-            style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)' }}
+            className="absolute top-5 right-5 z-10 h-9 px-4 rounded-full text-white/85 hover:text-white text-sm font-medium transition-colors border border-white/15 bg-white/5 hover:bg-white/10 backdrop-blur-md active:scale-95"
+            style={{
+              top: 'calc(env(safe-area-inset-top, 0px) + 14px)',
+            }}
           >
             Пропустить
           </button>
 
           <motion.div
             key={slide}
-            initial={{ opacity: 0, x: 30 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -30 }}
-            transition={{ duration: 0.3 }}
-            className="relative w-full max-w-md"
+            initial={{ opacity: 0, x: 44, scale: 0.97 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: -44, scale: 0.97 }}
+            transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+            className="relative w-full max-w-md z-[1]"
           >
-            <div
-              className="rounded-3xl overflow-hidden shadow-2xl"
-              style={{
-                background: 'var(--card)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              {/* Hero header with gradient + emoji */}
-              <div
-                className="relative h-48 grid place-items-center overflow-hidden"
-                style={{ background: current.gradient }}
-              >
-                <div className="absolute inset-0 opacity-30" style={{
-                  backgroundImage: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.4) 0%, transparent 50%), radial-gradient(circle at 70% 70%, rgba(255,255,255,0.2) 0%, transparent 50%)',
-                }} />
-                <div className="relative z-10 text-center">
-                  <div className="text-6xl mb-2">{current.emoji}</div>
-                  <div className="h-12 w-12 rounded-2xl bg-white/20 backdrop-blur-sm grid place-items-center mx-auto">
-                    <Icon className="h-6 w-6 text-white" strokeWidth={2.2} />
-                  </div>
-                </div>
+            {/* ═══ КАРТОЧКА ═══ */}
+            <div className="rounded-[32px] overflow-hidden shadow-[0_40px_120px_-32px_rgba(0,0,0,0.75)] bg-card ring-1 ring-white/10">
+              {/* Прогресс-сегменты поверх хедера (в стиле сторис) */}
+              <div className="flex gap-1.5 px-5 pt-5" role="progressbar" aria-valuenow={slide + 1} aria-valuemin={1} aria-valuemax={SLIDES.length}>
+                {SLIDES.map((_, i) => (
+                  <span key={i} className="h-1 flex-1 rounded-full overflow-hidden bg-black/10 dark:bg-white/10">
+                    <motion.span
+                      className="block h-full rounded-full"
+                      style={{ background: i <= slide ? `linear-gradient(90deg, ${current.gradient[0]}, ${current.gradient[1]})` : 'transparent' }}
+                      initial={false}
+                      animate={{ scaleX: i <= slide ? 1 : 0 }}
+                      transition={{ duration: 0.35 }}
+                    />
+                  </span>
+                ))}
               </div>
 
-              {/* Content */}
-              <div className="p-6 text-center">
-                <h2 className="text-xl font-bold mb-2 text-foreground">{current.title}</h2>
-                <p className="text-sm text-muted-foreground leading-relaxed">
+              {/* МЕДАЛЬОН: гигантская иконка в многослойном стекле */}
+              <div className="relative grid place-items-center py-8">
+                {/* мягкая цветная подложка */}
+                <div
+                  className="absolute h-52 w-52 rounded-full blur-3xl opacity-40"
+                  style={{ background: `linear-gradient(135deg, ${current.gradient[0]}, ${current.gradient[1]})` }}
+                />
+                <motion.div
+                  initial={{ scale: 0.6, rotate: -8 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ type: 'spring', stiffness: 200, damping: 16, delay: 0.05 }}
+                  className="relative grid place-items-center"
+                >
+                  {/* внешнее пульсирующее кольцо */}
+                  <motion.span
+                    aria-hidden
+                    className="absolute -inset-5 rounded-full border"
+                    style={{ borderColor: `${current.gradient[0]}40` }}
+                    animate={{ scale: [1, 1.09, 1], opacity: [0.5, 0.15, 0.5] }}
+                    transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut' }}
+                  />
+                  {/* стеклянный диск */}
+                  <span className="h-36 w-36 rounded-full grid place-items-center relative overflow-hidden"
+                    style={{
+                      background: `linear-gradient(135deg, ${current.gradient[0]} 0%, ${current.gradient[1]} 100%)`,
+                      boxShadow: `inset 0 2px 0 rgba(255,255,255,.45), inset 0 -10px 24px rgba(0,0,0,.18), 0 22px 48px -16px ${current.gradient[1]}66`,
+                    }}>
+                    {/* блик стекла */}
+                    <span aria-hidden className="absolute inset-x-2 top-1 h-1/2 rounded-full pointer-events-none"
+                      style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.42), rgba(255,255,255,0.04))' }} />
+                    <Icon className="relative z-[1] h-16 w-16 text-white drop-shadow-lg" strokeWidth={1.7} />
+                  </span>
+                  {/* мини-эмодзи бейдж */}
+                  <motion.span
+                    initial={{ scale: 0, rotate: 10 }}
+                    animate={{ scale: 1, rotate: 0 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 14, delay: 0.22 }}
+                    className="absolute -bottom-1 -right-1 h-11 w-11 rounded-2xl bg-background ring-1 ring-border grid place-items-center text-xl shadow-lg"
+                  >
+                    {current.emoji}
+                  </motion.span>
+                </motion.div>
+              </div>
+
+              {/* Текстовая часть */}
+              <div className="px-7 pb-1 text-center">
+                <h2 className="text-[22px] leading-snug font-extrabold tracking-tight text-foreground mb-2">
+                  {current.title}
+                </h2>
+                <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto">
                   {current.description}
                 </p>
               </div>
 
-              {/* Progress dots */}
-              <div className="flex justify-center gap-1.5 pb-4">
-                {SLIDES.map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setSlide(i)}
-                    className="rounded-full transition-all"
-                    style={{
-                      width: i === slide ? 24 : 6,
-                      height: 6,
-                      background: i === slide ? 'var(--primary)' : 'var(--muted-foreground)',
-                      opacity: i === slide ? 1 : 0.4,
-                    }}
-                    aria-label={`Слайд ${i + 1}`}
-                  />
+              {/* Буллеты-бонусы */}
+              <div className="px-7 pt-4 space-y-2">
+                {current.bullets.map((b, bi) => (
+                  <motion.div
+                    key={b}
+                    initial={{ opacity: 0, x: -14 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.18 + bi * 0.08, duration: 0.3 }}
+                    className="flex items-center gap-2.5"
+                  >
+                    <span
+                      className="h-5 w-5 rounded-full grid place-items-center shrink-0"
+                      style={{ background: `linear-gradient(135deg, ${current.gradient[0]}26, ${current.gradient[1]}26)` }}
+                    >
+                      <Star className="h-2.5 w-2.5" style={{ color: current.gradient[1] }} fill="currentColor" />
+                    </span>
+                    <span className="text-[13px] font-medium text-foreground/90">{b}</span>
+                  </motion.div>
                 ))}
               </div>
 
-              {/* Footer with prev/next */}
-              <div className="flex items-center justify-between p-4 pt-0 gap-2">
+              {/* Футер: назад · далее · шаги */}
+              <div className="flex items-center justify-between gap-2 p-5 pt-4">
                 {slide > 0 ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={prev}
-                    className="rounded-full h-10 px-4"
-                  >
-                    <ChevronLeft className="h-4 w-4 mr-1" />
+                  <Button variant="ghost" size="sm" onClick={prev} className="rounded-full h-11 px-4 text-sm shrink-0">
+                    <ChevronLeft className="h-4 w-4 mr-0.5" />
                     Назад
                   </Button>
                 ) : (
-                  <div className="w-20" />
+                  <div className="w-2 shrink-0" />
                 )}
 
                 <Button
                   onClick={next}
-                  size="sm"
-                  className="rounded-full gradient-brand text-white font-semibold h-10 px-6 shadow-glow flex-1 max-w-[200px]"
+                  size="lg"
+                  className="rounded-full text-white font-bold h-11 px-7 flex-1 max-w-[220px] text-sm shadow-glow hover:brightness-110 active:scale-[0.98] transition-all"
+                  style={{ background: `linear-gradient(135deg, ${current.gradient[0]}, ${current.gradient[1]})` }}
                 >
                   {isLast ? (
                     <>
-                      Начать
+                      Начать пользоваться
                       <Sparkles className="h-4 w-4 ml-1.5" />
                     </>
                   ) : (
                     <>
                       Далее
-                      <ChevronRight className="h-4 w-4 ml-1" />
+                      <ChevronRight className="h-4 w-4 ml-0.5" />
                     </>
                   )}
                 </Button>
               </div>
+            </div>
+
+            {/* Подпись бренда под картой */}
+            <div className="mt-4 flex items-center justify-center gap-1.5 text-white/50 text-xs font-semibold tracking-wide">
+              <LayoutGrid className="h-3.5 w-3.5" />
+              TRI999
             </div>
           </motion.div>
         </motion.div>
       )}
     </AnimatePresence>
   )
+}
+
+function hapticLite() {
+  try {
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(8)
+  } catch {}
 }

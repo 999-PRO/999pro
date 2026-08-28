@@ -21,6 +21,7 @@ import { prisma } from '../lib/prisma.js'
 import { requireAuth, requireAdmin, type AuthedRequest } from '../lib/auth.js'
 import { asyncHandler } from '../lib/asyncHandler.js'
 import { logger } from '../lib/logger.js'
+import { broadcastChanged } from '../lib/broadcast.js'
 
 const router: Router = Router()
 
@@ -53,18 +54,46 @@ function translitSlug(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
+// v25.14 (categories fix): count products for a category using BOTH stores —
+// the Category relation (categoryId) AND the legacy `category` string that
+// older products still carry. Legacy-only products previously showed 0 in the
+// chip counters even when they existed, and custom categories looked empty.
+async function countProductsForCategories(catIds: { id: string; name: string }[]) {
+  if (catIds.length === 0) return new Map<string, number>()
+  const [relCounts, legacyCounts] = await Promise.all([
+    prisma.product.groupBy({
+      by: ['categoryId'],
+      where: { deletedAt: null, categoryId: { in: catIds.map((c) => c.id) } },
+      _count: { _all: true },
+    }),
+    prisma.product.groupBy({
+      by: ['category'],
+      where: { deletedAt: null, category: { in: catIds.map((c) => c.name) }, categoryId: null },
+      _count: { _all: true },
+    }),
+  ])
+  const byId = new Map<string, number>()
+  for (const r of relCounts) if (r.categoryId) byId.set(r.categoryId, r._count._all)
+  const nameToId = new Map(catIds.map((c) => [c.name, c.id]))
+  for (const l of legacyCounts) {
+    if (!l.category) continue
+    const id = nameToId.get(l.category)
+    if (id) byId.set(id, (byId.get(id) || 0) + l._count._all)
+  }
+  return byId
+}
+
 // GET /api/categories — public list (visible only, sorted by sortOrder, then name)
 router.get('/', asyncHandler(async (_req, res) => {
   const categories = await prisma.category.findMany({
     where: { visible: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    include: { _count: { select: { products: true } } },
   })
+  const counts = await countProductsForCategories(categories)
   res.json({
     items: categories.map((c) => ({
       ...c,
-      productsCount: c._count.products,
-      _count: undefined,
+      productsCount: counts.get(c.id) || 0,
     })),
   })
 }))
@@ -73,16 +102,13 @@ router.get('/', asyncHandler(async (_req, res) => {
 router.get('/all', requireAuth, requireAdmin, asyncHandler(async (_req: AuthedRequest, res) => {
   const categories = await prisma.category.findMany({
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    include: {
-      _count: { select: { products: true } },
-      parent: { select: { id: true, name: true } },
-    },
+    include: { parent: { select: { id: true, name: true } } },
   })
+  const counts = await countProductsForCategories(categories)
   res.json({
     items: categories.map((c) => ({
       ...c,
-      productsCount: c._count.products,
-      _count: undefined,
+      productsCount: counts.get(c.id) || 0,
     })),
   })
 }))
@@ -101,6 +127,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   })
 }))
 
+// POST /api/categories — admin create
 // POST /api/categories — admin create
 router.post('/', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
   const parsed = createSchema.parse(req.body)
@@ -127,7 +154,15 @@ router.post('/', requireAuth, requireAdmin, asyncHandler(async (req: AuthedReque
       parentId: parsed.parentId || null,
     },
   })
+  // v25.14: instantly link existing products whose legacy `category` string
+  // matches this category — so a freshly created category is immediately
+  // populated in the catalog without re-saving each product.
+  await prisma.product.updateMany({
+    where: { categoryId: null, category: cat.name },
+    data: { categoryId: cat.id },
+  })
   logger.info('Category created', { module: 'categories', id: cat.id, name: cat.name })
+  broadcastChanged('categories:changed')
   res.json(cat)
 }))
 
@@ -140,11 +175,22 @@ router.patch('/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedR
     // regenerate slug if name changed and slug not provided
     updateData.slug = translitSlug(parsed.name)
   }
+  const before = await prisma.category.findUnique({ where: { id: req.params.id } })
+  if (!before) return res.status(404).json({ error: 'Category not found' })
   const cat = await prisma.category.update({
     where: { id: req.params.id },
     data: updateData,
   })
+  // v25.14: renaming a category must NOT orphan the legacy `category`
+  // strings on products — migrate them to the new canonical name.
+  if (parsed.name && parsed.name !== before.name) {
+    await prisma.product.updateMany({
+      where: { category: before.name },
+      data: { category: cat.name },
+    })
+  }
   logger.info('Category updated', { module: 'categories', id: cat.id })
+  broadcastChanged('categories:changed')
   res.json(cat)
 }))
 
@@ -154,6 +200,7 @@ router.patch('/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedR
 router.delete('/:id', requireAuth, requireAdmin, asyncHandler(async (req: AuthedRequest, res) => {
   const cat = await prisma.category.delete({ where: { id: req.params.id } })
   logger.info('Category deleted', { module: 'categories', id: cat.id, name: cat.name })
+  broadcastChanged('categories:changed')
   res.json({ ok: true })
 }))
 
@@ -165,13 +212,13 @@ router.post('/reorder', requireAuth, requireAdmin, asyncHandler(async (req: Auth
     .min(1)
     .max(200)
     .parse(req.body?.items)
-
   await prisma.$transaction(
     items.map((it) => prisma.category.update({
       where: { id: it.id },
       data: { sortOrder: it.sortOrder },
     })),
   )
+  broadcastChanged('categories:changed')
   res.json({ ok: true, updated: items.length })
 }))
 

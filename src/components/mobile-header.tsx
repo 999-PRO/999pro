@@ -1,9 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ShoppingBag, Package, Music2, Search } from 'lucide-react'
+import {
+  ShoppingBag, Package, Music2, Search, Menu, X, Bookmark, FileSpreadsheet,
+  User, Users, Film, Crown, MessageSquare, Gamepad2,
+} from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
+import { useAuthStore } from '@/lib/auth-store'
 import { useCartStore } from '@/lib/cart-store'
 import { useOrdersBadgeStore } from '@/lib/orders-badge-store'
 import { useClubStore } from '@/modules/999-club'
@@ -103,11 +108,28 @@ export function MobileHeader({
 
   // v39: CLUB unread state for the header badge
   const clubHasUnread = useClubStore((s) => s.hasUnread)
+  const user = useAuthStore((s) => s.user)
   // v25.5: module access — CLUB button is conditional on the 'club' module.
   const modules = useModuleAccess()
 
   // If header image is enabled, render it as the header background
   const showImage = headerImage?.enabled && headerImage?.url
+
+  // v25.15: выпадающее меню вместо кучи круглых кнопок в шапке
+  // («лучше сделать выпадающее меню из этих кнопок»). В шапке остаются
+  // только Поиск и Меню — всё остальное собрано в анимированной панели.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const cartCount = useCartStore((s) => s.items.reduce((n, i) => n + i.quantity, 0))
+  const ordersUnseen = useOrdersBadgeStore((s) => s.unseenCount)
+
+  const menuNavigate = (v: string) => {
+    setMenuOpen(false)
+    onNavigate(v)
+  }
+  const menuEvent = (event: string) => {
+    setMenuOpen(false)
+    window.dispatchEvent(new CustomEvent(event))
+  }
 
   return (
     <header
@@ -178,7 +200,7 @@ export function MobileHeader({
 
       {/* Content row — NOT blurred, buttons stay interactive */}
       <div
-        className="relative px-4 flex items-center gap-2 overflow-hidden"
+        className="relative px-4 flex items-center gap-2"
         style={{
           paddingTop: 'calc(env(safe-area-inset-top) + 0.65rem)',
           paddingBottom: '0.85rem',
@@ -202,51 +224,9 @@ export function MobileHeader({
           </button>
         ) : null}
 
-        {/* v39: 999 CLUB button — moved here from the bottom-nav center slot.
-            Media Hub moved to the bottom-nav center (replaces CLUB there).
-            Club uses the same round glass style + amber gradient to match
-            the desktop sidebar treatment.
-            v25.5: conditional on module access (club). */}
-        {isModuleEnabled(modules, 'club') && (
-        <motion.button
-          type="button"
-          aria-label="999 CLUB"
-          whileTap={{ scale: 0.85 }}
-          whileHover={{ scale: 1.1 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 17 }}
-          onClick={() => onNavigate('club')}
-          className="shrink-0 h-10 w-10 rounded-full grid place-items-center relative overflow-hidden"
-          style={{
-            background: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 100%)',
-            border: '1px solid rgba(255,255,255,0.25)',
-            boxShadow: '0 2px 12px -2px rgba(245,158,11,0.5)',
-          }}
-        >
-          {/* Crown icon (lucide Crown) — amber-tinted */}
-          <svg
-            className="h-[18px] w-[18px] relative z-10 text-white"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2.2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z" />
-            <path d="M5 20h14" />
-          </svg>
-          {/* CLUB unread badge — amber pulsing dot */}
-          {clubHasUnread && (
-            <span
-              className="absolute top-0.5 right-0.5 h-2.5 w-2.5 rounded-full animate-pulse z-20"
-              style={{
-                background: '#fff',
-                boxShadow: '0 0 8px rgba(255, 255, 255, 0.9)',
-              }}
-            />
-          )}
-        </motion.button>
-        )}
+        {/* v39/v25.15: Кнопка 999 CLUB переехала в выпадающее меню шапки
+            (иконка короны в меню) — в самой шапке осталось только два
+            аккуратных действия: Поиск и Меню. */}
 
         <div className="flex-1" />
 
@@ -265,41 +245,200 @@ export function MobileHeader({
           <Search className="h-[18px] w-[18px]" strokeWidth={2.4} />
         </button>
 
-        {/* v12.6.2: "Мои заявки" (Orders) button — v25.12: gradient pink-purple style */}
-        <button
-          type="button"
-          onClick={() => onNavigate('orders')}
-          aria-label="Мои заказы"
-          className="relative shrink-0 h-10 w-10 rounded-full grid place-items-center transition-all active:scale-95 hover:scale-105"
-          style={{
-            background: 'linear-gradient(135deg, #EC4899 0%, #A855F7 100%)',
-            boxShadow: '0 2px 8px -2px rgba(160, 32, 112, 0.4)',
-            color: '#ffffff',
-          }}
-        >
-          <Package className="h-[18px] w-[18px]" strokeWidth={2.4} />
-          <OrdersBadge />
-        </button>
+        {/* ═══ v25.15: ЕДИНАЯ КНОПКА МЕНЮ + выпадающая панель ═══
+            Раньше здесь висели 4 круглые кнопки (CLUB / Поиск / Заказы /
+            Корзина) — теперь всё собрано в одну аккуратную панель,
+            открывающуюся под шапкой. */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            aria-label="Меню"
+            aria-expanded={menuOpen}
+            onClick={() => { setMenuOpen((v) => !v) }}
+            className="relative h-10 w-10 rounded-full grid place-items-center text-white transition-all active:scale-95 hover:scale-105 backdrop-blur-md"
+            style={{
+              background: menuOpen
+                ? 'linear-gradient(135deg, #9333EA 0%, #6D28D9 100%)'
+                : 'linear-gradient(135deg, #A855F7 0%, #EC4899 100%)',
+              boxShadow: '0 2px 10px -2px rgba(147, 51, 234, 0.45)',
+            }}
+          >
+            {/* Показываем индикаторы на самой кнопке: корзина и заказы.
+                v25.19 (owner): «более красивая иконка меню» — кастомный
+                анимированный бургер: три полоски плавно складываются в крестик. */}
+            {cartCount > 0 && !menuOpen ? (
+              <ShoppingBag className="h-[18px] w-[18px]" strokeWidth={2.4} />
+            ) : ordersUnseen > 0 && !menuOpen ? (
+              <Package className="h-[18px] w-[18px]" strokeWidth={2.4} />
+            ) : (
+              <span className="relative block w-[18px] h-[14px]" aria-hidden>
+                <motion.span
+                  className="absolute left-0 top-0 h-[2px] w-full rounded-full bg-white"
+                  animate={menuOpen ? { rotate: 45, y: 6 } : { rotate: 0, y: 0 }}
+                  transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                />
+                <motion.span
+                  className="absolute left-0 top-[6px] h-[2px] w-full rounded-full bg-white"
+                  animate={menuOpen ? { opacity: 0, scaleX: 0.3 } : { opacity: 1, scaleX: 1 }}
+                  transition={{ duration: 0.2 }}
+                />
+                <motion.span
+                  className="absolute left-0 top-[12px] h-[2px] w-full rounded-full bg-white"
+                  animate={menuOpen ? { rotate: -45, y: -6 } : { rotate: 0, y: 0 }}
+                  transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                />
+              </span>
+            )}
+            {(cartCount > 0 || ordersUnseen > 0) && !menuOpen && (
+              <span
+                key={Math.max(cartCount, ordersUnseen)}
+                className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-white grid place-items-center z-20"
+                style={{ color: '#A02070', fontSize: '10px', fontWeight: 800, boxShadow: '0 2px 8px rgba(160,32,112,0.35)' }}
+              >
+                {cartCount > 0 ? cartCount : ordersUnseen}
+              </span>
+            )}
+          </button>
 
-        {/* Cart icon — v25.12: gradient purple style */}
-        <button
-          type="button"
-          aria-label="Корзина"
-          onClick={() => {
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('open-cart'))
-            }
-          }}
-          className="relative shrink-0 h-10 w-10 rounded-full grid place-items-center transition-all active:scale-95 hover:scale-105"
-          style={{
-            background: 'linear-gradient(135deg, #A855F7 0%, #9333EA 100%)',
-            boxShadow: '0 2px 8px -2px rgba(147, 51, 234, 0.4)',
-            color: '#ffffff',
-          }}
-        >
-          <ShoppingBag className="h-[18px] w-[18px]" strokeWidth={2.4} />
-          <CartBadge />
-        </button>
+          {/* v25.21 (owner: «меню уходит за экран вверх» — БАГФИКС).
+              Причина: .mobile-header-bar имеет backdrop-filter, а по CSS-spec
+              backdrop-filter создаёт CONTAINING BLOCK для position:fixed
+              потомков. Шит «прикреплялся» к низу ШАПКИ и уезжал вверх за
+              экран. Фикс: рендерим панель через ПОРТАЛ в document.body —
+              fixed снова означает «относительно вьюпорта». */}
+          {typeof document !== 'undefined' && createPortal(
+          <AnimatePresence>
+            {menuOpen && (
+              <>
+                {/* invisible tap-catcher — закрывает меню по тапу мимо панели */}
+                <div className="fixed inset-0 z-[40] bg-black/45" style={{ backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }} onClick={() => setMenuOpen(false)} />
+
+                {/* v25.20 (owner): «меню сделай такое же красивое, как Общение» —
+                    тёмный стеклянный bottom-sheet с плитками-действиями */}
+                <motion.div
+                  initial={{ y: '100%', opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: '100%', opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 380, damping: 36, mass: 0.9 }}
+                  className="fixed left-0 right-0 bottom-0 z-[50] mx-auto max-w-md"
+                >
+                  <div
+                    className="rounded-t-[30px] overflow-hidden relative"
+                    style={{
+                      background: 'linear-gradient(180deg, rgba(15,15,30,0.96) 0%, rgba(10,10,20,0.98) 100%)',
+                      backdropFilter: 'blur(28px) saturate(160%)',
+                      WebkitBackdropFilter: 'blur(28px) saturate(160%)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderBottom: 'none',
+                      boxShadow: '0 -24px 70px -12px rgba(0,0,0,0.65)',
+                      paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 18px)',
+                    }}
+                  >
+                    {/* Аурора */}
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[70%] h-36 z-0"
+                      style={{
+                        background: 'radial-gradient(ellipse at center top, rgba(139,92,246,0.22) 0%, rgba(236,72,153,0.09) 48%, transparent 75%)',
+                        filter: 'blur(10px)',
+                      }}
+                    />
+                    <div aria-hidden className="absolute top-2 left-1/2 -translate-x-1/2 h-[3px] w-16 rounded-full bg-white/25 z-10" />
+
+                    {/* Шапка панели */}
+                    <div className="relative z-10 flex items-center justify-between px-5 pt-6 pb-2">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/45">Меню</div>
+                        <div className="text-base font-extrabold text-white tracking-tight">
+                          {user ? (user.displayName || user.username) : 'Быстрые действия'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setMenuOpen(false)}
+                        aria-label="Закрыть"
+                        className="h-9 w-9 rounded-full grid place-items-center text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    {/* Плитки 3×3 */}
+                    <div className="relative z-10 grid grid-cols-3 gap-2.5 px-4 pt-2">
+                      <MenuTile
+                        icon={<User className="h-5 w-5 text-white" />}
+                        label="Профиль"
+                        color="#7C5CFC"
+                        onClick={() => menuNavigate('profile')}
+                      />
+                      <MenuTile
+                        icon={<ShoppingBag className="h-5 w-5 text-white" />}
+                        label="Корзина"
+                        badge={cartCount > 0 ? cartCount : undefined}
+                        color="#EC4899"
+                        onClick={() => menuEvent('open-cart')}
+                      />
+                      <MenuTile
+                        icon={<Package className="h-5 w-5 text-white" />}
+                        label="Заказы"
+                        badge={ordersUnseen > 0 ? ordersUnseen : undefined}
+                        color="#F59E0B"
+                        onClick={() => menuNavigate('orders')}
+                      />
+                      <MenuTile
+                        icon={<Bookmark className="h-5 w-5 text-white" />}
+                        label="Избранное"
+                        color="#F43F5E"
+                        onClick={() => menuNavigate('profile')}
+                      />
+                      <MenuTile
+                        icon={<MessageSquare className="h-5 w-5 text-white" />}
+                        label="Комменты"
+                        color="#14B8A6"
+                        onClick={() => menuEvent('open-my-comments')}
+                      />
+                      <MenuTile
+                        icon={<Users className="h-5 w-5 text-white" />}
+                        label="Сообщества"
+                        color="#6366F1"
+                        onClick={() => menuNavigate('community')}
+                      />
+                      {isModuleEnabled(modules, 'club') && (
+                        <MenuTile
+                          icon={<Crown className="h-5 w-5 text-white" />}
+                          label="CLUB"
+                          dot={clubHasUnread}
+                          color="#FBBF24"
+                          onClick={() => menuNavigate('club')}
+                        />
+                      )}
+                      <MenuTile
+                        icon={<Film className="h-5 w-5 text-white" />}
+                        label="Видео-лента"
+                        color="#A855F7"
+                        onClick={() => menuEvent('open-feed')}
+                      />
+                      <MenuTile
+                        icon={<FileSpreadsheet className="h-5 w-5 text-white" />}
+                        label="Прайсы"
+                        color="#10B981"
+                        onClick={() => menuNavigate('price')}
+                      />
+                      {/* v25.23: ИГРОВОЙ КЛУБ — раздел «Игры» */}
+                      <MenuTile
+                        icon={<Gamepad2 className="h-5 w-5 text-white" />}
+                        label="Игры"
+                        color="#8B5CF6"
+                        onClick={() => menuNavigate('games')}
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>,
+          document.body,
+          )}
+        </div>
       </div>
 
       {/* v31: Music block — NO square, real frequency analysis, centered */}
@@ -499,6 +638,62 @@ function CartBadge() {
   const count = useCartStore((s) => s.items.reduce((n, i) => n + i.quantity, 0))
   if (count === 0) return null
   return <CountBadge key={count} count={count} className="-top-1 -right-1" />
+}
+
+// v25.22: плитка меню — ПЛОСКАЯ (владелец: «кнопки-карточки должны быть
+// плоские, красивые»). Без градиентов, теней и глянца: плоский цветной
+// чип-иконка + подпись на спокойной панели. Бейдж/точка сохранены.
+function MenuTile({
+  icon,
+  label,
+  onClick,
+  color,
+  badge,
+  dot,
+}: {
+  icon: ReactNode
+  label: string
+  onClick: () => void
+  color: string
+  badge?: number
+  dot?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        hapticLite()
+        onClick()
+      }}
+      className="group flex flex-col items-center gap-1.5 px-1 py-2.5 rounded-2xl bg-white/[0.05] active:bg-white/[0.1] active:scale-95 transition-all"
+    >
+      <span className="relative grid place-items-center h-11 w-11 rounded-[14px] shrink-0"
+        style={{ background: color }}
+      >
+        {icon}
+        {typeof badge === 'number' && badge > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-white text-[10px] font-extrabold grid place-items-center ring-2 ring-[#14121f]"
+            style={{ color: '#A02070' }}
+          >
+            {badge > 9 ? '9+' : badge}
+          </span>
+        )}
+        {dot && (
+          <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-[#14121f]" />
+        )}
+      </span>
+      <span className="text-[11px] font-semibold text-white/85 leading-none text-center">{label}</span>
+    </button>
+  )
+}
+
+// Лёгкий хаптик без импорта всего модуля (меню в шапке)
+function hapticLite() {
+  try {
+    // dynamic import не нужен: модуль крошечный и уже в бандле
+    // через другие компоненты; вызываем напрямую через navigator.vibrate
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(8)
+  } catch {}
 }
 
 // v16.3: Orders notification badge — shows unseen order status changes.

@@ -24,7 +24,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Search, Send, Mic, ArrowLeft, ArrowUp, Phone, Video as VideoIcon,
   Trash2, Paperclip, MoreVertical, Trash, ShieldAlert,
-  Headphones, Smile, ShoppingBag,
+  Headphones, ShoppingBag, Pin, Archive, ChevronDown, Gamepad2, X, Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
@@ -37,6 +37,8 @@ import { haptic } from '@/lib/haptic'
 import { saveDraft, loadDraft, clearDraft } from '@/lib/draft-autosave'
 import { useScrollLock } from '@/lib/use-scroll-lock'
 import { toast } from '@/lib/notifications'
+// v25.24: онлайн-дуэли из чата
+import { duelApi, openDuel, type DuelGameType } from '@/lib/games/duel-client'
 import { AnimatePresence, motion } from 'framer-motion'
 // F-MED-007: code-split rarely-used chat features. ForwardDialog, ImageLightbox,
 // MessageContextMenu, and CallHistory are only opened on explicit user action
@@ -93,7 +95,6 @@ import { AttachmentsCenter, type CategoryId } from './chat/attachments-center'
 // picker напрямую. Product Picker остаётся (открывается через постоянную
 // кнопку 🛍 в нижней панели).
 import { ProductPickerSearch } from './chat/product-picker-search'
-import { EmojiPicker } from './chat/emoji-picker'
 // v16.9.2: Audio Hub — поиск + отправка аудио в чат.
 import { MediaHubOverlay } from '@/modules/media-hub/components/media-hub-overlay'
 import { AudioDraftPreview } from '@/modules/audio-hub/components/audio-draft-preview'
@@ -106,6 +107,19 @@ import { useChatAttachments } from './chat/hooks/use-chat-attachments'
 import { UserProfileSheet } from './chat/user-profile-sheet'
 import { AvatarViewer } from './chat/avatar-viewer'
 import { ChatListContextMenu } from './chat/chat-list-context-menu'
+
+// ============================================================================
+// v25.25 — онлайн-игры, в которые можно сыграть прямо из чата.
+// ============================================================================
+const GAME_INVITES: { type: DuelGameType; title: string; desc: string; emoji: string; gradient: string }[] = [
+  { type: 'checkers', title: 'Шашки', desc: 'Русские · партия с другом', emoji: '⚫', gradient: 'linear-gradient(140deg,#B0722F,#7C4A1D)' },
+  { type: 'chess', title: 'Шахматы', desc: 'Классика · до мата', emoji: '♟️', gradient: 'linear-gradient(140deg,#8B5CF6,#5B21B6)' },
+  { type: 'quiz-flags', title: 'Флаги', desc: 'Кто знает больше стран?', emoji: '🚩', gradient: 'linear-gradient(140deg,#F43F5E,#BE123C)' },
+  { type: 'quiz-capitals', title: 'Столицы', desc: 'Географическая дуэль', emoji: '🏙️', gradient: 'linear-gradient(140deg,#0EA5E9,#0369A1)' },
+  { type: 'quiz-millionaire', title: 'Миллионер', desc: '7 вопросов · кто умнее', emoji: '💰', gradient: 'linear-gradient(140deg,#F59E0B,#B45309)' },
+  { type: 'quiz-math', title: 'Математика', desc: 'Счёт и таблица умножения', emoji: '🧮', gradient: 'linear-gradient(140deg,#10B981,#047857)' },
+  { type: 'tictactoe', title: 'Крестики-нолики', desc: 'Быстрая дуэль 3×3', emoji: '⭕', gradient: 'linear-gradient(140deg,#0EA5E9,#6366F1)' },
+]
 
 export function ChatView() {
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -221,13 +235,17 @@ export function ChatView() {
   // v16.9-final: Emoji Picker — стеклянная панель эмодзи над полем ввода.
   // Открывается кнопкой 😊 в нижней панели. Не Bottom Sheet, не отдельная
   // страница — именно inline-панель с glassmorphism.
-  const [emojiPanelOpen, setEmojiPanelOpen] = useState(false)
+  // v25.28: всплывающее меню «＋» (Играть / Медиа / Товар)
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   // v16.8.4: User Profile Sheet — открывается при нажатии на имя в Header.
   const [profileOpen, setProfileOpen] = useState(false)
   // v16.8.4: Avatar Viewer — полноэкранный просмотр аватара.
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false)
   // v16.8.4: Chat List Context Menu — long-press на чат в списке диалогов.
   const [chatListMenu, setChatListMenu] = useState<{ open: boolean; conv: Conversation | null }>({ open: false, conv: null })
+  // v25.24: раскрытый список архива чатов + шит выбора игры
+  const [showArchive, setShowArchive] = useState(false)
+  const [gamePickerOpen, setGamePickerOpen] = useState(false)
   // v25.4 (perf audit P-1): stable callbacks for ChatListItem so React.memo works.
   // Previously inline arrows `() => setActiveConv(c)` were recreated every render,
   // defeating memoization and causing all 50-200 list items to re-render on every
@@ -262,6 +280,10 @@ export function ChatView() {
   // v25.9: editing message — when set, the composer switches to edit mode
   // for the referenced message. The user can save (PATCH) or cancel.
   const [editingMessage, setEditingMessage] = useState<Message | null>(null)
+  // v25.27: закреплённое сообщение диалога (Telegram-style). Загружается при
+  // открытии диалога через GET /api/chat/conversations/:id/pinned и
+  // синхронизируется через socket-событие message:pinned.
+  const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null)
   // When edit mode is entered, pre-fill the textarea with the message content
   // and focus it so the user can immediately start editing.
   useEffect(() => {
@@ -276,6 +298,17 @@ export function ChatView() {
       }, 50)
     }
   }, [editingMessage])
+
+  // v25.28: авторост поля ввода — надёжно при ЛЮБОМ изменении text
+  // (посимвольный ввод, вставка из буфера, восстановление черновика,
+  // правка сообщения). Раньше высота пересчитывалась только в onChange
+  // textarea, поэтому при программных изменениях поле не расширялось.
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 132) + 'px'
+  }, [text])
 
   // Call state lives in the global CallManager (mounted in AppShell) so that
   // calls work from any view, not just chat. ChatView only triggers outgoing
@@ -547,6 +580,8 @@ export function ChatView() {
   useEffect(() => {
     if (!activeConv) return
     let alive = true
+    // v25.27: на смене диалога сбрасываем закреплённое сообщение
+    setPinnedMessage(null)
     api
       .get<{ items: Message[] }>(`/api/chat/conversations/${activeConv.id}/messages`, {
         auth: true,
@@ -589,6 +624,12 @@ export function ChatView() {
       if (draft) setText(draft)
       else setText('')
     }
+    // v25.27: подтягиваем закреплённое сообщение (может не попасть в первую
+    // страницу истории — грузим отдельным лёгким запросом).
+    api
+      .get<{ message: Message | null }>(`/api/chat/conversations/${activeConv.id}/pinned`, { auth: true })
+      .then((d) => { if (alive) setPinnedMessage(d.message && !d.message.deletedForMe ? d.message : null) })
+      .catch(() => { /* не критично */ })
     return () => {
       alive = false
     }
@@ -662,6 +703,8 @@ export function ChatView() {
             content: m.content,
             mediaUrl: m.mediaUrl,
             mediaType: m.mediaType,
+            // v25.28: attachments — превью группы фото/файлов в списке чатов
+            attachments: m.attachments ?? null,
             createdAt: m.createdAt,
             senderId: m.senderId,
             deletedForAll: false,
@@ -710,6 +753,28 @@ export function ChatView() {
     onMessageForwarded: (payload) => {
       toast.success(`Переслано в ${payload.count} чат(ов)`)
       refreshConversations()
+    },
+    // v25.27: закрепление/открепление сообщения другим участником (или нашим
+    // вторым устройством). Событие несёт только id — тянем полное сообщение
+    // лёгким GET-запросом, чтобы в плашке был текст/автор.
+    onMessagePinned: (payload) => {
+      if (!activeConv || payload.conversationId !== activeConv.id) return
+      // Обновляем pinnedAt в локальном списке сообщений (для бейджа на пузыре)
+      setMessages((cur) =>
+        cur.map((x) =>
+          payload.messageId === x.id
+            ? { ...x, pinnedAt: payload.pinnedAt }
+            : (!payload.messageId && x.pinnedAt ? { ...x, pinnedAt: null } : x),
+        ),
+      )
+      if (!payload.messageId) {
+        setPinnedMessage(null)
+        return
+      }
+      api
+        .get<{ message: Message | null }>(`/api/chat/conversations/${activeConv.id}/pinned`, { auth: true })
+        .then((d) => setPinnedMessage(d.message && !d.message.deletedForMe ? d.message : null))
+        .catch(() => {})
     },
     onTypingStart: (data) => {
       if (activeConv && data.conversationId === activeConv.id && data.userId !== user?.id) {
@@ -1001,33 +1066,6 @@ export function ChatView() {
     }, 1500)
   }
 
-  // v16.9-final: insertEmoji — вставляет выбранный эмодзи в текущую позицию
-  // курсора в textarea (или в конец, если курсор не активен). После вставки
-  // возвращает фокус в textarea и пересчитывает высоту.
-  const insertEmoji = (emoji: string) => {
-    const ta = textareaRef.current
-    if (!ta) {
-      // Fallback: просто добавляем в конец
-      onTextChange(text + emoji)
-      return
-    }
-    const start = ta.selectionStart ?? text.length
-    const end = ta.selectionEnd ?? text.length
-    const next = text.slice(0, start) + emoji + text.slice(end)
-    onTextChange(next)
-    // Восстанавливаем курсор сразу после вставленного эмодзи
-    requestAnimationFrame(() => {
-      if (textareaRef.current) {
-        const pos = start + emoji.length
-        textareaRef.current.focus()
-        textareaRef.current.setSelectionRange(pos, pos)
-        // Пересчитываем высоту (эмодзи не вызывают onChange автоматически)
-        textareaRef.current.style.height = 'auto'
-        textareaRef.current.style.height =
-          Math.min(textareaRef.current.scrollHeight, 120) + 'px'
-      }
-    })
-  }
 
   // File upload input ref — shared between the hidden file input and the
   // paperclip button. The actual upload logic is in handleFileSelect below.
@@ -1313,6 +1351,36 @@ export function ChatView() {
     }
   }
 
+  // ═══ v25.27: закрепление сообщения (Telegram-style) ═══
+  // Полностью заменяет прежнюю заглушку «скоро будет доступно».
+  const handleTogglePin = useCallback(async (message: Message) => {
+    if (!activeConv) return
+    const willPin = !message.pinnedAt
+    try {
+      const res = await api.post<{ ok: boolean; messageId: string | null; pinnedAt: string | null }>(
+        `/api/chat/conversations/${activeConv.id}/pin`,
+        { json: { messageId: message.id, pinned: willPin }, auth: true },
+      )
+      // Сервер снимает pin с предыдущего — чистим его у всех локально
+      setMessages((cur) =>
+        cur.map((x) =>
+          res.messageId && x.id === res.messageId
+            ? { ...x, pinnedAt: res.pinnedAt }
+            : { ...x, pinnedAt: null },
+        ),
+      )
+      if (res.messageId) {
+        setPinnedMessage({ ...message, pinnedAt: res.pinnedAt })
+        toast.success('📌 Сообщение закреплено')
+      } else {
+        setPinnedMessage(null)
+        toast.info('Сообщение откреплено')
+      }
+    } catch {
+      toast.error('Не удалось закрепить сообщение')
+    }
+  }, [activeConv])
+
   // Forward confirmed — emit via socket
   const handleForwardSubmit = (targetIds: string[]) => {
     if (!forwardMessage) return
@@ -1362,7 +1430,7 @@ export function ChatView() {
   const handleDeleteConversation = async () => {
     if (!activeConv) return
     if (activeConv.type === 'support') {
-      toast.error('Нельзя удалить чат с поддержкой — это основной канал связи с командой 999PRO.')
+      toast.error('Нельзя удалить чат с поддержкой — это основной канал связи с командой TRI999.')
       return
     }
     // Phase 10: use custom confirm dialog instead of native confirm()
@@ -1681,6 +1749,54 @@ export function ChatView() {
     setReplyTo(null)
   }
 
+  // v25.24: приглашение в онлайн-игру (шашки/шахматы/викторины/крестики).
+  // Создаём duel на бэкенде, отправляем в чат сообщение mediaType='game'
+  // (mediaUrl = duelId) и сразу открываем свою сторону партии (ожидание).
+  const handleSendGameInvite = async (gameType: DuelGameType) => {
+    if (!activeConv?.participant) return
+    const opponentId = activeConv.participant.id
+    const convId = activeConv.id
+    setGamePickerOpen(false)
+    haptic.tap()
+    try {
+      const { duel } = await duelApi.create(gameType, opponentId, convId)
+      const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+      const optimistic: Message = {
+        id: tempId,
+        conversationId: convId,
+        senderId: user!.id,
+        content: null,
+        mediaUrl: duel.id, // duel id — как у product-сообщений
+        mediaType: 'game',
+        isRead: false,
+        createdAt: new Date().toISOString(),
+        tempId,
+        sender: {
+          id: user!.id,
+          username: user!.username,
+          displayName: user!.displayName,
+          avatar: user!.avatar,
+        },
+      }
+      setMessages((cur) => [...cur, optimistic])
+      messageIdsRef.current.add(tempId)
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) { messagesContainerRef.current.scrollTop = 0 }
+      })
+      send({
+        conversationId: convId,
+        mediaUrl: duel.id,
+        mediaType: 'game',
+        tempId,
+      })
+      messageSound.play()
+      toast.success('Приглашение отправлено — открываем игру')
+      openDuel(duel.id)
+    } catch (e: any) {
+      toast.error(e?.message || 'Не удалось создать игру')
+    }
+  }
+
   // v16.9.2: отправка аудио-трека Audio Hub в чат (как audio-hub сообщение).
   // v16.19: mediaUrl хранит ПОЛНЫЙ track объект как JSON (а не только ID).
   // Это позволяет AudioChatCard сразу отображать метаданные без запроса на
@@ -1864,7 +1980,7 @@ export function ChatView() {
         : undefined
     }
     >
-      {/* Animated decorative background — floating SVG shapes, "999PRO" text,
+      {/* Animated decorative background — floating SVG shapes, "TRI999" text,
           soft coloured circles. pointer-events:none, z-0. */}
       <ChatBackground />
       {/* v25.12: chat uses full viewport height on mobile (h-[100dvh]) to
@@ -1935,24 +2051,60 @@ export function ChatView() {
                   <p className="text-xs text-muted-foreground/70">Выберите пользователя ниже, чтобы начать чат.</p>
                 </div>
               ) : (
-                conversations.map((c) => {
-                  // Unread = max(server-provided count, local notification store count).
-                  const serverUnread = c.unreadCount && c.unreadCount > 0 ? c.unreadCount : 0
-                  const localUnread = unreadByConv[c.id] || 0
-                  const unread = Math.max(serverUnread, localUnread)
-                  const isActive = activeConv?.id === c.id
+                (() => {
+                  // v25.24: закреплённые сверху, архив в отдельной папке
+                  const renderConv = (c: Conversation) => {
+                    const serverUnread = c.unreadCount && c.unreadCount > 0 ? c.unreadCount : 0
+                    const localUnread = unreadByConv[c.id] || 0
+                    const unread = Math.max(serverUnread, localUnread)
+                    const isActive = activeConv?.id === c.id
+                    return (
+                      <ChatListItem
+                        key={c.id}
+                        conversation={c}
+                        unread={unread}
+                        isActive={isActive}
+                        onClick={handleConvClick}
+                        onLongPress={handleConvLongPress}
+                        convId={c.id}
+                      />
+                    )
+                  }
+                  const pinned = conversations.filter((c) => c.isPinned || c.type === 'support')
+                  const visible = conversations.filter((c) => !c.isArchived && !c.isPinned && c.type !== 'support')
+                  const archived = conversations.filter((c) => c.isArchived && c.type !== 'support')
                   return (
-                    <ChatListItem
-                      key={c.id}
-                      conversation={c}
-                      unread={unread}
-                      isActive={isActive}
-                      onClick={handleConvClick}
-                      onLongPress={handleConvLongPress}
-                      convId={c.id}
-                    />
+                    <>
+                      {/* v25.26 (owner): папка «Архив» — НАД списком чатов, как в
+                          Telegram. Раньше она была внизу списка, и архивированные
+                          чаты «терялись» под всеми диалогами. */}
+                      {archived.length > 0 && (
+                        <div className="pb-1">
+                          <button
+                            onClick={() => { haptic.tap(); setShowArchive((v) => !v) }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl bg-foreground/[0.04] hover:bg-foreground/[0.08] transition-colors"
+                          >
+                            <Archive className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-[13px] font-bold flex-1 text-left">Архив</span>
+                            <span className="text-[11px] font-extrabold text-muted-foreground bg-foreground/[0.07] rounded-full px-2 py-0.5">{archived.length}</span>
+                            <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform duration-200', showArchive && 'rotate-180')} />
+                          </button>
+                          {showArchive && <div className="mt-2 space-y-3">{archived.map(renderConv)}</div>}
+                        </div>
+                      )}
+                      {pinned.length > 0 && (
+                        <div className="text-[10px] font-bold text-muted-foreground/80 px-2 pt-1 pb-0.5 uppercase tracking-wider flex items-center gap-1.5">
+                          <Pin className="h-3 w-3" /> Закреплённые
+                        </div>
+                      )}
+                      {pinned.map(renderConv)}
+                      {visible.length > 0 && pinned.length > 0 && (
+                        <div className="text-xs font-semibold text-muted-foreground px-2 pt-3 pb-1 uppercase tracking-wider">Все диалоги</div>
+                      )}
+                      {visible.map(renderConv)}
+                    </>
                   )
-                })
+                })()
               )}
 
               {/* ====== All registered users (unified source of truth) ======
@@ -2228,6 +2380,58 @@ export function ChatView() {
               favoriteIds={favorites.favoriteIds}
             />
 
+            {/* ═══ v25.27: ПЛАШКА ЗАКРЕПЛЁННОГО СООБЩЕНИЯ (Telegram-style).
+                Между шапкой диалога и лентой сообщений. Тап → прокрутка к
+                сообщению с подсветкой; × → открепить (реальный API). ═══ */}
+            {pinnedMessage && (
+              <div className="shrink-0 px-3 pt-1.5">
+                <div
+                  className="flex items-center gap-2.5 rounded-2xl px-3 py-2 cursor-pointer transition-colors"
+                  style={{
+                    background: 'rgba(160,32,112,0.06)',
+                    border: '1px solid rgba(160,32,112,0.14)',
+                  }}
+                  onClick={() => {
+                    haptic.tap()
+                    scrollToMessage(pinnedMessage.id)
+                  }}
+                  role="button"
+                  aria-label="Перейти к закреплённому сообщению"
+                >
+                  {/* Акцентная вертикальная линия как в Telegram */}
+                  <span className="w-[3px] self-stretch rounded-full bg-[#A02070] shrink-0" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <Pin className="h-3 w-3 text-[#A02070] shrink-0" strokeWidth={2.4} />
+                      <span className="text-[11px] font-bold text-[#A02070] truncate">
+                        Закреплённое сообщение
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">
+                      {pinnedMessage.content
+                        || (pinnedMessage.mediaType === 'image' ? '📷 Фото'
+                          : pinnedMessage.mediaType === 'video' ? '🎥 Видео'
+                          : pinnedMessage.mediaType === 'audio' ? '🎤 Голосовое'
+                          : pinnedMessage.mediaType === 'file' ? '📎 Файл'
+                          : pinnedMessage.mediaType === 'product' ? '🛍 Товар'
+                          : 'Вложение')}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      haptic.tap()
+                      void handleTogglePin(pinnedMessage)
+                    }}
+                    className="shrink-0 h-7 w-7 rounded-full grid place-items-center text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
+                    aria-label="Открепить сообщение"
+                  >
+                    <X className="h-4 w-4" strokeWidth={2.2} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Messages — flex-direction column-reverse чтобы новые сообщения
                 были внизу, и контейнер прилипал к низу (как в мессенджерах).
                 min-h-0 — КРИТИЧНО: без этого flex-1 ребёнок занимает всю высоту
@@ -2252,6 +2456,9 @@ export function ChatView() {
                 />
               )}
             </AnimatePresence>
+            {/* v25.28 (владелец): белая mask-маска сообщений заменена на
+                мягкие backdrop-blur фейды — растворение в размытие, а не в белый. */}
+            <div className="relative flex-1 min-h-0 flex flex-col">
             <div
               ref={messagesContainerRef}
               // data-scroll-lock-ignore — КРИТИЧНО: без этого атрибута
@@ -2266,15 +2473,6 @@ export function ChatView() {
                 overscrollBehavior: 'contain',
                 WebkitOverflowScrolling: 'touch',
                 touchAction: 'pan-y',
-                // v16.8.6: правильная маска исчезновения.
-                // Сообщения полностью непрозрачны в рабочей области.
-                // Плавное растворение ТОЛЬКО когда сообщение физически
-                // заходит под Header (сверху) или под панель ввода (снизу).
-                // mask-image с linear-gradient: прозрачность только в крайних
-                // 32px (8% от высоты ~400px контейнера, но не менее 24px).
-                // Никакого glow / белого градиента — только opacity через mask.
-                WebkitMaskImage: 'linear-gradient(180deg, transparent 0px, black 32px, black calc(100% - 32px), transparent 100%)',
-                maskImage: 'linear-gradient(180deg, transparent 0px, black 32px, black calc(100% - 32px), transparent 100%)',
               }}
               aria-label="Лента сообщений"
             >
@@ -2333,6 +2531,24 @@ export function ChatView() {
                   ))}
                 </AnimatePresence>
               )}
+            </div>
+            {/* v25.28: blur-фейды (верх — под шапкой, низ — над полем ввода) */}
+            <div aria-hidden className="pointer-events-none absolute top-0 inset-x-0 h-12 z-[5]"
+              style={{
+                backdropFilter: 'blur(14px) saturate(150%)',
+                WebkitBackdropFilter: 'blur(14px) saturate(150%)',
+                maskImage: 'linear-gradient(to bottom, black 25%, transparent)',
+                WebkitMaskImage: 'linear-gradient(to bottom, black 25%, transparent)',
+              }}
+            />
+            <div aria-hidden className="pointer-events-none absolute bottom-0 inset-x-0 h-14 z-[5]"
+              style={{
+                backdropFilter: 'blur(14px) saturate(150%)',
+                WebkitBackdropFilter: 'blur(14px) saturate(150%)',
+                maskImage: 'linear-gradient(to top, black 30%, transparent)',
+                WebkitMaskImage: 'linear-gradient(to top, black 30%, transparent)',
+              }}
+            />
             </div>
 
             {/* Reply preview */}
@@ -2451,18 +2667,117 @@ export function ChatView() {
                 onChange={handleTypedFileSelect(contactInputRef)}
               />
 
-              {/* v16.9-final: Стеклянная панель эмодзи — появляется над полем
-                  ввода при нажатии кнопки 😊. Не Bottom Sheet, не отдельная
-                  страница — именно inline glass panel с blur. Закрывается по
-                  клику вне панели или после выбора эмодзи. */}
-              <EmojiPicker
-                open={emojiPanelOpen}
-                onClose={() => setEmojiPanelOpen(false)}
-                onPick={insertEmoji}
-              />
 
+              {/* ═══ v25.28: РЕДИЗАЙН КОМПОЗЕРА (владелец): чистый премиальный вид
+                  в духе Telegram. «Играть», «Media Hub» и «Товар» собраны в
+                  всплывающее меню «＋» — в ряду остаётся 4 элемента вместо 6.
+                  Кнопка эмодзи убрана (эмодзи набираются с клавиатуры).
+                  Вся функциональность сохранена. ═══ */}
               <div className="flex items-end gap-2">
-                {/* 📎 Кнопка вложений — премиальная стеклянная капсула. */}
+                {/* ＋ Всплывающее меню: Играть / Медиа / Товар */}
+                <div className="relative shrink-0">
+                  <AnimatePresence>
+                    {plusMenuOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-[90]"
+                          onClick={() => setPlusMenuOpen(false)}
+                          aria-hidden
+                        />
+                        <motion.div
+                          initial={{ opacity: 0, y: 12, scale: 0.9 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 12, scale: 0.9 }}
+                          transition={{ type: 'spring', stiffness: 520, damping: 32 }}
+                          className="absolute bottom-[calc(100%+12px)] left-0 z-[95] w-[232px] rounded-[22px] overflow-hidden py-1.5"
+                          style={{
+                            background: 'var(--card)',
+                            border: '1px solid var(--border)',
+                            boxShadow: '0 22px 60px -14px rgba(15,23,42,0.4)',
+                          }}
+                          role="menu"
+                          aria-label="Вставить: игра, медиа или товар"
+                        >
+                          {[
+                            {
+                              key: 'game',
+                              iconEl: <Gamepad2 className="h-[18px] w-[18px]" strokeWidth={2.2} />,
+                              label: 'Играть',
+                              desc: 'Дуэль с собеседником',
+                              color: '#8B5CF6',
+                              bg: 'rgba(139,92,246,0.12)',
+                              onClick: () => setGamePickerOpen(true),
+                            },
+                            {
+                              key: 'media',
+                              iconEl: <MediaHubIcon size={18} />,
+                              label: 'Медиа',
+                              desc: 'Музыка и фильмы',
+                              color: '#EC4899',
+                              bg: 'rgba(236,72,153,0.12)',
+                              onClick: () => {
+                                window.dispatchEvent(new CustomEvent('close-media-hub'))
+                                setAudioHubPickerOpen(true)
+                              },
+                            },
+                            {
+                              key: 'product',
+                              iconEl: <ShoppingBag className="h-[18px] w-[18px]" strokeWidth={2.2} />,
+                              label: 'Товар',
+                              desc: 'Отправить из каталога',
+                              color: '#10B981',
+                              bg: 'rgba(16,185,129,0.12)',
+                              onClick: () => setProductPickerOpen(true),
+                            },
+                          ].map((it) => (
+                            <button
+                              key={it.key}
+                              onClick={() => {
+                                haptic.select()
+                                setPlusMenuOpen(false)
+                                setTimeout(it.onClick, 60)
+                              }}
+                              className="w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-foreground/5 active:bg-foreground/10"
+                              role="menuitem"
+                            >
+                              <span
+                                className="h-9 w-9 rounded-2xl grid place-items-center shrink-0"
+                                style={{ background: it.bg, color: it.color }}
+                              >
+                                {it.iconEl}
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block text-sm font-semibold text-foreground leading-tight">{it.label}</span>
+                                <span className="block text-[11px] text-muted-foreground leading-tight">{it.desc}</span>
+                              </span>
+                            </button>
+                          ))}
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                  <motion.button
+                    type="button"
+                    whileTap={{ scale: 0.88 }}
+                    whileHover={{ scale: 1.06 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 22 }}
+                    onClick={() => { haptic.tap(); setPlusMenuOpen((v) => !v) }}
+                    className="shrink-0 h-11 w-11 rounded-full grid place-items-center transition-all chat-input-btn"
+                    aria-label="Вставить: игра, медиа или товар"
+                    aria-expanded={plusMenuOpen}
+                    title="Игра, медиа или товар"
+                  >
+                    <motion.span
+                      animate={{ rotate: plusMenuOpen ? 45 : 0 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 24 }}
+                      className="grid place-items-center"
+                    >
+                      <Plus className="h-[20px] w-[20px]" strokeWidth={2.4} />
+                    </motion.span>
+                  </motion.button>
+                </div>
+
+                {/* 📎 Файлы — стеклянная кнопка (системный picker напрямую) */}
                 <motion.button
                   type="button"
                   whileTap={{ scale: 0.88 }}
@@ -2479,52 +2794,24 @@ export function ChatView() {
                   <Paperclip className="h-[18px] w-[18px]" strokeWidth={2.2} />
                 </motion.button>
 
-                {/* Поле ввода со встроенными кнопками 😊 и 🛍 */}
+                {/* v25.28: Капсула поля — чистый премиальный вид. Авторост до
+                    132px пересчитывается на КАЖДОЕ изменение text (ввод,
+                    вставка, восстановление черновика). Атрибуты autocomplete/
+                    autocorrect/data-form-type подавляют панель автозаполнения
+                    браузера («стрелки над клавиатурой»), которая накрывала
+                    поле ввода на мобильных. */}
                 <div
-                  className="flex-1 min-w-0 rounded-3xl flex items-end"
+                  className="flex-1 min-w-0 rounded-[22px] flex items-end transition-all focus-within:ring-2 focus-within:ring-primary/35 focus-within:border-primary/30"
                   style={{
-                    background: 'color-mix(in oklch, var(--card) 65%, transparent)',
-                    backdropFilter: 'blur(16px) saturate(140%)',
-                    WebkitBackdropFilter: 'blur(16px) saturate(140%)',
-                    border: '1px solid color-mix(in oklch, var(--border) 45%, transparent)',
-                    boxShadow: '0 2px 8px -2px rgba(15,23,42,0.08)',
+                    background: 'var(--card)',
+                    border: '1px solid var(--border)',
+                    boxShadow: '0 2px 10px -3px rgba(15,23,42,0.10)',
                   }}
                 >
-                  {/* 😊 Кнопка эмодзи — встроена внутрь поля ввода (слева) */}
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.88 }}
-                    whileHover={{ scale: 1.06 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-                    onClick={() => {
-                      haptic.tap()
-                      setEmojiPanelOpen((v) => !v)
-                    }}
-                    className="shrink-0 h-11 w-11 rounded-full grid place-items-center transition-all mb-0.5 ml-1"
-                    style={{
-                      background: emojiPanelOpen
-                        ? 'var(--gradient-brand)'
-                        : 'transparent',
-                      border: emojiPanelOpen
-                        ? '1px solid rgba(255,255,255,0.18)'
-                        : '1px solid transparent',
-                      color: emojiPanelOpen ? '#fff' : 'var(--muted-foreground)',
-                    }}
-                    aria-label={emojiPanelOpen ? 'Закрыть эмодзи' : 'Открыть эмодзи'}
-                    aria-expanded={emojiPanelOpen}
-                    title="Эмодзи"
-                  >
-                    <Smile className="h-[19px] w-[19px]" strokeWidth={2.2} />
-                  </motion.button>
-
                   <textarea
                     ref={textareaRef}
                     value={text}
-                    onChange={(e) => {
-                      onTextChange(e.target.value)
-                      e.target.style.height = 'auto'
-                      e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
-                    }}
+                    onChange={(e) => onTextChange(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault()
@@ -2533,64 +2820,20 @@ export function ChatView() {
                     }}
                     placeholder="Сообщение…"
                     rows={1}
-                    className="flex-1 min-w-0 resize-none bg-transparent border-0 outline-none text-base py-2.5 px-2 max-h-[120px] leading-relaxed placeholder:text-muted-foreground/60"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="sentences"
+                    spellCheck={false}
+                    data-form-type="other"
+                    data-lpignore="true"
+                    enterKeyHint="send"
+                    name="chat-message"
+                    className="flex-1 min-w-0 resize-none bg-transparent border-0 outline-none text-[15px] py-[13px] px-4 max-h-[132px] leading-relaxed placeholder:text-muted-foreground/60"
                     style={{ scrollbarWidth: 'thin' }}
                   />
-
-                  {/* 🛍 Кнопка «Товар» — встроена внутрь поля ввода (справа) */}
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.88 }}
-                    whileHover={{ scale: 1.06 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-                    onClick={() => {
-                      haptic.tap()
-                      setProductPickerOpen(true)
-                    }}
-                    className="shrink-0 h-11 w-11 rounded-full grid place-items-center transition-colors mb-0.5 mr-1"
-                    style={{
-                      background: 'transparent',
-                      color: 'var(--muted-foreground)',
-                    }}
-                    aria-label="Отправить товар"
-                    title="Выбрать товар для отправки"
-                  >
-                    <ShoppingBag className="h-[18px] w-[18px]" strokeWidth={2.2} />
-                  </motion.button>
                 </div>
 
-                {/* v17: Кнопка «Media Hub» — единая фирменная иконка (glass, music+video).
-                    Открывает компактное стеклянное меню выбора Audio/Video Hub.
-                    Пользователь НЕ покидает переписку. */}
-                <motion.button
-                  type="button"
-                  whileTap={{ scale: 0.88 }}
-                  whileHover={{ scale: 1.06 }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-                  onClick={() => {
-                    haptic.tap()
-                    // v16.9.4: Close the global overlay to prevent both being open.
-                    window.dispatchEvent(new CustomEvent('close-media-hub'))
-                    setAudioHubPickerOpen(true)
-                  }}
-                  className="shrink-0 h-11 w-11 rounded-full grid place-items-center transition-colors"
-                  style={{
-                    background: 'color-mix(in oklch, var(--card) 65%, transparent)',
-                    backdropFilter: 'blur(16px) saturate(140%)',
-                    WebkitBackdropFilter: 'blur(16px) saturate(140%)',
-                    border: '1px solid color-mix(in oklch, var(--border) 45%, transparent)',
-                    boxShadow: '0 2px 8px -2px rgba(15,23,42,0.08)',
-                  }}
-                  aria-label="Media Hub — музыка и фильмы"
-                  title="Найти и отправить музыку или фильм"
-                >
-                  <MediaHubIcon size={22} />
-                </motion.button>
-
-                {/* Кнопка отправки/записи — плавный morph Mic → ArrowUp.
-                    Пока поле пустое — Mic (запись голосового).
-                    При вводе текста — ArrowUp (отправка).
-                    AnimatePresence + scale/rotate для красивого перехода. */}
+                {/* Кнопка отправки/записи — плавный morph Mic → ArrowUp */}
                 <button
                   onClick={text.trim() ? sendText : startRecording}
                   className="shrink-0 h-11 w-11 rounded-full grid place-items-center text-white active:scale-90 transition-transform"
@@ -2723,7 +2966,8 @@ export function ChatView() {
             ? 'Поддержка'
             : chatListMenu.conv?.participant?.displayName || chatListMenu.conv?.participant?.username || 'Чат'
         }
-        isPinned={chatListMenu.conv?.type === 'support'}
+        isPinned={chatListMenu.conv?.isPinned || chatListMenu.conv?.type === 'support'}
+        isArchived={!!chatListMenu.conv?.isArchived}
         onClose={() => setChatListMenu({ open: false, conv: null })}
         onDelete={() => {
           if (!chatListMenu.conv) return
@@ -2736,7 +2980,7 @@ export function ChatView() {
             try {
               await api.delete(`/api/chat/conversations/${chatListMenu.conv!.id}`, { auth: true })
               setConversations((cur) => cur.filter((c) => c.id !== chatListMenu.conv!.id))
-              toast.success('Чат удалён')
+              toast.success('Чат удалён навсегда')
             } catch {
               toast.error('Не удалось удалить чат')
             }
@@ -2754,9 +2998,111 @@ export function ChatView() {
             }
           })()
         }}
-        onArchive={() => toast.info('Архивация скоро будет доступна')}
-        onTogglePin={() => toast.info(chatListMenu.conv?.type === 'support' ? 'Чат поддержки уже закреплён' : 'Закрепление скоро будет доступно')}
+        onArchive={() => {
+          // v25.24: архивировать/вернуть — работающее действие (per-user state)
+          const conv = chatListMenu.conv
+          if (!conv) return
+          if (conv.type === 'support') {
+            toast.info('Чат поддержки нельзя архивировать')
+            return
+          }
+          const next = !conv.isArchived
+          setConversations((cur) => cur.map((c) => (c.id === conv.id ? { ...c, isArchived: next, isPinned: next ? false : c.isPinned } : c)))
+          api
+            .patch(`/api/chat/conversations/${conv.id}/state`, { json: { isArchived: next }, auth: true })
+            .then(() => toast.success(next ? 'Чат перемещён в архив' : 'Чат возвращён из архива'))
+            .catch(() => {
+              setConversations((cur) => cur.map((c) => (c.id === conv.id ? { ...c, isArchived: !next } : c)))
+              toast.error('Не удалось изменить')
+            })
+        }}
+        onTogglePin={() => {
+          // v25.24: закрепление работает (per-user state)
+          const conv = chatListMenu.conv
+          if (!conv) return
+          if (conv.type === 'support') {
+            toast.info('Чат поддержки всегда закреплён')
+            return
+          }
+          const next = !conv.isPinned
+          setConversations((cur) => cur.map((c) => (c.id === conv.id ? { ...c, isPinned: next } : c)))
+          api
+            .patch(`/api/chat/conversations/${conv.id}/state`, { json: { isPinned: next }, auth: true })
+            .then(() => toast.success(next ? 'Чат закреплён' : 'Чат откреплён'))
+            .catch(() => {
+              setConversations((cur) => cur.map((c) => (c.id === conv.id ? { ...c, isPinned: !next } : c)))
+              toast.error('Не удалось изменить')
+            })
+        }}
       />
+
+      {/* v25.24: шит выбора игры для онлайн-дуэли */}
+      <AnimatePresence>
+        {gamePickerOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-[95] bg-black/40"
+              style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+              onClick={() => setGamePickerOpen(false)}
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', stiffness: 360, damping: 36, mass: 0.9 }}
+              className="fixed left-0 right-0 bottom-0 z-[96] mx-auto max-w-md"
+            >
+              <div
+                className="rounded-t-[28px] overflow-hidden"
+                style={{
+                  background: 'color-mix(in oklch, var(--card) 92%, transparent)',
+                  backdropFilter: 'blur(28px) saturate(160%)',
+                  WebkitBackdropFilter: 'blur(28px) saturate(160%)',
+                  border: '1px solid color-mix(in oklch, var(--border) 60%, transparent)',
+                  borderBottom: 'none',
+                  boxShadow: '0 -10px 40px -10px rgba(15,23,42,0.3)',
+                }}
+              >
+                <div className="flex justify-center pt-2.5 pb-1">
+                  <div className="h-1 w-10 rounded-full bg-foreground/20" />
+                </div>
+                <div className="px-5 pt-1 pb-2">
+                  <div className="text-sm font-bold truncate">
+                    Сыграть с {activeConv?.participant?.displayName || activeConv?.participant?.username || 'собеседником'}
+                  </div>
+                  <div className="text-xs text-muted-foreground">Приглашение придёт в этот чат мгновенно</div>
+                </div>
+                <div className="px-3 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-1 max-h-[70vh] overflow-y-auto">
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {GAME_INVITES.map((g) => (
+                      <button
+                        key={g.type}
+                        onClick={() => handleSendGameInvite(g.type)}
+                        className="flex flex-col items-center gap-1.5 p-3 rounded-2xl hover:bg-foreground/5 active:scale-[0.98] transition-all text-center"
+                      >
+                        <div
+                          className="grid place-items-center h-12 w-12 rounded-2xl text-2xl shrink-0"
+                          style={{ background: g.gradient }}
+                        >
+                          {g.emoji}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[12.5px] font-bold leading-tight">{g.title}</div>
+                          <div className="text-[10.5px] text-muted-foreground leading-tight">{g.desc}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* v9-voice: AmbientGlow — soft breathing light around the screen edges.
           Two variants:
@@ -2794,7 +3140,12 @@ export function ChatView() {
           }
         }}
         isFavorite={contextMenu.message ? favorites.isFavorite(contextMenu.message.id) : false}
-        onPin={() => toast.info('📌 Закрепление сообщений скоро будет доступно')}
+        onPin={() => {
+          // v25.27: реальное закрепление (Telegram-style) вместо заглушки.
+          const m = contextMenu.message
+          setContextMenu((c) => ({ ...c, open: false }))
+          if (m) void handleTogglePin(m)
+        }}
         onEdit={() => {
           if (contextMenu.message) {
             // Only allow editing own text messages within 48h (backend will
@@ -2817,7 +3168,7 @@ export function ChatView() {
           if (contextMenu.message?.mediaUrl && navigator.share) {
             try {
               await navigator.share({
-                title: '999PRO',
+                title: 'TRI999',
                 url: assetUrl(contextMenu.message.mediaUrl),
               })
             } catch {}

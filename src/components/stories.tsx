@@ -12,6 +12,12 @@ import { cn } from '@/lib/utils'
 import { getStoryPaletteForCategory, type StoryPalette } from '@/lib/gradients'
 import { useScrollLock } from '@/lib/use-scroll-lock'
 
+// v25.22 (owner): «сторис сделай чуть побольше, примерно как в Инстаграме,
+// и цветной градиент прогресса типа эффекта saber»:
+//  • Круги увеличены: 72→88px (мобайл), 96→112px (десктоп);
+//  • прогресс-полосы во вьювере — светящийся градиент «saber»
+//    (классы .saber-fill/.saber-done в globals.css).
+
 export function Stories() {
   const [stories, setStories] = useState<Story[]>([])
   const [loading, setLoading] = useState(true)
@@ -59,8 +65,10 @@ export function Stories() {
     totalMedia: number
   }
   const groups: Group[] = stories.map((s) => {
-    const cat = s.category || 'Все'
-    const palette = getStoryPaletteForCategory(cat)
+    // v25.17: категория может отсутствовать («без категории, без ничего») —
+    // палитра тогда нейтральная, а подпись под кругом — имя автора.
+    const cat = s.category || ''
+    const palette = getStoryPaletteForCategory(cat || 'Все')
     const coverImageUrl = s.media?.length ? s.media[s.media.length - 1] : null
     return {
       category: cat,
@@ -76,27 +84,35 @@ export function Stories() {
     <section aria-label="Истории" className="pt-2 md:pt-4">
       <div
         ref={scrollerRef}
-        className="no-scrollbar smooth-x flex gap-3 md:gap-4 overflow-x-auto px-4 md:px-6 pb-2 snap-edge"
+        className="no-scrollbar smooth-x flex gap-3 md:gap-4 overflow-x-auto px-3 md:px-6 pb-2 snap-edge"
       >
         {loading
           ? Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="shrink-0 flex flex-col items-center gap-1.5 w-[84px] md:w-[108px]">
-                <div className="h-[72px] w-[72px] md:h-24 md:w-24 rounded-full skeleton" />
-                <div className="h-3 w-12 rounded skeleton" />
+              <div key={i} className="shrink-0 flex flex-col items-center gap-1.5 w-[100px] md:w-[124px]">
+                <div className="h-[88px] w-[88px] md:h-[112px] md:w-[112px] rounded-full skeleton" />
+                <div className="h-3 w-14 rounded skeleton" />
               </div>
             ))
           : groups.map((g, i) => (
               <button
                 key={g.cover.id}
                 onClick={() => setActiveIndex(i)}
-                className="shrink-0 flex flex-col items-center gap-1.5 w-[84px] md:w-[108px] group"
+                className="shrink-0 flex flex-col items-center gap-1.5 w-[100px] md:w-[124px] group"
               >
                 <div className="relative">
+                  {/* v25.17: «стопка» позади круга — тонкий намёк на несколько
+                      медиа внутри (вместо голой цифры — современно). */}
+                  {g.totalMedia > 1 && (
+                    <>
+                      <span aria-hidden className="absolute inset-1 rounded-full bg-background/70 -rotate-6 translate-x-1 translate-y-0.5 ring-1 ring-black/[0.06] dark:ring-white/[0.08]" />
+                      <span aria-hidden className="absolute inset-1 rounded-full bg-background/85 rotate-[8deg] translate-x-1.5 -translate-y-0.5 ring-1 ring-black/[0.06] dark:ring-white/[0.08]" />
+                    </>
+                  )}
                   <div
-                    className="h-[72px] w-[72px] md:h-24 md:w-24 rounded-full p-[2.5px] group-active:scale-95 transition-transform"
+                    className="relative h-[88px] w-[88px] md:h-[112px] md:w-[112px] rounded-full p-[3px] group-active:scale-95 transition-transform"
                     style={{
                       background: g.palette.ring,
-                      boxShadow: `0 6px 16px -4px ${g.palette.glow}, 0 0 0 1px rgba(255,255,255,0.3) inset`,
+                      boxShadow: `0 8px 20px -5px ${g.palette.glow}, 0 0 0 1px rgba(255,255,255,0.3) inset`,
                     }}
                   >
                     <div className="relative h-full w-full rounded-full p-[2px] bg-background overflow-hidden">
@@ -113,7 +129,7 @@ export function Stories() {
                             src={assetUrl(g.coverImageUrl)}
                             alt={g.category}
                             fill
-                            sizes="96px"
+                            sizes="120px"
                             className="object-cover rounded-full"
                             loading="lazy"
                           />
@@ -132,14 +148,23 @@ export function Stories() {
                     </div>
                   </div>
 
+                  {/* v25.17: современный счётчик медиа — стеклянная капсула
+                      с «стопкой» кадров и числом (не голая цифра). */}
                   {g.totalMedia > 1 && (
                     <span
-                      className="absolute -bottom-0.5 -right-0.5 min-w-[22px] h-[22px] px-1.5 rounded-full grid place-items-center text-white text-[10px] font-bold ring-2 ring-background"
+                      className="absolute -bottom-0.5 -right-1 h-[20px] rounded-full flex items-center gap-[3px] pl-[5px] pr-[7px] text-white text-[10px] font-bold ring-2 ring-background"
                       style={{
                         background: g.palette.chipBg,
+                        backdropFilter: 'blur(6px)',
+                        WebkitBackdropFilter: 'blur(6px)',
                         boxShadow: `0 4px 10px -2px ${g.palette.glow}`,
                       }}
                     >
+                      {/* mini «стопка» из двух кадров */}
+                      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden>
+                        <rect x="3.2" y="1" width="7.5" height="7.5" rx="1.6" fill="rgba(255,255,255,0.55)" />
+                        <rect x="1" y="3.4" width="7.5" height="7.5" rx="1.6" fill="#fff" fillOpacity="0.95" />
+                      </svg>
                       {g.totalMedia}
                     </span>
                   )}
@@ -148,7 +173,9 @@ export function Stories() {
                   className="text-[11px] md:text-xs truncate w-full text-center font-medium"
                   style={{ color: g.palette.solid }}
                 >
-                  {g.category}
+                  {/* v25.17: нет категории — подписываем именем автора,
+                      а не заглушкой «Все» */}
+                  {g.category || g.cover.user.displayName || g.cover.user.username}
                 </span>
               </button>
             ))}
@@ -218,6 +245,9 @@ function StoriesViewer({
   const totalMedia = story?.media.length ?? 0
   const currentMediaUrl = story?.media[mediaIndex]
   const palette = group?.palette
+  // v25.17: в сгруппированной сторис тип определяем по КОНКРЕТНОМУ URL —
+  // внутри одной сторис могут лежать и фото, и видео.
+  const currentIsVideo = !!currentMediaUrl && /\.(mp4|webm|mov)(\?|$)/i.test(currentMediaUrl)
 
   const advance = useCallback(() => {
     if (!group) return onClose()
@@ -532,25 +562,24 @@ function StoriesViewer({
           items-center so they are vertically centered on the same line,
           below the progress bars. Safe-area is respected for notch / status
           bar on iPhone and Android. */}
-      {/* Progress bars — topmost strip (2px tall) */}
+      {/* Progress bars — topmost strip (v25.22: 3px, «saber»-градиент со
+          свечением — активный сегмент светится как световой меч, пройденные
+          сохраняют мягкий градиент; классы в globals.css) */}
       <div
-        className="absolute left-4 right-4 flex gap-1 z-30"
+        className="absolute left-4 right-4 flex gap-1.5 z-30"
         style={{ top: 'max(1rem, env(safe-area-inset-top))' }}
         onClick={(e) => e.stopPropagation()}
       >
         {segments.map((seg, i) => (
           <div
             key={i}
-            className="flex-1 h-0.5 rounded-full overflow-hidden"
-            style={{ background: 'rgba(255, 255, 255, 0.3)' }}
+            className="flex-1 h-[3px] rounded-full overflow-hidden"
+            style={{ background: 'rgba(255, 255, 255, 0.22)' }}
           >
             <div
               ref={i === currentSegmentIdx ? currentProgressBarRef : undefined}
-              className="h-full"
-              style={{
-                background: '#ffffff',
-                width: i < currentSegmentIdx ? '100%' : '0%',
-              }}
+              className={i < currentSegmentIdx ? 'h-full w-full saber-done' : 'h-full saber-fill'}
+              style={{ width: i < currentSegmentIdx ? undefined : '0%' }}
             />
           </div>
         ))}
@@ -598,7 +627,7 @@ function StoriesViewer({
               @{story.user.username} · {timeAgo(story.createdAt)}
             </div>
           </div>
-          {group.category && group.category !== 'Все' && (
+          {group.category && (
             <span
               className="shrink-0 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide text-white"
               style={{
@@ -656,8 +685,9 @@ function StoriesViewer({
             : 'none',
         }}
       >
-        {story.mediaType === 'video' ? (
+        {currentIsVideo ? (
           <video
+            key={currentMediaUrl || 'video'}
             src={assetUrl(currentMediaUrl)}
             className="w-full h-full object-contain"
             autoPlay
@@ -680,43 +710,56 @@ function StoriesViewer({
         )}
       </div>
 
-      {/* ====== Multi-image dots (bottom center) ====== */}
+      {/* ====== Multi-media segments (bottom center) — v25.17 стиль:
+          тонкие сегменты в стеклянной капсуле, активный растянут ====== */}
       {totalMedia > 1 && (
         <div
-          className="absolute z-30 flex items-center gap-1.5"
+          className="absolute z-30 flex items-center gap-[3px] px-2 h-5 rounded-full"
           style={{
             bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.5rem)',
             left: '50%',
             transform: 'translateX(-50%)',
+            background: 'rgba(0,0,0,0.35)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
           }}
           onClick={(e) => e.stopPropagation()}
         >
           {story.media.map((_, i) => (
             <span
               key={i}
-              className="rounded-full transition-all"
+              className="rounded-full transition-all duration-300"
               style={{
-                width: i === mediaIndex ? '8px' : '6px',
-                height: i === mediaIndex ? '8px' : '6px',
-                background: i === mediaIndex ? '#ffffff' : 'rgba(255,255,255,0.45)',
-                boxShadow: i === mediaIndex ? '0 0 8px rgba(255,255,255,0.6)' : 'none',
+                width: i === mediaIndex ? 14 : 5,
+                height: 3,
+                background: i === mediaIndex ? '#ffffff' : 'rgba(255,255,255,0.5)',
+                transitionTimingFunction: 'cubic-bezier(0.34, 1.3, 0.44, 1)',
               }}
             />
           ))}
         </div>
       )}
 
-      {/* ====== Caption (bottom) — only on last image of story ====== */}
-      {story.caption && mediaIndex === totalMedia - 1 && (
+      {/* ====== Caption (bottom) — v25.17: подпись видна на КАЖДОМ слайде
+          сторис (раньше — только на последнем). Если подписи нет — не
+          рендерим ничего (ни текста, ни категории — «без ничего»). ====== */}
+      {story.caption && (
         <div
-          className="absolute bottom-0 inset-x-0 p-5 z-20"
-          style={{
-            background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%)',
-            paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.5rem)',
-          }}
+          className="absolute inset-x-0 bottom-0 z-20 px-4"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 3rem)' }}
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="text-white text-sm leading-relaxed">{story.caption}</p>
+          <div
+            className="mx-auto max-w-fit px-4 py-2 rounded-2xl text-white text-sm leading-relaxed text-center"
+            style={{
+              background: 'rgba(0,0,0,0.45)',
+              backdropFilter: 'blur(14px) saturate(160%)',
+              WebkitBackdropFilter: 'blur(14px) saturate(160%)',
+              boxShadow: '0 8px 24px -10px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.14)',
+            }}
+          >
+            {story.caption}
+          </div>
         </div>
       )}
 

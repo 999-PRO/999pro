@@ -18,8 +18,9 @@ import {
   Package, Clock, CheckCircle2, Truck, XCircle, CreditCard,
   ChevronRight, ArrowLeft, ShoppingBag, RefreshCw,
   Phone, MapPin, MessageCircle, FileText,
-  User, Store, MessageSquare, Ticket, Navigation,
+  User, Store, MessageSquare, Ticket, Navigation, Wallet,
 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 // ============================================================================
 // OrdersView — full "My Orders" page.
@@ -238,7 +239,7 @@ export function OrdersView({
     <div className="page-top-padding pb-28 md:pb-6">
       <div className="px-4 md:px-6 max-w-4xl mx-auto">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-5">
+        <div className="flex items-center gap-3 mb-4">
           <div className="h-11 w-11 rounded-2xl gradient-brand grid place-items-center shadow-glow shrink-0">
             <Package className="h-5 w-5 text-white" />
           </div>
@@ -255,9 +256,36 @@ export function OrdersView({
             className="rounded-full shrink-0"
             aria-label="Обновить"
           >
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw className={cn('h-4 w-4', ordersLoading && 'animate-spin')} />
           </Button>
         </div>
+
+        {/* v25.19: сводка-статистика — мягкие стеклянные чипы */}
+        {!ordersLoading && orders.length > 0 && (() => {
+          const totalSum = orders.reduce((s, o) => s + (o.total || 0), 0)
+          const inWork = orders.filter((o) => ['new', 'in_work', 'production'].includes(o.status)).length
+          return (
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {[
+                { label: 'Всего', value: String(orders.length), icon: Package, grad: 'from-[#EC4899] to-[#A855F7]' },
+                { label: 'В работе', value: String(inWork), icon: Clock, grad: 'from-[#F59E0B] to-[#EA580C]' },
+                { label: 'Сумма', value: formatPrice(totalSum), icon: Wallet, grad: 'from-[#10B981] to-[#059669]' },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  className="relative overflow-hidden rounded-2xl bg-card ring-1 ring-black/[0.04] dark:ring-white/[0.06] p-3"
+                  style={{ boxShadow: '0 10px 26px -18px rgba(15,23,42,0.35)' }}
+                >
+                  <span aria-hidden className={cn('absolute -top-4 -right-4 h-14 w-14 rounded-full opacity-15 bg-gradient-to-br blur-xl', s.grad)} />
+                  <s.icon className="h-4 w-4 text-muted-foreground mb-1.5" />
+                  <div className="text-sm font-extrabold tracking-tight truncate">{s.value}</div>
+                  <div className="text-[10px] text-muted-foreground font-medium">{s.label}</div>
+                </div>
+              ))
+              }
+            </div>
+          )
+        })()}
 
         {/* Content */}
         <OrdersList
@@ -364,11 +392,16 @@ function OrdersList({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-              className="rounded-3xl glass overflow-hidden"
+              // v25.19: карточка-карточка: bg-card + кольцо + мягкая тень +
+              // ЦВЕТНАЯ полоска статуса слева (мгновенно считывается состояние)
+              className="relative rounded-3xl overflow-hidden bg-card ring-1 ring-black/[0.04] dark:ring-white/[0.06]"
+              style={{ boxShadow: '0 14px 38px -26px rgba(15,23,42,0.4)' }}
             >
+              {/* Акцентная полоска статуса слева */}
+              <span aria-hidden className={cn('absolute left-0 top-0 bottom-0 w-1', cfg.bg.replace('/15', '/70'))} />
               <button
                 onClick={() => setExpandedId(expanded ? null : order.id)}
-                className="w-full p-4 flex items-center gap-3 hover:bg-accent/40 transition-colors text-left"
+                className="w-full p-4 pl-5 flex items-center gap-3 hover:bg-accent/30 transition-colors text-left"
               >
                 <div className="relative h-14 w-14 shrink-0">
                   {order.items.slice(0, 2).map((item, i) => {
@@ -387,10 +420,10 @@ function OrdersList({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-mono text-muted-foreground">
+                    <span className="text-[11px] font-mono text-muted-foreground">
                       #{order.id.slice(-8).toUpperCase()}
                     </span>
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${cfg.bg} ${cfg.color}`}>
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${cfg.bg} ${cfg.color}`}>
                       <StatusIcon className="h-3 w-3" />
                       {cfg.label}
                     </span>
@@ -401,10 +434,19 @@ function OrdersList({
                       : `${order.items.length} товара`}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {timeAgo(new Date(order.createdAt))} · {formatPrice(order.total)}
+                    {timeAgo(new Date(order.createdAt))}
                   </div>
                 </div>
-                <ChevronRight className={`h-5 w-5 text-muted-foreground shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                {/* v25.19: сумма — крупно справа, градиентный акцент */}
+                <div className="shrink-0 text-right">
+                  <div
+                    className="text-[15px] font-extrabold tracking-tight bg-clip-text text-transparent"
+                    style={{ backgroundImage: 'linear-gradient(135deg,#A02070,#EC4899)' }}
+                  >
+                    {formatPrice(order.total)}
+                  </div>
+                  <ChevronRight className={cn('h-5 w-5 text-muted-foreground ml-auto transition-transform', expanded ? 'rotate-90' : '')} />
+                </div>
               </button>
 
               <AnimatePresence initial={false}>

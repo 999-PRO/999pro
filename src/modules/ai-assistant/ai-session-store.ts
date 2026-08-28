@@ -73,7 +73,11 @@ export const useAISession = create<AISessionState>()(
       open: false,
       conversationId: null,
       messages: [],
-      mode: 'text',
+      // v25.16 (owner): «чтобы для начала была именно голосовой бот» —
+      // новым пользователям агент открывается в ГОЛОСОВОМ режиме.
+      // Клавиатура выбирается вручную (переключатель режима), и этот выбор
+      // запоминается (см. 999pro-ai-mode-explicit в ai-assistant/index.tsx).
+      mode: 'voice',
       autoSpeak: false,
       lastContext: null,
       greetingShown: false,

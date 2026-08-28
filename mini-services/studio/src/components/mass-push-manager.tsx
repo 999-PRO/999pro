@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
-import { Send, Loader2, Megaphone, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Send, Loader2, Megaphone, Users, BellRing } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useConfirmDialog, StudioConfirmDialog } from '@/components/ui/confirm-dialog'
 import { toast } from '@/lib/notifications'
 
@@ -15,7 +16,29 @@ export function MassPushManager() {
   const [url, setUrl] = useState('/')
   const [sending, setSending] = useState(false)
   const [recipientCount, setRecipientCount] = useState<number | null>(null)
+  // v25.15: авто-push при новом товаре (setting notifyNewProduct,
+  // по умолчанию ВКЛ — отсутствующее значение трактуется как true).
+  const [autoNewProduct, setAutoNewProduct] = useState(true)
+  const [autoLoading, setAutoLoading] = useState(true)
   const { dialog: confirmDialog, confirm: openConfirm, close: closeConfirm } = useConfirmDialog()
+
+  useEffect(() => {
+    api.get<{ value: boolean | null }>('/api/settings/notifyNewProduct')
+      .then((d) => setAutoNewProduct(d.value !== false))
+      .catch(() => {})
+      .finally(() => setAutoLoading(false))
+  }, [])
+
+  const toggleAutoNewProduct = async (v: boolean) => {
+    setAutoNewProduct(v)
+    try {
+      await api.put('/api/settings/notifyNewProduct', { json: v, auth: true })
+      toast.success(v ? 'Авто-push при новом товаре включён' : 'Авто-push отключён')
+    } catch {
+      setAutoNewProduct(!v)
+      toast.error('Не удалось сохранить настройку')
+    }
+  }
 
   const handleSend = async () => {
     if (!title.trim() || !body.trim()) {
@@ -130,6 +153,33 @@ export function MassPushManager() {
             </>
           )}
         </Button>
+
+        {/* ── v25.15: АВТОУВЕДОМЛЕНИЯ ─────────────────────────────── */}
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <BellRing className="h-5 w-5 text-violet-600" />
+            <span className="font-bold">Автоуведомления</span>
+          </div>
+
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <Label className="text-sm font-semibold cursor-pointer" htmlFor="auto-new-product">
+                Push при добавлении товара
+              </Label>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                Когда вы публикуете новый товар в каталоге, все пользователи с
+                включёнными уведомлениями автоматически получают push:
+                «Новый товар в каталоге». Вам самим уведомление не приходит.
+              </p>
+            </div>
+            <Switch
+              id="auto-new-product"
+              checked={autoNewProduct}
+              disabled={autoLoading}
+              onCheckedChange={toggleAutoNewProduct}
+            />
+          </div>
+        </div>
       </div>
 
       <StudioConfirmDialog

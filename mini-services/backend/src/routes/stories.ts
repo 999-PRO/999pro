@@ -79,12 +79,12 @@ router.get(
 )
 
 // POST /api/stories — admin only.
-// v14: each URL in `media` becomes its OWN Story row (was: one Story with N
-// slides bundled in a JSON array). This way uploading 5 photos creates 5
-// separate story circles in the bar, each opening to a single image — which
-// is what users intuitively expect. Legacy multi-image rows (if any exist in
-// the DB from older versions) still display as multi-slide stories via the
-// viewer's existing mediaIndex cursor — no migration required.
+// v25.17 (owner: «я сразу выделяю несколько фотографий и добавляю в сторисы…
+// сделай так, чтобы он в одном сторисе все картинки были»): по умолчанию все
+// URL из `media` попадают в ОДНУ Story (media — JSON-массив) и листаются
+// свайпом внутри просмотра, как в Instagram. Старое поведение (каждый URL =
+// отдельная сторис) доступно через grouped:false. Legacy multi-URL строки из
+// старых версий и так отображаются как многослайдовые (mediaIndex во вьювере).
 router.post(
   '/',
   requireAuth,
@@ -93,33 +93,53 @@ router.post(
     const data = createStorySchema.parse(req.body)
     const expiresAt = new Date(Date.now() + data.durationHours * 3600 * 1000)
 
-    // media is normalised to string[] by createStorySchema.transform.
-    // Create one Story per URL, atomically, all sharing the same
-    // caption / category / expiresAt. Detect mediaType per URL so a mixed
-    // image+video batch still gets correct per-row types.
-    const created = await prisma.$transaction(
-      data.media.map((url) =>
-        prisma.story.create({
-          data: {
-            userId: req.user!.id,
-            media: JSON.stringify([url]),
-            mediaType: /\.(mp4|webm|mov)(\?|$)/i.test(url) ? 'video' : (data.mediaType || 'image'),
-            caption: data.caption,
-            category: data.category,
-            expiresAt,
-          },
-          include: {
-            user: { select: { id: true, username: true, displayName: true, avatar: true } },
-          },
-        }),
-      ),
-    )
+    let created
+    if (data.grouped === false) {
+      // Legacy split mode: one Story per URL (all share caption/category/expiresAt),
+      // mediaType detected per URL so a mixed batch still gets correct types.
+      created = await prisma.$transaction(
+        data.media.map((url) =>
+          prisma.story.create({
+            data: {
+              userId: req.user!.id,
+              media: JSON.stringify([url]),
+              mediaType: /\.(mp4|webm|mov)(\?|$)/i.test(url) ? 'video' : (data.mediaType || 'image'),
+              caption: data.caption,
+              category: data.category,
+              expiresAt,
+            },
+            include: {
+              user: { select: { id: true, username: true, displayName: true, avatar: true } },
+            },
+          }),
+        ),
+      )
+    } else {
+      // v25.17 grouped mode (default): ONE story with every media inside.
+      // mediaType = 'video' только если ВСЕ URLs — видео; иначе 'image'
+      // (вьювер сам рендерит <video> по расширению конкретного URL).
+      const allVideo = data.media.every((u) => /\.(mp4|webm|mov)(\?|$)/i.test(u))
+      const row = await prisma.story.create({
+        data: {
+          userId: req.user!.id,
+          media: JSON.stringify(data.media),
+          mediaType: allVideo ? 'video' : (data.mediaType || 'image'),
+          caption: data.caption,
+          category: data.category,
+          expiresAt,
+        },
+        include: {
+          user: { select: { id: true, username: true, displayName: true, avatar: true } },
+        },
+      })
+      created = [row] // единый shape ответа ниже
+    }
 
     // Audit one entry per created story (best-effort, non-critical).
     for (const s of created) {
       await auditLog(req, 'story', s.id, 'create', {
         before: null,
-        after: { mediaType: s.mediaType, category: s.category, caption: s.caption?.slice(0, 100) ?? null },
+        after: { mediaType: s.mediaType, category: s.category, caption: s.caption?.slice(0, 100) ?? null, mediaCount: parseMediaArray(s.media).length },
       }).catch(() => {/* audit failure is non-critical */})
     }
 

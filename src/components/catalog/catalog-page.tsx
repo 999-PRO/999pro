@@ -7,12 +7,21 @@ import { ProductCard } from '../product-card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/haptic'
+// v25.19: промо-баннер в каталоге (как на главной, с тумблером в Студии)
+import { PromoBannerCarousel } from '../promo-banner'
+// v25.19: «нейро»-анимация появления товаров при скролле
+import { NeuroReveal } from '../neuro-reveal'
 // v25.12: favorites store for "Избранное" filter
 import { useFavoritesStore } from '@/lib/cart-store'
+// v25.27: драг мышью для чипов категорий (десктоп)
+import { useDragScroll } from '@/lib/use-drag-scroll'
 import type { Product } from '@/lib/types'
 
-// v25.12: CatalogPage — точная реплика с IMG_3194.
-// Промо-баннер + H1 + поиск + чипы категорий + панель (Фильтры/grid-list/Избранное) + grid 2 колонки.
+// v25.15 CATOLOG FACELIFT:
+//   • Шапка: крупный заголовок с градиентным акцентом + счётчик товаров
+//     в виде мягкой плашки-чипа.
+//   • Поиск: glass-инпут с фокус-кольцом; в подсказке прямо упомянут
+//     АРТИКУЛ («клиент прислал артикул → вставь и найди товар»).
 
 interface CatalogPageProps {
   onOpenProduct: (id: string) => void
@@ -39,6 +48,8 @@ interface Category {
 }
 
 export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps) {
+  // v25.27: drag-scroll + стрелки для чипов категорий на десктопе
+  const catsDrag = useDragScroll<HTMLDivElement>()
   const [products, setProducts] = useState<Product[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -59,6 +70,22 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
   const [maxPrice, setMaxPrice] = useState('')
   const [inStockOnly, setInStockOnly] = useState(false)
   const [hasDiscount, setHasDiscount] = useState(false)
+
+  // v25.19: баннер в каталоге — читаем тумблер из Студии (по умолчанию ВКЛ)
+  const [bannerEnabled, setBannerEnabled] = useState(true)
+  useEffect(() => {
+    const load = () => {
+      api.get<{ value: boolean | null }>('/api/settings/catalogBannerEnabled')
+        .then((d) => setBannerEnabled(d.value !== false))
+        .catch(() => {})
+    }
+    load()
+    const onChanged = (e: Event) => {
+      if ((e as CustomEvent).detail?.key === 'catalogBannerEnabled') load()
+    }
+    window.addEventListener('999pro:settings-changed', onChanged as EventListener)
+    return () => window.removeEventListener('999pro:settings-changed', onChanged as EventListener)
+  }, [])
 
   useEffect(() => {
     api.get<{ items: Category[] }>('/api/categories')
@@ -178,42 +205,81 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
 
   return (
     <div className="pb-28 md:pb-12 page-top-padding">
+      {/* v25.19: промо-баннер каталога — тот же карусель, что на главной;
+          включается/выключается тумблером в Студии → Баннеры.
+          v25.27 (owner): на десктопе баннер был «очень длинным» (full-bleed
+          на всю ширину экрана). Обёртка md:max-w-7xl md:mx-auto — ТА ЖЕ
+          ширина/центрирование, что у баннера на главной (home-view Band).
+          Мобильная версия не тронута (px-3 живёт внутри карусели). */}
+      {bannerEnabled && (
+        <div className="mb-2 md:mb-4 md:max-w-7xl md:mx-auto">
+          <PromoBannerCarousel />
+        </div>
+      )}
+
       {/* H1 Header */}
-      <div className="px-4 md:px-6 pt-4 md:pt-6 pb-3">
+      <div className="px-4 md:px-6 pt-4 md:pt-8 pb-3">
         <div className="max-w-[1440px] mx-auto">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
             <Grid2x2 className="h-3.5 w-3.5" />
             <span>Каталог</span>
           </div>
-          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-foreground">
-            Все товары
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {total > 0 ? `${total} ${pluralize(total, 'товар', 'товара', 'товаров')}` : 'Загрузка…'}
-          </p>
+          {/* v25.15: заголовок с градиентным словом + счётчик-чип справа */}
+          <div className="flex items-end justify-between flex-wrap gap-x-6 gap-y-3">
+            <div>
+              <h1 className="text-[26px] leading-tight md:text-4xl font-extrabold tracking-tight text-foreground">
+                Весь{' '}
+                <span
+                  className="bg-gradient-to-r from-[#EC4899] via-[#A855F7] to-[#9333EA] bg-clip-text text-transparent"
+                >
+                  каталог
+                </span>{' '}
+                в одном месте
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1.5">
+                Найдётся по названию, описанию и даже по артикулу
+              </p>
+            </div>
+            <span className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-card ring-1 ring-black/[0.04] dark:ring-white/[0.07] shadow-[0_4px_18px_-10px_rgba(0,0,0,0.25)]">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="text-xs font-semibold tabular-nums">
+                {total > 0 ? `${total} ${pluralize(total, 'товар', 'товара', 'товаров')}` : 'Загрузка…'}
+              </span>
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Search bar */}
-      <div className="px-4 md:px-6 pb-3">
+      <div className="px-4 md:px-6 pb-4">
         <div className="max-w-[1440px] mx-auto">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="group relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по названию, артикулу, описанию"
-              className="w-full h-12 pl-11 pr-4 rounded-full bg-muted border border-transparent outline-none focus:border-primary/40 focus:bg-card transition-all text-sm"
+              placeholder="Название, описание или артикул…"
+              className="w-full h-12 pl-11 pr-24 rounded-2xl bg-card ring-1 ring-black/[0.05] dark:ring-white/[0.08] border border-transparent outline-none focus:ring-2 focus:ring-primary/45 focus:shadow-[0_10px_34px_-14px_rgba(160,32,112,0.4)] transition-all text-sm"
             />
+            {!search && (
+              <kbd className="hidden md:inline-flex absolute right-4 top-1/2 -translate-y-1/2 items-center rounded-md bg-muted px-2 py-1 text-[10px] font-semibold text-muted-foreground pointer-events-none">
+                есть артикул? просто вставьте его сюда
+              </kbd>
+            )}
           </div>
         </div>
       </div>
 
       {/* Categories chips */}
       <div className="pb-3">
-        <div className="max-w-[1440px] mx-auto px-4 md:px-6">
-          <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
+        <div className="max-w-[1440px] mx-auto px-4 md:px-6 relative">
+          {/* v25.27: драг мышью + стрелки ‹ › на десктопе (мобильный свайп не тронут) */}
+          <div
+            ref={catsDrag.ref}
+            onScroll={catsDrag.update}
+            className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 cursor-grab active:cursor-grabbing select-none"
+          >
             <button
               onClick={() => setCategory(undefined)}
               className={cn(
@@ -244,6 +310,26 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
               </button>
             ))}
           </div>
+          {catsDrag.canLeft && (
+            <button
+              type="button"
+              aria-label="Прокрутить категории влево"
+              onClick={() => catsDrag.scrollBy(-240)}
+              className="hidden md:grid place-items-center absolute -left-1 top-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-card/95 shadow-lg ring-1 ring-black/[0.06] dark:ring-white/[0.08] backdrop-blur-md transition-transform hover:scale-110 active:scale-95"
+            >
+              <ChevronLeft className="h-4 w-4" strokeWidth={2.4} />
+            </button>
+          )}
+          {catsDrag.canRight && (
+            <button
+              type="button"
+              aria-label="Прокрутить категории вправо"
+              onClick={() => catsDrag.scrollBy(240)}
+              className="hidden md:grid place-items-center absolute -right-1 top-1/2 -translate-y-1/2 h-8 w-8 rounded-full bg-card/95 shadow-lg ring-1 ring-black/[0.06] dark:ring-white/[0.08] backdrop-blur-md transition-transform hover:scale-110 active:scale-95"
+            >
+              <ChevronRight className="h-4 w-4" strokeWidth={2.4} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -324,7 +410,7 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
             </div>
           ) : displayProducts.length === 0 ? (
             <div className="py-20 text-center">
-              <div className="h-20 w-20 rounded-full bg-muted grid place-items-center mx-auto mb-4">
+              <div className="h-20 w-20 rounded-[26px] bg-gradient-to-br from-pink-500/10 to-violet-500/10 grid place-items-center mx-auto mb-4 ring-1 ring-black/[0.04] dark:ring-white/[0.06]">
                 {showFavorites ? (
                   <Heart className="h-10 w-10 text-muted-foreground" />
                 ) : (
@@ -349,15 +435,20 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
             </div>
           ) : viewMode === 'grid' ? (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
-              {displayProducts.map((p) => (
-                <ProductCard key={p.id} product={p} onOpen={onOpenProduct} />
+              {/* v25.19: «нейро-генерация» — карточки материализуются при скролле */}
+              {displayProducts.map((p, i) => (
+                <NeuroReveal key={p.id} delay={(i % 8) * 0.045}>
+                  <ProductCard product={p} onOpen={onOpenProduct} />
+                </NeuroReveal>
               ))}
             </div>
           ) : (
             /* v25.12: list view — 1 col on mobile, 2-3 cols on desktop (not huge single col) */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-              {displayProducts.map((p) => (
-                <ProductCard key={p.id} product={p} onOpen={onOpenProduct} variant="compact" />
+              {displayProducts.map((p, i) => (
+                <NeuroReveal key={p.id} delay={(i % 6) * 0.05}>
+                  <ProductCard product={p} onOpen={onOpenProduct} variant="compact" />
+                </NeuroReveal>
               ))}
             </div>
           )}
@@ -397,7 +488,14 @@ export function CatalogPage({ onOpenProduct, initialCategory }: CatalogPageProps
               </button>
             </div>
             <div className="p-4">
-              <FiltersContent />
+              {/* v25.20 FIX (owner): «пишу одну букву — и клавиатура сразу
+                  пропадает». FiltersContent был объявлен КАК КОМПОНЕНТ внутри
+                  CatalogPage — при каждом рендере React видел новый тип и
+                  ПОЛНОСТЬЮ ПЕРЕСОЗДАВАЛ поддерево (инпуты размонтировались →
+                  фокус и клавиатура терялись после первого символа). Вызов
+                  функции {FiltersContent()} инлайнит разметку в дерево родителя
+                  — инпуты живут между рендерами, фокус сохраняется. */}
+              {FiltersContent()}
               {/* Mobile sort */}
               <div className="mt-5">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">Сортировка</label>

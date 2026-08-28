@@ -117,6 +117,14 @@ const MAGIC_BYTES: Array<{ mime: string; bytes: number[]; offset: number }> = [
   { mime: 'video/mp4', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }, // ftyp at offset 4
   { mime: 'video/webm', bytes: [0x1a, 0x45, 0xdf, 0xa3], offset: 0 }, // EBML
   { mime: 'video/quicktime', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }, // qt  also uses ftyp
+  // v25.16 CRITICAL FIX (owner: «в товарах при загрузке фото ошибка»):
+  // iPhone сохраняет фотографии в HEIC/HEIF. Раньше он был в ALLOWED_MIME,
+  // но БЕЗ magic-byte подписи → matchesMagicBytes fail-closed возвращал false
+  // и клиент получал «File content does not match declared type». Теперь
+  // HEIC распознаётся по 'ftyp'-боксу на offset 4 (+ бренд heic/heix/mif1 и
+  // др. на offset 8 проверяется опционально ниже).
+  { mime: 'image/heic', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 },
+  { mime: 'image/heif', bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 },
   { mime: 'audio/mpeg', bytes: [0x49, 0x44, 0x33], offset: 0 }, // ID3
   // audio/mpeg can also start with 0xFF 0xFB (MP3 frame sync) — accepted below.
   { mime: 'audio/ogg', bytes: [0x4f, 0x67, 0x67, 0x53], offset: 0 }, // OggS
@@ -171,6 +179,14 @@ function matchesMagicBytes(buf: Buffer, mime: string): boolean {
     return true
   }
 
+  // v25.16: HEIC/HEIF — после 'ftyp' (offset 4..7) идёт brand-код (offset 8..11):
+  // heic/heix/hevc/heim/heis/hevm/msf1/mif1/mhe2/mhf2. Проверяем бренд,
+  // чтобы не принимать произвольные ISOBMFF-контейнеры под видом HEIC.
+  if ((canonicalMime === 'image/heic' || canonicalMime === 'image/heif') && buf.length >= 12) {
+    const brand = buf.toString('ascii', 8, 12)
+    return /^(heic|heix|hevc|heim|heis|hevx|hevm|mif1|msf1|mhe1|mhe2|vhv1)/.test(brand)
+  }
+
   const sig = MAGIC_BYTES.find((m) => m.mime === canonicalMime)
   if (!sig) {
     // No signature defined. Only allow for genuinely text-based or unknown
@@ -200,6 +216,22 @@ function matchesMagicBytes(buf: Buffer, mime: string): boolean {
 
 function fileToUrl(filename: string): string {
   return `/uploads/${path.basename(filename)}`
+}
+
+// v25.16: человекочитаемые ошибки загрузки вместо технического английского.
+function friendlyUploadError(raw: string, maxBytes: number): string {
+  const maxMb = Math.round(maxBytes / 1024 / 1024)
+  if (/too large|exceeds/i.test(raw)) {
+    return `Файл слишком большой — максимум ${maxMb} МБ. Сожмите фото или выберите другое`
+  }
+  if (/unsupported/i.test(raw)) {
+    return 'Этот формат не поддерживается. Подойдут JPG, PNG, WebP или HEIC'
+  }
+  if (/does not match|invalid/i.test(raw)) {
+    return 'Файл повреждён или не соответствует формату. Попробуйте другое фото'
+  }
+  if (/missing/i.test(raw)) return 'Файл не получен. Попробуйте ещё раз'
+  return 'Не удалось загрузить файл'
 }
 
 // ============================================================================
@@ -434,11 +466,13 @@ router.post(
       // Log full error server-side, but return a generic message to the
       // client to avoid leaking filesystem paths / Prisma internals.
       logger.error('single error:', { module: 'upload', error: e })
-      const safeMsg =
-        typeof e?.message === 'string' &&
-        /(?:too large|unsupported|invalid|missing|exceeds)/i.test(e.message)
-          ? e.message
-          : 'Upload failed'
+      const raw = typeof e?.message === 'string' && /(?:too large|unsupported|invalid|missing|exceeds|does not match)/i.test(e.message) ? e.message : null
+      if (!raw) {
+        return res.status(400).json({ error: 'Не удалось загрузить файл' })
+      }
+      // v25.16: ПОНЯТНЫЕ сообщения вместо технического английского
+      // («какая-то ошибка некорректная» — фидбек владельца).
+      const safeMsg = friendlyUploadError(raw, MAX_UPLOAD_BYTES)
       res.status(400).json({ error: safeMsg })
     }
   }),
@@ -490,9 +524,9 @@ router.post(
           // Sanitize: only expose expected user-facing reasons (size/type).
           const reason =
             typeof e?.message === 'string' &&
-            /(?:too large|unsupported|invalid|missing|exceeds)/i.test(e.message)
-              ? e.message
-              : 'Upload failed'
+            /(?:too large|unsupported|invalid|missing|exceeds|does not match)/i.test(e.message)
+              ? friendlyUploadError(e.message, MAX_UPLOAD_BYTES)
+              : 'Не удалось загрузить'
           rejected.push({ filename: file.originalname, reason })
         }
       }

@@ -120,6 +120,18 @@ export const createProductSchema = z.object({
   videoUrl: z.string().max(2048).nullable().optional(),
   // v25.10: poster image (first frame extracted by FFmpeg).
   videoPoster: z.string().max(2048).nullable().optional(),
+  // v25.14 FIX: the create route reads `data.videoPosition` but the field
+  // was missing from this schema (only updateProductSchema had it) — a
+  // hidden TypeError for any client that posted videos on creation.
+  videoPosition: z.number().int().min(0).max(50).nullable().optional(),
+  // v25.20 (owner, «как в Инстаграме»): фоновая музыка товара — трек из
+  // Audio Hub. null = убрано. Играет при просмотре ФОТО (не видео).
+  music: z.object({
+    id: z.string().min(1).max(160),
+    title: z.string().min(1).max(300),
+    artist: z.string().max(300).nullable().optional(),
+    url: z.string().min(1).max(2048),
+  }).nullable().optional(),
 })
 
 export const createStorySchema = z.object({
@@ -130,6 +142,11 @@ export const createStorySchema = z.object({
   caption: z.string().max(500).optional(),
   category: z.string().max(64).optional(),
   durationHours: z.number().min(1).max(168).default(24),
+  // v25.17 (owner: «выделяю несколько фотографий… сделай так, чтобы он в
+  // одном сторисе все картинки были»): по умолчанию ВСЕ загруженные URL
+  // попадают в ОДНУ сторис (media-массив) и листаются внутри просмотра.
+  // grouped:false возвращает старое поведение «каждый URL = отдельная сторис».
+  grouped: z.boolean().optional().default(true),
 }).transform((d) => ({
   ...d,
   media: Array.isArray(d.media) ? d.media : [d.media],
@@ -200,7 +217,8 @@ export const sendMessageSchema = z
     // mediaType 'product' — special interactive product card message.
     // mediaType 'audio-hub' — v16.9.2: Audio Hub track card (mediaUrl = track id).
     // mediaType 'film' — v17: Video Hub film card (mediaUrl = FilmChatCardData JSON).
-    mediaType: z.enum(['text', 'image', 'video', 'audio', 'file', 'product', 'audio-hub', 'film']).optional(),
+    // mediaType 'game' — v25.24: приглашение в онлайн-дуэль (mediaUrl = duelId).
+    mediaType: z.enum(['text', 'image', 'video', 'audio', 'file', 'product', 'audio-hub', 'film', 'game']).optional(),
     duration: z.number().min(0).max(86400).optional(),
     // v12: attachments — array of file metadata for multi-file messages.
     // Each attachment: { url, type, name, size, duration? }.
@@ -275,6 +293,15 @@ export const sendMessageSchema = z
           !d.mediaUrl.startsWith('/uploads/') &&
           d.mediaUrl.length >= 1 &&
           d.mediaUrl.length <= 4096 &&
+          !d.mediaUrl.includes('..')
+        )
+      }
+      if (d.mediaType === 'game') {
+        // v25.24: game duel invite — mediaUrl stores the duel id (cuid, ≤64).
+        return (
+          !d.mediaUrl.startsWith('/uploads/') &&
+          d.mediaUrl.length >= 1 &&
+          d.mediaUrl.length <= 64 &&
           !d.mediaUrl.includes('..')
         )
       }

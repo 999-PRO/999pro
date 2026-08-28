@@ -17,10 +17,19 @@
 //   sample the corner pixel (and a few interior points) to detect alpha,
 //   and keep PNG format when transparency is present.
 export async function compressImage(file: File, maxWidth = 1280, quality = 0.8): Promise<File> {
-  if (!file.type.startsWith('image/')) return file
+  // v25.16: HEIC/HEIF (iPhone-фото) — всегда прогоняем через canvas и
+  // отдаём JPEG: Студия работает чаще всего в Chrome, а он HEIC не
+  // показывает. Декодирование доступно только в Safari — при неудаче
+  // возвращаем оригинал (бэкенд теперь принимает HEIC напрямую).
+  const isHeic =
+    file.type === 'image/heic' ||
+    file.type === 'image/heif' ||
+    /\.hei[cf]$/i.test(file.name)
+  if (!file.type.startsWith('image/') && !isHeic) return file
   if (file.type === 'image/gif') return file
   // Skip already-small files — no point compressing a 100KB thumbnail
-  if (file.size < 300 * 1024) return file
+  // (кроме HEIC — его всё равно нужно конвертировать в понятный формат)
+  if (!isHeic && file.size < 300 * 1024) return file
 
   return new Promise((resolve) => {
     const reader = new FileReader()
@@ -88,7 +97,7 @@ export async function compressImage(file: File, maxWidth = 1280, quality = 0.8):
 
         // For PNGs WITHOUT alpha: clear canvas, fill white background,
         // redraw. This gives JPEG a clean opaque canvas to compress.
-        if (file.type === 'image/png' && !hasAlpha) {
+        if ((file.type === 'image/png' || isHeic) && !hasAlpha) {
           ctx.fillStyle = '#ffffff'
           ctx.fillRect(0, 0, width, height)
           ctx.drawImage(img, 0, 0, width, height)
@@ -96,9 +105,10 @@ export async function compressImage(file: File, maxWidth = 1280, quality = 0.8):
 
         // Output format:
         //   - PNG with alpha → keep as PNG (transparency preserved)
-        //   - PNG without alpha → JPEG (much smaller for photos)
+        //   - PNG without alpha / HEIC → JPEG (much smaller for photos,
+        //     и единый формат для всех браузеров вместо HEIC)
         //   - JPEG/WebP → keep original format
-        const outputType = file.type === 'image/png' && hasAlpha ? 'image/png' : file.type === 'image/png' ? 'image/jpeg' : file.type
+        const outputType = file.type === 'image/png' && hasAlpha ? 'image/png' : file.type === 'image/png' || isHeic ? 'image/jpeg' : file.type
         const outputExt = outputType === 'image/jpeg' ? '.jpg' : outputType === 'image/webp' ? '.webp' : '.png'
 
         canvas.toBlob(

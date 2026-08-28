@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 // formatPrice imported but not used in this component — removed to keep lint clean.
 
 // ============================================================================
-// SupportView — full support chat between the user and the 999PRO team.
+// SupportView — full support chat between the user and the TRI999 team.
 //
 // Reuses the existing chat infrastructure (Socket.IO + REST API) but wraps
 // it in a dedicated UI that:
@@ -231,7 +231,7 @@ export function SupportView({ onNavigate }: { onNavigate: (v: string) => void })
           <Headphones className="h-10 w-10 text-white" />
         </div>
         <h2 className="text-2xl font-extrabold mb-2">Поддержка</h2>
-        <p className="text-muted-foreground mb-5">Войдите, чтобы начать чат с командой 999PRO</p>
+        <p className="text-muted-foreground mb-5">Войдите, чтобы начать чат с командой TRI999</p>
         <Button
           onClick={() => onNavigate('home')}
           className="rounded-full gradient-brand text-white font-semibold shadow-glow h-11 px-6"
@@ -298,7 +298,7 @@ export function SupportView({ onNavigate }: { onNavigate: (v: string) => void })
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm">Поддержка 999PRO</div>
+          <div className="font-semibold text-sm">Поддержка TRI999</div>
           <div className="text-xs text-muted-foreground">
             {connected ? 'Онлайн · отвечает в течение часа' : 'Подключение…'}
           </div>

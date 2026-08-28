@@ -19,6 +19,8 @@ interface UseSocketOptions {
   onMessageDeleted?: (payload: { messageId: string; conversationId: string; deletedForAll?: boolean; deletedForMe?: boolean }) => void
   // v25.9: edit support — fired when another participant edits a message.
   onMessageEdited?: (m: Message) => void
+  // v25.27: закрепление сообщений (Telegram-style pin)
+  onMessagePinned?: (payload: { conversationId: string; messageId: string | null; pinnedAt: string | null }) => void
   onMessageForwarded?: (payload: { sourceMessageId: string; count: number }) => void
   onTypingStart?: (data: { conversationId: string; userId: string; username: string }) => void
   onTypingStop?: (data: { conversationId: string; userId: string }) => void
@@ -89,6 +91,11 @@ function getSocket(): Socket | null {
   return sharedSocket
 }
 
+// v25.24: доступ к общему сокету для глобальных слушателей (онлайн-дуэли).
+export function getSharedSocket(): Socket | null {
+  return getSocket()
+}
+
 export function resetSocket() {
   if (sharedSocket) {
     sharedSocket.disconnect()
@@ -103,6 +110,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     onMessage,
     onMessageDeleted,
     onMessageEdited,
+    onMessagePinned,
     onMessageForwarded,
     onTypingStart,
     onTypingStop,
@@ -142,6 +150,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     onMessage,
     onMessageDeleted,
     onMessageEdited,
+    onMessagePinned,
     onMessageForwarded,
     onTypingStart,
     onTypingStop,
@@ -166,6 +175,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       onMessage,
       onMessageDeleted,
       onMessageEdited,
+      onMessagePinned,
       onMessageForwarded,
       onTypingStart,
       onTypingStop,
@@ -184,7 +194,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       onCallCancelled,
       onCallSignal,
     }
-  }, [onMessage, onMessageDeleted, onMessageEdited, onMessageForwarded, onTypingStart, onTypingStop, onVoiceRecordingStart, onVoiceRecordingStop, onUserOnline, onUserOffline, onRead, onConversationCreated, onConversationDeleted, onCallIncoming, onCallStarted, onCallAccepted, onCallRejected, onCallEnded, onCallCancelled, onCallSignal])
+  }, [onMessage, onMessageDeleted, onMessageEdited, onMessagePinned, onMessageForwarded, onTypingStart, onTypingStop, onVoiceRecordingStart, onVoiceRecordingStop, onUserOnline, onUserOffline, onRead, onConversationCreated, onConversationDeleted, onCallIncoming, onCallStarted, onCallAccepted, onCallRejected, onCallEnded, onCallCancelled, onCallSignal])
 
   // Wave 2 (F-BUG-002): split the original single useEffect into two:
   // 1) Socket lifecycle effect — creates/destroys the singleton based on
@@ -221,6 +231,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     const handleMessageDeleted = (d: any) => handlersRef.current.onMessageDeleted?.(d)
     // v25.9: edit support
     const handleMessageEdited = (m: Message) => handlersRef.current.onMessageEdited?.(m)
+    // v25.27: закрепление сообщений
+    const handleMessagePinned = (d: any) => handlersRef.current.onMessagePinned?.(d)
     const handleMessageForwarded = (d: any) => handlersRef.current.onMessageForwarded?.(d)
     const handleTypingStart = (d: any) => handlersRef.current.onTypingStart?.(d)
     const handleTypingStop = (d: any) => handlersRef.current.onTypingStop?.(d)
@@ -278,6 +290,10 @@ export function useSocket(options: UseSocketOptions = {}) {
     const handleBannersChanged = () => {
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('999pro:banners-changed'))
     }
+    // v25.14: categories live-refresh — Studio edits propagate instantly.
+    const handleCategoriesChanged = () => {
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('999pro:categories-changed'))
+    }
     const handleStoriesChanged = () => {
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('999pro:stories-changed'))
     }
@@ -300,6 +316,8 @@ export function useSocket(options: UseSocketOptions = {}) {
     socket.on('message:deleted', handleMessageDeleted)
     // v25.9: edit support
     socket.on('message:edited', handleMessageEdited)
+    // v25.27: закрепление сообщений
+    socket.on('message:pinned', handleMessagePinned)
     socket.on('message:forwarded', handleMessageForwarded)
     // v16.9: moderation — when a message is blocked by the system, show a
     // window event so the chat UI can show the user why their message was
@@ -333,6 +351,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     socket.on('order:status-changed', handleOrderStatus)
     socket.on('settings:changed', handleSettingsChanged)
     socket.on('banners:changed', handleBannersChanged)
+    socket.on('categories:changed', handleCategoriesChanged)
     socket.on('stories:changed', handleStoriesChanged)
     socket.on('products:changed', handleProductsChanged)
     socket.on('club:changed', handleClubChanged)
@@ -369,6 +388,7 @@ export function useSocket(options: UseSocketOptions = {}) {
       socket.off('order:status-changed', handleOrderStatus)
       socket.off('settings:changed', handleSettingsChanged)
       socket.off('banners:changed', handleBannersChanged)
+      socket.off('categories:changed', handleCategoriesChanged)
       socket.off('stories:changed', handleStoriesChanged)
       socket.off('products:changed', handleProductsChanged)
       socket.off('club:changed', handleClubChanged)
@@ -411,7 +431,7 @@ export function useSocket(options: UseSocketOptions = {}) {
     conversationId: string
     content?: string
     mediaUrl?: string
-    mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film'
+    mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film' | 'game'
     // v12: attachments — array of file metadata for multi-file messages
     attachments?: Array<{ url: string; type: 'image' | 'video' | 'audio' | 'file'; name?: string; size?: number; duration?: number }>
     duration?: number
@@ -459,12 +479,18 @@ export function useSocket(options: UseSocketOptions = {}) {
           },
           auth: true,
         })
-        .then(() => {
-          // The backend broadcasts `message:received` via Socket.IO to
-          // other tabs — our own tab's onMessage handler will see it
-          // through the normal socket path once the socket reconnects,
-          // OR we can patch the optimistic message here directly.
-          // For now we rely on the next conversation-fetch to reconcile.
+        .then((created: any) => {
+          // v25.27 FIX: мгновенная реконсиляция оптимистичного сообщения.
+          // Раньше стаб с tmp_-id жил до следующей перезагрузки истории
+          // («rely on the next conversation-fetch»), из-за чего ЛЮБОЕ действие
+          // над своим недавним сообщением (закрепить/изменить/удалить у всех,
+          // ответить) отправляло ВРЕМЕННЫЙ id и падало с 404.
+          // Прогоняем серверное сообщение через штатный onMessage — там
+          // дедуп по tempId сам смёржит стаб с реальным сообщением.
+          if (created && created.id && payload.tempId) {
+            ;(created as any).tempId = payload.tempId
+            handlersRef.current.onMessage?.(created as Message)
+          }
         })
         .catch((e: unknown) => {
           // C-HIGH-007: REST also failed — persist the message to the

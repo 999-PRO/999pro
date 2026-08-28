@@ -43,6 +43,9 @@ function serialiseReview(r: any) {
           role: r.user.role,
         }
       : null,
+    // v25.24: flatten-поля для ответов на ответы
+    replyToId: r.replyToId ?? undefined,
+    replyToName: (r as any).replyToName ?? undefined,
     // v25.7: nested admin replies. Only populated when the Prisma query
     // included `replies` — otherwise undefined (omitted from JSON).
     replies: Array.isArray(r.replies)
@@ -58,6 +61,8 @@ function serialiseReview(r: any) {
           isHidden: reply.isHidden,
           createdAt: reply.createdAt,
           updatedAt: reply.updatedAt,
+          replyToId: (reply as any).replyToId ?? reply.parentId ?? null,
+          replyToName: (reply as any).replyToName ?? null,
           user: reply.user
             ? {
                 id: reply.user.id,
@@ -120,17 +125,10 @@ router.post(
       return res.status(404).json({ error: 'Product not found' })
     }
 
-    // v25.7 (TZ ЭТАП 2.3): enforce one-top-level-review-per-user-per-product
-    // in app code (the DB-level unique constraint was removed to allow
-    // admin replies on the same product). Without this check, a user could
-    // bypass the UI and POST multiple top-level reviews via the API.
-    const existingTopLevel = await prisma.review.findFirst({
-      where: { productId, userId: req.user!.id, parentId: null },
-      select: { id: true },
-    })
-    if (existingTopLevel) {
-      return res.status(409).json({ error: 'Вы уже оставили отзыв на этот товар' })
-    }
+    // v25.14 (user request): REMOVED the "one top-level review per user per
+    // product" restriction. Users can now post as many comments as they want
+    // (each comment is moderated independently). Admin replies still use
+    // parentId rows and are unaffected.
 
     // v16.9 MODERATION — check review title + content before persisting.
     const reviewText = `${title || ''} ${content || ''}`.trim()
@@ -208,25 +206,23 @@ router.post(
 
       res.status(201).json(serialiseReview(review))
     } catch (e) {
-      // P2002 = unique constraint violation (legacy: user already reviewed
-      // this product). With the constraint removed this shouldn't fire, but
-      // we keep the handler as a safety net.
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        return res.status(409).json({ error: 'Вы уже оставили отзыв на этот товар' })
-      }
+      // NOTE (v25.14): the legacy P2002 "already reviewed" fallback was removed
+      // together with the one-review-per-user restriction — no unique
+      // constraint exists on reviews anymore, so it could never fire.
       throw e
     }
   }),
 )
 
-// POST /api/reviews/:id/replies — admin posts a reply under a review.
-// v25.7 (TZ ЭТАП 2.3): the reply is stored as a Review row with parentId set.
-// rating=0 (replies don't affect the product's aggregate rating). The reply
-// is included in GET /api/reviews responses via Prisma `include: { replies }`.
+// POST /api/reviews/:id/replies — ответ на комментарий под товаром.
+// v25.16 (owner: «ответить на комментарий — то же самое и в товарах, то же
+// самое и в ленте»): раньше отвечать могли только админы (requireAdmin).
+// Теперь отвечает ЛЮБОЙ залогиненный пользователь — обсуждение под товаром.
+// Автор родительского комментария получает socket-событие + push с прямой
+// ссылкой на товар.
 router.post(
   '/:id/replies',
   requireAuth,
-  requireAdmin,
   asyncHandler(async (req: AuthedRequest, res) => {
     const parentId = req.params.id
     const parsed = createReplySchema.safeParse(req.body)
@@ -275,20 +271,19 @@ router.post(
       after: { parentId, productId: parent.productId, hasContent: !!content },
     })
 
-    // v25.7 (TZ ЭТАП 2.4): notify the original review's author that their
-    // review got a reply (in-app socket event; push is also sent so they
-    // see it even if the app is in the background).
+    // v25.16: notify the original review's author (push + socket) regardless
+    // of WHO replied — admin support or another customer.
     try {
       const { getIo } = await import('../socket/handlers.js')
         const { sendPushToUser } = await import('./push.js')
       const io = getIo()
-      const adminName = reply.user?.displayName || reply.user?.username || 'Администратор'
+      const replierName = reply.user?.displayName || reply.user?.username || 'Пользователь'
       if (io) {
         io.to(`user:${parent.userId}`).emit('review:reply-created', {
           replyId: reply.id,
           parentId,
           productId: parent.productId,
-          authorName: adminName,
+          authorName: replierName,
           content: content.slice(0, 200),
           createdAt: reply.createdAt,
         })
@@ -297,19 +292,19 @@ router.post(
           replyId: reply.id,
           parentId,
           productId: parent.productId,
-          authorName: adminName,
+          authorName: replierName,
           content: content.slice(0, 200),
           createdAt: reply.createdAt,
         })
       }
-      // Push to the original review's author (if they're not the admin who
-      // wrote the reply — avoids self-notification).
+      // Push to the original review's author with a DEEP LINK straight to
+      // the product page (was /?view=reviews before — misses the context).
       if (parent.userId !== req.user!.id) {
         void sendPushToUser(parent.userId, {
-          title: '↩ Ответ на ваш отзыв',
-          body: `${adminName}: ${content.slice(0, 100)}`,
+          title: '↩ Ответ на ваш комментарий',
+          body: `${replierName}: ${content.slice(0, 100)}`,
           tag: `review-reply-${reply.id}`,
-          url: `/?view=reviews`,
+          url: `/?product=${parent.productId}`,
         })
       }
     } catch {
@@ -513,6 +508,56 @@ router.get(
       finalItems = finalItems.slice(offset, offset + limit)
     }
 
+    // v25.24 (owner): «в комментариях мне ответили… потом ещё раз отвечают на
+    // моё сообщение — я уже не могу ответить». Открываем ответы на ответы.
+    // Загружаем ВСЕХ потомков (любой глубины) каждого top-level комментария
+    // и подмешиваем их ПЛОСКО в `replies` с полем replyToName — фронт
+    // показывает «Ответ X: …» как в Instagram. Прямые дети уже в include,
+    // здесь добираем вложенные (parentId = id ответа).
+    if (finalItems.length > 0) {
+      const rootIds = new Set(finalItems.map((r) => r.id))
+      const allReplies = await prisma.review.findMany({
+        where: {
+          productId,
+          parentId: { not: null },
+          ...(includeHidden ? {} : { isHidden: false }),
+        },
+        include: { user: { select: userSelect } },
+        orderBy: { createdAt: 'asc' },
+      })
+      const byParent = new Map<string, typeof allReplies>()
+      for (const r of allReplies) {
+        const pid = r.parentId as string
+        if (!byParent.has(pid)) byParent.set(pid, [] as unknown as typeof allReplies)
+        ;(byParent.get(pid) as unknown as any[]).push(r)
+      }
+      const userName = (u: any) => u?.displayName || u?.username || 'Пользователь'
+      for (const root of finalItems) {
+        if (!rootIds.has(root.id)) continue
+        const flat: any[] = [...((root as any).replies ?? [])]
+        const seenNames = new Map<string, string>()
+        // имя автора прямого родителя для каждого потомка
+        const nameById = new Map<string, string>()
+        nameById.set(root.id, userName((root as any).user))
+        for (const child of flat) nameById.set(child.id, userName((child as any).user))
+        // BFS: добавляем потомков в порядке создания
+        const queue = flat.map((c) => c.id)
+        while (queue.length) {
+          const pid = queue.shift() as string
+          const children = byParent.get(pid) ?? []
+          for (const child of children as unknown as any[]) {
+            if (flat.some((c) => c.id === child.id)) continue
+            ;(child as any).replyToId = pid
+            ;(child as any).replyToName = nameById.get(pid) ?? null
+            flat.push(child)
+            nameById.set(child.id, userName(child.user))
+            queue.push(child.id)
+          }
+        }
+        ;(root as any).replies = flat
+      }
+    }
+
     // Build rating distribution object
     const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
     for (const row of ratingStats) {
@@ -553,6 +598,65 @@ router.get(
       include: { user: { select: userSelect } },
     })
     res.json({ review: review ? serialiseReview(review) : null })
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// v25.16 — «МОИ КОММЕНТАРИИ» (history of everything I wrote).
+// Owner request: «человек написал комментарий в ленте… он должен в любое время
+// найти этот комментарий… под какой товар или в ленте он написал».
+// Returns ALL product-comments authored by me (top-level AND replies), each
+// with product context (title/photo/id) + replies received under my comment.
+// ---------------------------------------------------------------------------
+router.get(
+  '/my-comments',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const items = await prisma.review.findMany({
+      where: { userId: req.user!.id },
+      include: {
+        user: { select: userSelect },
+        replies: {
+          include: { user: { select: userSelect } },
+          orderBy: { createdAt: 'asc' },
+          where: { isHidden: false },
+        },
+        product: {
+          select: {
+            id: true,
+            title: true,
+            images: true,
+            price: true,
+            currency: true,
+            category: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    })
+
+    const serialised = items.map((r: any) => ({
+      ...serialiseReview(r),
+      product: r.product
+        ? {
+            id: r.product.id,
+            title: r.product.title,
+            cover: (() => {
+              try {
+                const arr = JSON.parse(r.product.images || '[]')
+                return Array.isArray(arr) && arr[0] ? arr[0] : null
+              } catch {
+                return null
+              }
+            })(),
+            price: r.product.price != null ? Number(r.product.price) : null,
+            currency: r.product.currency,
+            category: r.product.category,
+          }
+        : null,
+    }))
+    res.json({ items: serialised })
   }),
 )
 

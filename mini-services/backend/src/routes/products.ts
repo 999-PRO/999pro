@@ -8,6 +8,8 @@ import { auditLog } from '../lib/audit.js'
 import { createProductSchema } from '../lib/schemas.js'
 import { safeParseJsonArray } from '../lib/serialisers.js'
 import { broadcastChanged } from '../lib/broadcast.js'
+// v25.15: авто-push «Новый товар» всем подписчикам push-уведомлений
+import { broadcastPushToAll } from './push.js'
 
 const router = Router()
 
@@ -118,6 +120,17 @@ function serialiseProduct(p: any) {
   } else if (result.colors == null) {
     result.colors = []
   }
+  // v25.20: parse фоновую музыку товара { id, title, artist, url } | null.
+  if (typeof result.music === 'string' && result.music) {
+    try {
+      const m = JSON.parse(result.music)
+      result.music = m && typeof m === 'object' && m.url ? m : null
+    } catch {
+      result.music = null
+    }
+  } else if (result.music == null) {
+    result.music = null
+  }
   return result
 }
 
@@ -133,7 +146,21 @@ router.get(
     const { limit, offset } = parsePagination(req.query)
 
     const where: any = { deletedAt: null } // D-CRIT-001 fix: filter soft-deleted products
-    if (category) where.category = String(category)
+    // v25.14 (categories fix): custom categories created in Studio are linked
+    // to products through the Category relation (`categoryId`). Previously the
+    // catalog filtered ONLY by the legacy `category` string, so clicking a
+    // custom category chip returned nothing. Now we match BOTH the legacy
+    // string field AND the related Category row (by name or slug).
+    if (category) {
+      const catName = String(category)
+      const categoryMatch = {
+        OR: [
+          { category: catName },
+          { categoryRow: { is: { OR: [{ name: catName }, { slug: catName }] } } },
+        ],
+      }
+      where.AND = [...(where.AND || []), categoryMatch]
+    }
     if (popular === 'true' || popular === '1') where.isPopular = true
     // v25.11: server-side filters
     if (inStockOnly === 'true' || inStockOnly === '1') where.inStock = true
@@ -152,6 +179,9 @@ router.get(
     }
 
     // Case-insensitive search across title / description / category.
+    // v25.15: PLUS поиск по АРТИКУЛУ (product.id) — клиент присылает владельцу
+    // артикул вида «F1E2D3C4» (последние 8 символов id, UPPER-case), а владелец
+    // находит товар мгновенно. Совпадаем и по полному id, и по хвосту.
     let needle: string | null = null
     if (q && typeof q === 'string' && q.trim()) {
       needle = String(q).toLowerCase().trim()
@@ -159,6 +189,8 @@ router.get(
         { title: { contains: String(q) } },
         { description: { contains: String(q) } },
         { category: { contains: String(q) } },
+        // v25.15: article search at DB level (ids stored lowercase)
+        { id: { contains: needle } },
       ]
     }
 
@@ -189,7 +221,12 @@ router.get(
         (p) =>
           p.title.toLowerCase().includes(needle!) ||
           (p.description || '').toLowerCase().includes(needle!) ||
-          (p.category || '').toLowerCase().includes(needle!),
+          (p.category || '').toLowerCase().includes(needle!) ||
+          // v25.15: ARTICLE MATCH — последние 8 символов id как «артикул»,
+          // регистронезависимо; короткий хвост тоже ловим через includes.
+          p.id.toLowerCase().includes(needle!) ||
+          p.id.slice(-8).toLowerCase() === needle! ||
+          p.id.slice(-8).toUpperCase().startsWith(needle!.toUpperCase()) && needle!.length >= 3,
       )
       // v25.11: also filter by hasDiscount (cross-field: oldPrice > price)
       if (hasDiscount === 'true' || hasDiscount === '1') {
@@ -727,6 +764,23 @@ router.get(
   }),
 )
 
+// v25.14 (categories fix): resolve a free-text category string against the
+// Category table. Returns the matching row (case-insensitive by name/slug)
+// so we can keep BOTH stores in sync:
+//   - Product.category (legacy string shown in UI badges)
+//   - Product.categoryId (relation used for counts + catalog filtering)
+// Without this sync, custom categories created in Studio never appeared in
+// the catalog ("added a category but it doesn't show up" bug).
+async function resolveCategoryRow(input?: string | null): Promise<{ id: string; name: string } | null> {
+  const trimmed = (input || '').trim()
+  if (!trimmed) return null
+  const cats = await prisma.category.findMany({ select: { id: true, name: true, slug: true } })
+  const lower = trimmed.toLowerCase()
+  return (
+    cats.find((c) => c.name.toLowerCase() === lower || c.slug.toLowerCase() === lower) || null
+  )
+}
+
 // POST /api/products — admin only
 router.post(
   '/',
@@ -734,6 +788,10 @@ router.post(
   requireAdmin,
   asyncHandler(async (req: AuthedRequest, res) => {
     const data = createProductSchema.parse(req.body)
+    // v25.14: normalise the category string to the canonical Category name
+    // and link categoryId, so the product immediately counts towards the
+    // custom category created in Studio.
+    const catRow = await resolveCategoryRow(data.category)
     const product = await prisma.product.create({
       data: {
         title: data.title,
@@ -741,7 +799,8 @@ router.post(
         price: data.price,
         oldPrice: data.oldPrice,
         currency: data.currency ?? 'RUB',
-        category: data.category,
+        category: catRow ? catRow.name : data.category,
+        categoryId: catRow?.id ?? null,
         images: JSON.stringify(data.images),
         inStock: data.inStock ?? true,
         // v11: physical stock quantity — default to 0 (out of stock) if not provided.
@@ -757,6 +816,8 @@ router.post(
         departmentId: data.departmentId || null,
         // v25.8 (TRI999 launch): colors array
         colors: JSON.stringify(data.colors ?? []),
+        // v25.20: фоновая музыка товара (null = нет)
+        music: data.music ? JSON.stringify(data.music) : null,
         // v25.10 (Task #6): vertical product video
         videoUrl: data.videoUrl ?? null,
         videoPoster: data.videoPoster ?? null,
@@ -770,8 +831,42 @@ router.post(
     })
     res.status(201).json(serialiseProduct(product))
     broadcastChanged('products:changed')
+
+    // v25.15: авто-push всем подписчикам при новом товаре.
+    // Переключатель notifyNewProduct (Студия → Рассылка) по умолчанию ВКЛ
+    // (setting отсутствует = включено; 'false' = выключено).
+    try {
+      const flag = await prisma.appSetting.findUnique({ where: { id: 'notifyNewProduct' } })
+      const enabled = !flag || flag.value !== 'false'
+      if (enabled) {
+        void broadcastPushToAll(
+          {
+            title: 'Новый товар в каталоге',
+            body: `${product.title} — уже в каталоге! Загляните и оставьте заявку.`,
+            url: `/?product=${product.id}`,
+            icon: product.images ? safeFirstImage(product.images) : undefined,
+            tag: `product-${product.id}`,
+          },
+          [req.user!.id], // автору не нужно уведомление о своём товаре
+        )
+      }
+    } catch {
+      // Push — best-effort: создание товара не должно падать из-за него
+    }
   }),
 )
+
+// v25.15: первая картинка товара как иконка пуша (JSON-массив строк)
+function safeFirstImage(imagesJson: string): string | undefined {
+  try {
+    const arr = JSON.parse(imagesJson)
+    return Array.isArray(arr) && typeof arr[0] === 'string' && arr[0].startsWith('/')
+      ? arr[0]
+      : undefined
+  } catch {
+    return undefined
+  }
+}
 
 // Zod schema for partial update
 const updateProductSchema = z.object({
@@ -806,6 +901,13 @@ const updateProductSchema = z.object({
   videoPoster: z.string().max(2048).nullable().optional(),
   // v25.12: video position in carousel (0 = first, 1 = after 1st image, etc.)
   videoPosition: z.number().int().min(0).max(50).nullable().optional(),
+  // v25.20: фоновая музыка товара (null = убрана)
+  music: z.object({
+    id: z.string().min(1).max(160),
+    title: z.string().min(1).max(300),
+    artist: z.string().max(300).nullable().optional(),
+    url: z.string().min(1).max(2048),
+  }).nullable().optional(),
 })
 
 // PATCH /api/products/:id — admin only
@@ -819,6 +921,17 @@ router.patch(
 
     const data = updateProductSchema.parse(req.body ?? {})
 
+    // v25.14: same category normalisation as POST — when the admin renames
+    // the category string (or the Category row exists with different case),
+    // keep both the legacy string and the relation in sync.
+    let patchCategoryId: string | null | undefined
+    let patchCategoryName: string | null | undefined
+    if (data.category !== undefined) {
+      const catRow = await resolveCategoryRow(data.category)
+      patchCategoryId = catRow?.id ?? null
+      patchCategoryName = catRow ? catRow.name : data.category
+    }
+
     const updated = await prisma.product.update({
       where: { id: req.params.id },
       data: {
@@ -827,7 +940,8 @@ router.patch(
         ...(data.price !== undefined && { price: data.price }),
         ...(data.oldPrice !== undefined && { oldPrice: data.oldPrice }),
         ...(data.currency !== undefined && { currency: data.currency }),
-        ...(data.category !== undefined && { category: data.category }),
+        ...(patchCategoryName !== undefined && { category: patchCategoryName }),
+        ...(patchCategoryId !== undefined && { categoryId: patchCategoryId }),
         ...(data.images !== undefined && { images: JSON.stringify(data.images) }),
         ...(data.inStock !== undefined && { inStock: data.inStock }),
         ...(data.quantity !== undefined && { quantity: data.quantity }),
@@ -841,6 +955,8 @@ router.patch(
         ...(data.departmentId !== undefined && { departmentId: data.departmentId || null }),
         // v25.8: colors array
         ...(data.colors !== undefined && { colors: JSON.stringify(data.colors) }),
+        // v25.20: фоновая музыка товара (null = убрана)
+        ...(data.music !== undefined && { music: data.music ? JSON.stringify(data.music) : null }),
         // v25.10 (Task #6): vertical product video
         ...(data.videoUrl !== undefined && { videoUrl: data.videoUrl }),
         ...(data.videoPoster !== undefined && { videoPoster: data.videoPoster }),

@@ -152,6 +152,10 @@ export interface HeroBlockSetting {
   useGradient: boolean
   // Background image URL (optional — if null, only the gradient renders).
   image: string | null
+  // v25.14: MULTI-IMAGE CAROUSEL. The frontend hero-editorial crossfades
+  // through this array (auto-rotation). `image` stays as the first/cover
+  // frame for backward compatibility.
+  images?: string[] | null
   // Gradient ID — must match one of the GRADIENTS in the frontend map.
   gradient: string
   // v12.6.4: all text fields are now optional (nullable). A hero can be
@@ -167,6 +171,24 @@ export interface HeroBlockSetting {
   objectFit?: 'cover' | 'contain'
   // v12.6.4: hero mode — 'image-only' hides all text/buttons in the editor.
   mode?: 'image-text' | 'image-only'
+  // v25.21: видео hero (GIF грузятся в images как картинки). Слайды в
+  // приложении = [...images, ...videos], активное видео autoplay muted loop.
+  videos?: string[] | null
+}
+
+// ============================================================================
+//  v25.21 — MobileHeroBlockSetting: ОТДЕЛЬНЫЙ мобильный hero-баннер
+//  («на мобиле hero слишком большой — сделай размером как баннеры»).
+//  Медиа — картинки (вкл. GIF) и видео вперемешку, тип по расширению.
+// ============================================================================
+export interface MobileHeroBlockSetting {
+  enabled: boolean
+  media: string[]
+  badge: string | null
+  title: string | null
+  description: string | null
+  primaryButton: HeroButton | null
+  secondaryButton: HeroButton | null
 }
 
 // ============================================================================

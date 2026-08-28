@@ -34,7 +34,7 @@ generator client {
 
 datasource db {
   // v25.8 (TRI999 launch): PostgreSQL is the ONLY production database provider.
-  provider = "postgresql"
+  provider = "sqlite"
   url = env("DATABASE_URL")
 }
 
@@ -145,6 +145,17 @@ model User {
   clubEventRegistrations ClubEventRegistration[]
   pointsTransactions    PointsTransaction[]
 
+  // v25.14 COMMUNITIES back-relations
+  createdCommunities    Community[]         @relation("CreatedCommunities")
+  communityMemberships  CommunityMember[]   @relation("CommunityMemberships")
+  communitiesAdded      CommunityMember[]   @relation("CommunityAdds")
+  communityPosts        CommunityPost[]     @relation("CommunityPosts")
+  // v25.16: комментарии к объявлениям сообществ (с ответами)
+  communityComments     CommunityComment[]  @relation("CommunityComments")
+  // v25.24: онлайн-дуэли из чата
+  duelsAsPlayer1        GameDuel[]          @relation("DuelPlayer1")
+  duelsAsPlayer2        GameDuel[]          @relation("DuelPlayer2")
+
   // v16.9 MODERATION — back-relations for the moderation system.
   reportsMade           ModerationReport[]  @relation("UserReportsMade")
   reportsReviewed       ModerationReport[]  @relation("UserReportsReviewed")
@@ -213,6 +224,10 @@ model Product {
   // v25.12: position of the video in the media carousel (0 = first,
   // 1 = after first image, etc.). Default 0 = video is the first slide.
   videoPosition Int?
+  // v25.20 (owner, «как в Инстаграме»): музыкальный трек товара — играет
+  // фоном при просмотре фото товара (страница + лента). Не играет, когда
+  // идёт видео (у видео свой звук). JSON: { id, title, artist, url }.
+  music        String?
   // Engagement counters — lifetime totals, used by the smart-ranking
   // algorithm on the home page. These NEVER decrease (a favorite removed
   // still counts as a "favorite add" because the user showed interest).
@@ -516,6 +531,11 @@ model ConversationParticipant {
   conversationId String
   userId         String
   joinedAt       DateTime @default(now())
+  // v25.24: per-user chat-list state (Telegram-like).
+  //   isPinned   — чат закреплён сверху списка для ЭТОГО пользователя
+  //   isArchived — чат убран в архив для ЭТОГО пользователя
+  isPinned       Boolean  @default(false)
+  isArchived     Boolean  @default(false)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -523,6 +543,33 @@ model ConversationParticipant {
   @@unique([conversationId, userId])
   @@index([userId])
   @@index([conversationId])
+}
+
+// v25.24: онлайн-дуэли из чата («сыграть с собеседником»).
+//   gameType  — 'tictactoe' | 'nardi'
+//   state     — JSON-снимок доски/кубиков/очередности (пишет сервер, валидируя ходы движком)
+//   status    — pending (ожидает согласия) → active → finished / declined / cancelled
+//   winnerId  — null при ничьей / незавершённой партии
+model GameDuel {
+  id          String   @id @default(cuid())
+  gameType    String
+  state       String   @default("{}")
+  turnUserId  String?
+  status      String   @default("pending")
+  winnerId    String?
+  player1Id   String
+  player2Id   String
+  conversationId String?
+  lastMoveAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  player1 User @relation("DuelPlayer1", fields: [player1Id], references: [id], onDelete: Cascade)
+  player2 User @relation("DuelPlayer2", fields: [player2Id], references: [id], onDelete: Cascade)
+
+  @@index([player1Id])
+  @@index([player2Id])
+  @@index([status, lastMoveAt])
 }
 
 model Message {
@@ -559,6 +606,10 @@ model Message {
   // v25.9: editedAt — set when the sender edits the message. UI shows
   // an "edited" indicator. Null means never edited.
   editedAt       DateTime?
+  // v25.27: pinned message (Telegram-style). One pinned message per
+  // conversation — pinning a message clears pinnedAt on the previous one
+  // (see POST /api/chat/conversations/:id/pin). Null = not pinned.
+  pinnedAt       DateTime?
   createdAt      DateTime @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1668,4 +1719,95 @@ model PriceList {
 
   @@index([visible, sortOrder])
   @@index([category])
+}
+
+// ============================================================================
+//  COMMUNITIES — v25.14.
+//  Два типа сообществ:
+//    • public  — открытые: любой зарегистрированный пользователь может
+//                вступить и публиковать объявления (barter-стиль).
+//    • private — закрытые (например, ОПТОВЫЙ клуб): вступление только по
+//                приглашению владельца (админа) — участников добавляет
+//                владелец через поиск по username / email / телефону.
+// ============================================================================
+model Community {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  // Cover image URL (/uploads/... or external)
+  cover       String?
+  // 'public' | 'private'
+  type        String   @default("public")
+  createdById String
+  createdBy   User     @relation("CreatedCommunities", fields: [createdById], references: [id])
+  members     CommunityMember[]
+  posts       CommunityPost[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type])
+}
+
+model CommunityMember {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation("CommunityMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  // 'owner' | 'member'
+  role        String    @default("member")
+  addedById   String?
+  addedBy     User?     @relation("CommunityAdds", fields: [addedById], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@unique([communityId, userId])
+  @@index([userId])
+}
+
+model CommunityPost {
+  id              String    @id @default(cuid())
+  communityId     String
+  community       Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  authorId        String
+  author          User      @relation("CommunityPosts", fields: [authorId], references: [id])
+  content         String
+  // JSON array of image URLs
+  images          String    @default("[]")
+  // Optional price (e.g. wholesale price for the опт club)
+  price           Decimal?
+  contactPhone    String?
+  // v25.16: дополнительные контакты автора объявления (Avito-стиль:
+  // «человек должен иметь возможность добавить свои контакты»)
+  contactWhatsApp String?
+  contactTelegram String?
+  isHidden        Boolean   @default(false)
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  comments        CommunityComment[]
+
+  @@index([communityId, createdAt])
+}
+
+// v25.16: комментарий к объявлению (поддерживает ответы через parentId —
+// тот же паттерн, что у Review). Пуш автору объявления и автору родительского
+// комментария шлётся в routes/communities.ts.
+model CommunityComment {
+  id        String    @id @default(cuid())
+  postId    String
+  post      CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User      @relation("CommunityComments", fields: [authorId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    CommunityComment? @relation("AdCommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   CommunityComment[] @relation("AdCommentReplies")
+  content   String
+  isHidden  Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([postId, createdAt])
+  @@index([parentId])
+  @@index([authorId])
 }

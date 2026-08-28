@@ -13,7 +13,7 @@
 //      or downloads it (iOS Safari).
 //    • Analytics tracking — every tap on a platform records a `share` event
 //      on the backend, with the platform name for attribution.
-//    • Premium glass design with 999PRO branding.
+//    • Premium glass design with TRI999 branding.
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react'
@@ -427,34 +427,52 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
           onClick={onClose}
         />
 
-        {/* Sheet */}
+        {/* Sheet — v25.20: в стиле «Общения» — тёмное стекло + аурора */}
         <motion.div
-          className="relative w-full md:max-w-md bg-white dark:bg-slate-950 rounded-t-[32px] md:rounded-[32px] shadow-2xl overflow-hidden max-h-[92vh] flex flex-col"
+          className="relative w-full md:max-w-md rounded-t-[30px] md:rounded-[30px] overflow-hidden max-h-[92vh] flex flex-col"
           initial={{ y: '100%', opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: '100%', opacity: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
+          transition={{ type: 'spring', stiffness: 360, damping: 36, mass: 0.9 }}
+          style={{
+            background: 'linear-gradient(180deg, rgba(15,15,30,0.96) 0%, rgba(10,10,20,0.98) 100%)',
+            backdropFilter: 'blur(28px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(28px) saturate(160%)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderBottom: 'none',
+            boxShadow: '0 -24px 70px -12px rgba(0,0,0,0.65)',
+          }}
         >
+          {/* Аурора-свечение */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[70%] h-36 z-0"
+            style={{
+              background: 'radial-gradient(ellipse at center top, rgba(236,72,153,0.2) 0%, rgba(139,92,246,0.1) 48%, transparent 75%)',
+              filter: 'blur(10px)',
+            }}
+          />
           {/* Drag handle (mobile) */}
-          <div className="md:hidden pt-3 pb-2 flex justify-center shrink-0">
-            <div className="h-1.5 w-12 rounded-full bg-slate-200 dark:bg-slate-700" />
+          <div className="md:hidden pt-3 pb-1 flex justify-center shrink-0 relative z-10">
+            <div className="h-[3px] w-16 rounded-full bg-white/25" />
           </div>
 
-          {/* Header — v25.12: 999PRO gradient logo, no "9" */}
-          <div className="px-5 pb-3 flex items-start justify-between gap-3 shrink-0">
+          {/* Header */}
+          <div className="px-5 pb-3 flex items-start justify-between gap-3 shrink-0 relative z-10">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="h-9 w-9 rounded-xl grid place-items-center text-white font-extrabold text-xs shrink-0" style={{ background: 'linear-gradient(135deg, #EC4899, #A855F7, #9333EA)' }}>
-                T
+                Т
               </div>
               <div className="min-w-0">
-                <div className="font-bold text-base leading-tight">Поделиться товаром</div>
-                <div className="text-xs text-slate-500 truncate">{product.title}</div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">Делимся</div>
+                <div className="font-bold text-[15px] leading-tight text-white">Поделиться товаром</div>
+                <div className="text-xs text-white/50 truncate">{product.title}</div>
               </div>
             </div>
             <button
               onClick={onClose}
               aria-label="Закрыть"
-              className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-800 grid place-items-center hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"
+              className="h-8 w-8 rounded-full bg-white/10 grid place-items-center text-white/70 hover:text-white hover:bg-white/15 transition-colors shrink-0"
             >
               <X className="h-4 w-4" />
             </button>
@@ -462,7 +480,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
 
           {/* Web Share API button (native) */}
           {webShareAvailable && (
-            <div className="px-5 pb-3 shrink-0">
+            <div className="px-5 pb-3 shrink-0 relative z-10">
               <button
                 onClick={handleNativeShare}
                 className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#EC4899] to-[#9333EA] text-white font-bold shadow-lg shadow-pink-500/30 hover:shadow-xl hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
@@ -477,7 +495,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
               Single-tap → opens ChatRecipientPicker → user picks → product
               message sent. Visible to all users (logged-out users get the
               AuthDialog prompt). */}
-          <div className="px-5 pb-3 shrink-0">
+          <div className="px-5 pb-3 shrink-0 relative z-10">
             <button
               onClick={handleClickSendToChat}
               disabled={sendingToChat}
@@ -493,7 +511,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
           </div>
 
           {/* Share targets grid */}
-          <div className="px-5 pb-3 overflow-y-auto overscroll-contain flex-1">
+          <div className="px-5 pb-3 overflow-y-auto overscroll-contain flex-1 relative z-10">
             <div className="grid grid-cols-4 gap-3">
               {TARGETS.map((target) => {
                 const Icon = target.icon
@@ -515,7 +533,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
                         <Icon className="h-6 w-6" />
                       )}
                     </div>
-                    <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                    <span className="text-xs font-medium text-white/75">
                       {target.label}
                     </span>
                   </button>
@@ -532,7 +550,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
                 <div>
                   <div className="font-bold text-sm mb-0.5">Smart Story</div>
                   <div className="text-xs text-white/80 leading-tight">
-                    Создать красивую историю 1080×1440 с логотипом 999PRO и QR-кодом
+                    Создать красивую историю 1080×1440 с логотипом TRI999 и QR-кодом
                   </div>
                 </div>
                 <button
@@ -545,24 +563,24 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
             </div>
 
             {/* Link preview */}
-            <div className="mt-4 rounded-2xl bg-slate-100 dark:bg-slate-800/60 p-3 flex items-center gap-2">
-              <Link2 className="h-4 w-4 text-slate-500 shrink-0" />
+            <div className="mt-4 rounded-2xl bg-white/[0.07] border border-white/10 p-3 flex items-center gap-2">
+              <Link2 className="h-4 w-4 text-white/50 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-xs text-slate-500 mb-0.5">Ссылка на товар</div>
-                <div className="text-xs font-mono truncate">{shareUrl}</div>
+                <div className="text-[10px] uppercase tracking-wider text-white/40 mb-0.5">Ссылка на товар</div>
+                <div className="text-xs font-mono truncate text-white/80">{shareUrl}</div>
               </div>
               <button
                 onClick={() => handleShare({ platform: 'copy', label: '', icon: Copy, color: '', gradient: '' })}
-                className="shrink-0 h-8 px-3 rounded-full bg-white dark:bg-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                className="shrink-0 h-8 px-3 rounded-full bg-white/10 text-xs font-semibold text-white hover:bg-white/15 transition-colors"
               >
                 {copied ? '✓' : 'Копировать'}
               </button>
             </div>
           </div>
 
-          {/* Footer branding — v25.12: only 999PRO, no "9" badge */}
-          <div className="px-5 py-3 border-t border-slate-200/60 dark:border-slate-800/60 shrink-0">
-            <div className="flex items-center justify-center gap-1.5 text-xs text-slate-500">
+          {/* Footer branding */}
+          <div className="px-5 py-3 border-t border-white/10 shrink-0 relative z-10">
+            <div className="flex items-center justify-center gap-1.5 text-xs text-white/50">
               <span
                 className="font-extrabold text-xs"
                 style={{
@@ -571,7 +589,7 @@ export function SmartShareSheet({ open, onClose, product, shareUrl, deepLinkUrl,
                   WebkitTextFillColor: 'transparent',
                 }}
               >
-                999PRO
+                999
               </span>
             </div>
           </div>

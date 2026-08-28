@@ -243,88 +243,21 @@ router.post(
     }
 
     // ========================================================================
-    // AUTO-CREATE a pinned support conversation with an admin.
+    // v25.14 (user request): AUTO-CREATED SUPPORT CHAT REMOVED.
     //
-    // Every new user immediately gets a dedicated "«Три девятки» / Администратор"
-    // chat channel. This conversation:
-    //   - is always pinned to the top of their chat list (type='support')
-    //   - cannot be deleted by the user
-    //   - serves as the primary support channel (no need for the user to
-    //     find an admin or open a separate "Поддержка" view)
+    // Previously every new user automatically got a pinned "support"
+    // conversation with the first admin — the chat list was never empty and
+    // it looked like fake staff accounts existed in the app (the store has
+    // exactly ONE person — the owner). Per the owner's requirement the chat
+    // of a freshly registered user must be COMPLETELY EMPTY: no admin, no
+    // support, no placeholders, nothing.
     //
-    // If no admin exists yet (rare — admin is created via first-run wizard),
-    // we skip the conversation. It will be created lazily on first visit
-    // to the support view OR on next login (via the /api/chat/support
-    // endpoint which get-or-creates it).
+    // If the user ever needs help they can still open the Contacts view or
+    // explicitly start a conversation — but nothing is pre-created for them.
+    // The lazy POST /api/chat/support endpoint still works for any client
+    // that explicitly wants a support channel.
     // ========================================================================
-    try {
-      // v11-fix: orderBy createdAt asc — pick the FIRST (oldest) admin
-      // deterministically. Without this, findFirst returns an arbitrary
-      // admin when there are multiple, which is confusing for audits.
-      const admin = await prisma.user.findFirst({
-        where: { role: 'admin', deletedAt: null },
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
-      })
-      // Skip support conversation creation if:
-      //   - no admin exists yet (lazy-created on first /api/chat/support call)
-      //   - the just-registered user IS the admin (first-run auto-promotion
-      //     makes user.id === admin.id — creating a conversation between
-      //     a user and themselves violates the (conversationId, userId)
-      //     unique constraint AND makes no semantic sense anyway).
-      if (admin && admin.id !== user.id) {
-        // Check if a support conversation already exists (idempotency).
-        // This shouldn't normally happen, but protects against any race
-        // condition or duplicate-registration scenario.
-        const existing = await prisma.conversation.findFirst({
-          where: {
-            type: 'support',
-            participants: {
-              every: {
-                OR: [{ userId: user.id }, { userId: admin.id }],
-              },
-            },
-          },
-          include: { participants: { select: { userId: true } } },
-        })
-        const alreadyExists =
-          existing &&
-          existing.participants.some((p) => p.userId === user.id) &&
-          existing.participants.some((p) => p.userId === admin.id)
-
-        if (!alreadyExists) {
-          const conv = await prisma.conversation.create({
-            data: {
-              type: 'support',
-              participants: {
-                create: [{ userId: user.id }, { userId: admin.id }],
-              },
-            },
-          })
-          // v25.3 (TZ task #3): auto-welcome message removed.
-          //
-          // Previously a hardcoded greeting was sent to every new user as
-          // the admin — this counted as a "test message" that polluted the
-          // chat list on every fresh install. Per the technical spec, the
-          // chat must open empty after launch with no demo / sample
-          // messages of any kind.
-          //
-          // The empty support conversation still exists; the user can send
-          // the first message themselves whenever they need help. The
-          // support view's placeholder input ("Напишите сообщение…") makes
-          // the next step obvious.
-          //
-          // (Conversation created but no message — conv variable retained
-          //  in case future code wants to attach metadata.)
-          void conv
-        }
-      }
-    } catch (e) {
-      // Support conversation creation is non-critical — don't fail the
-      // registration if it errors. The user can still trigger creation
-      // later via POST /api/chat/support.
-      logger.error('Failed to auto-create support conversation:', { module: 'auth', error: e })
-    }
+    void 0
 
     const token = signToken({
       sub: user.id,

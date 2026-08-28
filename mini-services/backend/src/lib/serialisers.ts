@@ -199,6 +199,9 @@ export function serialiseMessage(m: any, viewerId: string) {
     // v25.9: editedAt — when set, the message was edited by its sender.
     // UI uses this to show an "изменено" indicator next to the timestamp.
     editedAt: m.editedAt ?? null,
+    // v25.27: закреплённое сообщение (Telegram-style pin). Для удалённых
+    // у всех сообщений pin не имеет смысла — возвращаем null.
+    pinnedAt: m.deletedForAll ? null : (m.pinnedAt ?? null),
     createdAt: m.createdAt,
     replyTo: m.replyTo
       ? {

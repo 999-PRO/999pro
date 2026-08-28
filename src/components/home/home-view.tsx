@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Star, Sparkles, LayoutGrid, ArrowRight } from 'lucide-react'
+import type { Product } from '@/lib/types'
 import { HeroEditorial } from './hero-editorial'
 import { CategoryCards } from './category-cards'
 import { HotDealsSection } from './hot-deals-section'
@@ -12,34 +13,26 @@ import { PromoBannerCarousel } from '../promo-banner'
 import { useSmartBlocks } from '@/lib/use-smart-blocks'
 import { useHomeLayout } from '@/lib/home-layout'
 import { haptic } from '@/lib/haptic'
-import { Button } from '@/components/ui/button'
 
-// v25.13 (desktop redesign): Premium Apple/SSENSE-inspired layout.
+// ============================================================================
+// v25.16 — ГЛАВНАЯ РЕНДЕРИТСЯ В ПОРЯДКЕ ИЗ СТУДИИ.
 //
-// Problems with the old home page (per user feedback):
-//   1. Banner block at top looked like an awkward wide/narrow strip on
-//      desktop — too much empty space around it.
-//   2. The promo-top-bar block above the hero was visual noise.
-//   3. Everything was squeezed into mobile-width containers even on 1920px
-//      screens — the desktop home felt like a mobile mock-up scaled up.
+// Owner bug report: «в студии некоторые функции не работают — я когда
+// переставляю местами блоки и так далее». Раньше home-view рендерил секции
+// в ЖЁСТКО зашитом порядке (hero → categories → …), а из настроек бралась
+// только видимость (isVisible) — порядок из Студии игнорировался полностью,
+// а блок «ИИ-агент» вообще нигде не рендерился.
 //
-// New layout principles:
-//   • One cohesive max-width container (1280px) — content doesn't sprawl
-//     across the entire 1920px screen, but uses comfortable whitespace.
-//   • Generous vertical rhythm between sections (py-8 md:py-12).
-//   • Hero is full-width INSIDE the container, not a rounded card floating
-//     on a coloured background — looks like an editorial spread, not a banner.
-//   • Categories as a compact icon grid (App Store launchpad style).
-//   • Product grids use 2 cols mobile / 3 tablet / 4 desktop / 5 xl —
-//     cards stay readable, lots of breathing room.
-//   • Stories + Promo banner moved BELOW the hero (not above) so the
-//     first thing the user sees is the brand + CTA, not secondary content.
-//   • Hot Deals simplified — no timer, no pink background, just a header
-//     + product grid. The "deals" badge on each card carries the urgency.
-//   • Final CTA is a quiet, centered text link — not a giant button.
+// Теперь:
+//   • Порядок секций = сохранённый layout (пиновые — первыми, затем по order).
+//   • Каждый блок id имеет свой компонент в BLOCK_RENDERERS ниже.
+//   • Правки порядка/видимости в Студии применяются мгновенно (см.
+//     999pro:settings-changed → fetchLayout в use-home-layout.ts).
 //
-// Mobile is unchanged in spirit (single column, big touch targets) but
-// inherits the cleaner rhythm.
+// Layout structure: полнокрайние band'ы (сторис/баннеры) остаются
+// full-bleed на мобиле независимо от позиции в порядке; остальное — в
+// ритме max-w-7xl с внутренними отступами.
+// ============================================================================
 
 interface HomeViewProps {
   onNavigate: (v: string) => void
@@ -48,109 +41,76 @@ interface HomeViewProps {
   onOpenCategory?: (category: string) => void
 }
 
-export function HomeView({ onNavigate, onOpenProduct }: HomeViewProps) {
+/** ID блоков, которые должны рендериться full-bleed (без px-колонки). */
+const FULL_BLEED_IDS = new Set(['stories', 'banner'])
+
+// v25.20 (owner): «блок ИИ-агента между товарами на главной — убрать
+// полностью» (кнопка справа над навигацией остаётся). Если в сохранённом
+// layout он ещё есть — не рендерим и его.
+const REMOVED_BLOCK_IDS = new Set(['ai-assistant'])
+
+export function HomeView({ onNavigate, onOpenProduct, onOpenCategory }: HomeViewProps) {
   const { data, loading } = useSmartBlocks()
-  const { isVisible } = useHomeLayout()
-  const [, setSelectedCategory] = useState<string | undefined>(undefined)
+  // v25.16: полный layout (не только isVisible) — сортированный порядок блоков.
+  const { layout } = useHomeLayout()
 
   const handleCategorySelect = useCallback((cat: string) => {
     haptic.tap()
-    setSelectedCategory(cat)
-    onNavigate('catalog')
-  }, [onNavigate])
+    if (onOpenCategory) {
+      onOpenCategory(cat)
+    } else {
+      onNavigate('catalog')
+    }
+  }, [onNavigate, onOpenCategory])
 
   const blocks = data?.blocks || []
   const getBlock = (id: string) => blocks.find((b) => b.id === id)?.items || []
   const popularItems = getBlock('popular').slice(0, 12)
   const newItems = getBlock('new').slice(0, 12)
 
+  // Порядок отображения: pinned-блоки всегда первее, внутри групп — по order.
+  const orderedIds = useMemo(() => {
+    const visible = layout.filter((b) => b.visible && !REMOVED_BLOCK_IDS.has(b.id))
+    return [...visible].sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false) || a.order - b.order).map((b) => b.id)
+  }, [layout])
+
   return (
-    // v25.13: single max-width container — content stays centered and
-    // readable on 1920px+ screens. On mobile the container is full-width
-    // (px-4) and the max-w-7xl only kicks in at md+.
-    <div className="px-4 md:px-6 lg:px-8 max-w-7xl mx-auto pb-28 md:pb-16 page-top-padding">
-      {/* ─── 1. HERO ─────────────────────────────────────────────────── */}
-      {isVisible('hero') && <HeroEditorial onNavigate={onNavigate} />}
+    <div className="pb-28 md:pb-16 page-top-padding">
+      {/* ═══ ДИНАМИЧЕСКИЙ ПОРЯДОК БЛОКОВ (управляется в Студии) ═══ */}
+      {orderedIds.map((id) => {
+        if (FULL_BLEED_IDS.has(id)) {
+          return (
+            <div key={id} className="mt-6 md:mt-10 md:max-w-7xl md:mx-auto">
+              <BandRenderer id={id} />
+            </div>
+          )
+        }
+        // v25.17 (owner: «убрал совсем все отступы по краям товара… в
+        // каталоге должны быть отступы по краям»): px-контейнер применялся
+        // ТОЛЬКО к первой секции — все последующие (категории, товары,
+        // скидки) прилипали к краям экрана. Теперь КАЖДАЯ column-секция
+        // рендерится в одном и том же px + max-w контейнере, вертикальный
+        // ритм между секциями сохранён.
+        return (
+          <div
+            key={id}
+            className="px-4 md:px-6 lg:px-8 max-w-7xl mx-auto mt-8 first:mt-0 md:mt-12 md:first:mt-0"
+          >
+            <ColumnRenderer
+              id={id}
+              onNavigate={onNavigate}
+              onOpenProduct={onOpenProduct}
+              onCategorySelect={handleCategorySelect}
+              popularItems={popularItems}
+              newItems={newItems}
+              loading={loading}
+            />
+          </div>
+        )
+      })}
 
-      {/* ─── 2. CATEGORIES (App Store launchpad style) ───────────────── */}
-      {isVisible('categories') && (
-        <div className="mt-8 md:mt-12">
-          <CategoryCards
-            onSelect={handleCategorySelect}
-            onOpenPrice={() => onNavigate('price')}
-          />
-        </div>
-      )}
-
-      {/* ─── 3. STORIES (compact horizontal strip) ───────────────────── */}
-      {isVisible('stories') && (
-        <div className="mt-8 md:mt-12">
-          <Stories />
-        </div>
-      )}
-
-      {/* ─── 4. PROMO BANNER (after stories, not before hero) ─────────── */}
-      {isVisible('banner') && (
-        <div className="mt-8 md:mt-12">
-          <PromoBannerCarousel />
-        </div>
-      )}
-
-      {/* ─── 5. HOT DEALS ─────────────────────────────────────────────── */}
-      {isVisible('deals') && (
-        <div className="mt-8 md:mt-12">
-          <HotDealsSection
-            onOpenProduct={onOpenProduct}
-            onViewAll={() => onNavigate('catalog')}
-          />
-        </div>
-      )}
-
-      {/* ─── 6. RECENTLY VIEWED ───────────────────────────────────────── */}
-      <div className="mt-8 md:mt-12">
-        <RecentlyViewed onOpenProduct={onOpenProduct} />
-      </div>
-
-      {/* ─── 7. POPULAR ──────────────────────────────────────────────── */}
-      {isVisible('popular') && (
-        <div className="mt-8 md:mt-12">
-          <SmartSection
-            id="popular"
-            title="Популярные товары"
-            subtitle="Лучшие предложения месяца"
-            icon={<Star className="h-5 w-5 md:h-6 md:w-6 text-white" strokeWidth={2.4} fill="currentColor" />}
-            iconBg="bg-gradient-to-br from-[#F06292] to-[#EC407A] shadow-pink-500/30"
-            items={popularItems}
-            loading={loading}
-            onOpenProduct={onOpenProduct}
-            onViewAll={() => onNavigate('catalog')}
-          />
-        </div>
-      )}
-
-      {/* ─── 8. NEW ──────────────────────────────────────────────────── */}
-      {isVisible('new') && (
-        <div className="mt-8 md:mt-12">
-          <SmartSection
-            id="new"
-            title="Новинки"
-            subtitle="Свежее поступление товаров"
-            icon={<Sparkles className="h-5 w-5 md:h-6 md:w-6 text-white" strokeWidth={2.4} />}
-            iconBg="bg-gradient-to-br from-[#34D399] to-[#10B981] shadow-emerald-500/30"
-            items={newItems}
-            loading={loading}
-            onOpenProduct={onOpenProduct}
-            onViewAll={() => onNavigate('catalog')}
-          />
-        </div>
-      )}
-
-      {/* ─── 9. QUIET FOOTER LINK ────────────────────────────────────── */}
-      {/* v25.13: replaced the loud gradient CTA button with a quiet
-          centered text link — matches the editorial / premium feel of
-          the new layout. The button was visually competing with the
-          hero CTA above. */}
-      <div className="mt-10 md:mt-14 text-center">
+      {/* QUIET FOOTER LINK */}
+      <div className="px-4 md:px-6 lg:px-8 max-w-7xl mx-auto mt-10 md:mt-14 text-center">
         <button
           onClick={() => { haptic.tap(); onNavigate('catalog') }}
           className="inline-flex items-center gap-2 text-sm md:text-base font-medium text-muted-foreground hover:text-foreground transition-colors"
@@ -162,4 +122,84 @@ export function HomeView({ onNavigate, onOpenProduct }: HomeViewProps) {
       </div>
     </div>
   )
+}
+
+/* ---------- band (full-bleed) sections ---------- */
+
+function BandRenderer({ id }: { id: string }) {
+  if (id === 'stories') return <Stories />
+  if (id === 'banner') return <PromoBannerCarousel />
+  return null
+}
+
+/* ---------- column (padded) sections ---------- */
+
+function ColumnRenderer({
+  id,
+  onNavigate,
+  onOpenProduct,
+  onCategorySelect,
+  popularItems,
+  newItems,
+  loading,
+}: {
+  id: string
+  onNavigate: (v: string) => void
+  onOpenProduct: (id: string) => void
+  onCategorySelect: (cat: string) => void
+  popularItems: Product[]
+  newItems: Product[]
+  loading: boolean
+}) {
+  switch (id) {
+    case 'hero':
+      return <HeroEditorial onNavigate={onNavigate} />
+
+    case 'categories':
+      return <CategoryCards onSelect={onCategorySelect} onOpenPrice={() => onNavigate('price')} onOpenGames={() => onNavigate('games')} />
+
+    case 'deals':
+      return (
+        <HotDealsSection
+          onOpenProduct={onOpenProduct}
+          onViewAll={() => onNavigate('catalog')}
+        />
+      )
+
+    case 'recently-viewed':
+      return <RecentlyViewed onOpenProduct={onOpenProduct} />
+
+    case 'popular':
+      return popularItems.length > 0 || loading ? (
+        <SmartSection
+          id="popular"
+          title="Популярные товары"
+          subtitle="Лучшие предложения месяца"
+          icon={<Star className="h-5 w-5 md:h-6 md:w-6 text-white" strokeWidth={2.4} fill="currentColor" />}
+          iconBg="bg-gradient-to-br from-[#F06292] to-[#EC407A] shadow-pink-500/30"
+          items={popularItems}
+          loading={loading}
+          onOpenProduct={onOpenProduct}
+          onViewAll={() => onNavigate('catalog')}
+        />
+      ) : null
+
+    case 'new':
+      return newItems.length > 0 || loading ? (
+        <SmartSection
+          id="new"
+          title="Новинки"
+          subtitle="Свежее поступление товаров"
+          icon={<Sparkles className="h-5 w-5 md:h-6 md:w-6 text-white" strokeWidth={2.4} />}
+          iconBg="bg-gradient-to-br from-[#34D399] to-[#10B981] shadow-emerald-500/30"
+          items={newItems}
+          loading={loading}
+          onOpenProduct={onOpenProduct}
+          onViewAll={() => onNavigate('catalog')}
+        />
+      ) : null
+
+    default:
+      return null
+  }
 }

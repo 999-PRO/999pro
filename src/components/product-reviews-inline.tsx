@@ -3,13 +3,15 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Star, StarHalf, X, Camera, Loader2, PenLine, Trash2, MessageSquare, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon, ShieldCheck, CornerDownRight } from 'lucide-react'
+import { Star, StarHalf, X, Camera, Loader2, PenLine, Trash2, MessageSquare, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon, ChevronDown, ShieldCheck, CornerDownRight } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
 import type { Product, Review } from '@/lib/types'
 import { useAuthStore } from '@/lib/auth-store'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+// v25.24: длинный текст — «Показать ещё / Свернуть»
+import { CollapsibleText } from './collapsible-text'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -138,14 +140,12 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
 
   const handleSaved = (review: Review) => {
     setShowForm(false)
-    // v25.7 (TZ ЭТАП 2.3): only update `myReview` when the saved review was
-    // the user's OWN review (editingReview was null). If the admin was
-    // editing someone else's review (editingReview is set), don't hijack
-    // it as "my review" — just refetch the list.
+    // v25.14: multiple comments per user are allowed now — saving a NEW
+    // comment no longer replaces myReview; just refetch the list.
     if (!editingReview) {
       setMyReview(review)
     }
-    toast.success(editingReview ? 'Отзыв обновлён' : myReview ? 'Отзыв обновлён' : 'Спасибо за отзыв!')
+    toast.success(editingReview ? 'Отзыв обновлён' : 'Спасибо за отзыв!')
     setEditingReview(null)
     refresh()
     onReviewChanged?.()
@@ -153,17 +153,31 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
 
   const totalRatings = Object.values(distribution).reduce((a, b) => a + b, 0)
 
+  // v25.24 (owner): блок комментариев сворачивается, если их много
+  const [sectionOpen, setSectionOpen] = useState(true)
+
   return (
     <div className="pt-2">
-      <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
-        <MessageSquare className="h-4 w-4" />
-        Отзывы и оценки
+      <button
+        onClick={() => setSectionOpen((v) => !v)}
+        className="w-full text-sm font-bold mb-3 flex items-center gap-2 text-left group"
+        aria-expanded={sectionOpen}
+      >
+        <MessageSquare className="h-4 w-4 shrink-0" />
+        <span>Отзывы и оценки</span>
         {totalReviews > 0 && (
           <span className="text-xs font-normal text-muted-foreground">
             ({formatCompactNumber(totalReviews)})
           </span>
         )}
-      </h2>
+        <span className="ml-auto h-7 w-7 rounded-full grid place-items-center bg-foreground/5 group-hover:bg-foreground/10 transition-colors">
+          <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform duration-200', !sectionOpen && '-rotate-90')} />
+        </span>
+      </button>
+
+      {/* v25.24: содержимое скрывается, когда блок свёрнут */}
+      {!sectionOpen ? null : (
+      <>
 
       {/* Rating summary — hidden in compact mode (parent card shows its own rating) */}
       {!compact && (
@@ -206,16 +220,17 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
         </div>
       )}
 
-      {/* CTA: leave a review */}
+      {/* CTA: leave a review
+          v25.14: the one-review-per-user restriction is REMOVED (backend + UI).
+          Users can post as many comments as they want — the button is always
+          visible for logged-in users. */}
       {isAuthenticated ? (
-        !myReview && (
-          <Button
-            onClick={() => { setEditingReview(null); setShowForm(true) }}
-            className="w-full rounded-2xl h-11 mb-3 gradient-brand text-white font-semibold"
-          >
-            <PenLine className="h-4 w-4 mr-1.5" /> Оставить отзыв
-          </Button>
-        )
+        <Button
+          onClick={() => { setEditingReview(null); setShowForm(true) }}
+          className="w-full rounded-2xl h-11 mb-3 gradient-brand text-white font-semibold"
+        >
+          <PenLine className="h-4 w-4 mr-1.5" /> {myReview ? 'Написать ещё' : 'Оставить отзыв'}
+        </Button>
       ) : (
         <button
           onClick={() => {
@@ -267,7 +282,11 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
             // reviews (and edit/delete any review) — pass isAdmin so the
             // reply button + admin edit/delete buttons appear.
             isAdmin={user?.role === 'admin'}
-            onEdit={() => { setEditingReview(null); setShowForm(true) }}
+            // v25.27 FIX: «Изменить» на КАРТОЧКЕ СВОЕГО отзыва явно открывает
+            // форму в режиме правки этого отзыва (раньше полагался на удалённый
+            // fallback `?? myReview` — после фикса второго комментария нужно
+            // выставлять editingReview явно).
+            onEdit={() => { setEditingReview(myReview); setShowForm(true) }}
             onDelete={() => handleDelete(myReview.id)}
             onReplyAdded={refresh}
           />
@@ -367,10 +386,14 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
         <AnimatePresence>
           <ReviewForm
             product={product}
-            // v25.7 (TZ ЭТАП 2.3): when an admin is editing someone else's
-            // review, `editingReview` is set. Otherwise fall back to the
-            // user's own review (pre-v25.7 behavior).
-            existingReview={editingReview ?? myReview}
+            // v25.27 FIX (owner): «второй комментарий не добавляется».
+            // Раньше здесь был fallback `editingReview ?? myReview` — после
+            // первого комментария форма ВСЕГДА открывалась с myReview как
+            // existingReview, и второй комментарий уходил как PATCH (правка
+            // первого), поэтому «не добавлялся». Теперь форма создаёт новый
+            // комментарий (existingReview=null), а редактирование включается
+            // ТОЛЬКО явным setEditingReview(r) из карточки «Изменить».
+            existingReview={editingReview}
             onClose={() => { setShowForm(false); setEditingReview(null) }}
             onSaved={handleSaved}
           />
@@ -389,6 +412,8 @@ export function ProductReviewsInline({ product, onReviewChanged, compact = false
         onConfirm={confirmDeleteReview}
         onCancel={() => setDeleteReviewId(null)}
       />
+      </>
+      )}
     </div>
   )
 }
@@ -440,6 +465,33 @@ function ReviewCard({
   const [replyOpen, setReplyOpen] = useState(false)
   const [replyText, setReplyText] = useState('')
   const [replyBusy, setReplyBusy] = useState(false)
+  // v25.24: цель ответа — топ-уровневый комментарий ИЛИ любой ответ
+  // (ответы на ответы, любая глубина — как просил владелец).
+  const [replyTarget, setReplyTarget] = useState<{ id: string; name: string } | null>(null)
+  // v25.16: отвечает ЛЮБОЙ залогиненный — нужен флаг входа + свой id для
+  // удаления своих ответов.
+  const isAuthed = useAuthStore((s) => s.isAuthenticated)
+  const meId = useAuthStore((s) => s.user?.id)
+  // v25.17: редактирование своего ответа (инлайн).
+  const [editingReplyId, setEditingReplyId] = useState<string | null>(null)
+  const [replyEditText, setReplyEditText] = useState('')
+  const [replyEditBusy, setReplyEditBusy] = useState(false)
+
+  const saveReplyEdit = async (replyId: string) => {
+    const text = replyEditText.trim()
+    if (!text) return
+    setReplyEditBusy(true)
+    try {
+      await api.patch(`/api/reviews/${replyId}`, { json: { content: text }, auth: true })
+      toast.success('Ответ обновлён')
+      setEditingReplyId(null)
+      onReplyAdded?.()
+    } catch (e: any) {
+      toast.error(e?.details?.error || 'Не удалось сохранить ответ')
+    } finally {
+      setReplyEditBusy(false)
+    }
+  }
 
   const submitReply = async () => {
     const text = replyText.trim()
@@ -449,13 +501,15 @@ function ReviewCard({
     }
     setReplyBusy(true)
     try {
-      await api.post<Review>(`/api/reviews/${review.id}/replies`, {
+      // v25.24: отвечаем на replyTarget (корень или любой вложенный ответ)
+      await api.post<Review>(`/api/reviews/${replyTarget?.id || review.id}/replies`, {
         json: { content: text },
         auth: true,
       })
       toast.success('Ответ опубликован')
       setReplyText('')
       setReplyOpen(false)
+      setReplyTarget(null)
       onReplyAdded?.()
     } catch (e: any) {
       toast.error(e?.details?.error || 'Не удалось опубликовать ответ')
@@ -519,9 +573,11 @@ function ReviewCard({
 
       {review.title && <div className="font-semibold text-sm mb-1">{review.title}</div>}
       {review.content && (
-        <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
-          {review.content}
-        </p>
+        <CollapsibleText
+          text={review.content}
+          maxLines={6}
+          className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed"
+        />
       )}
 
       {review.photos.length > 0 && (
@@ -560,13 +616,15 @@ function ReviewCard({
         />
       )}
 
-      {/* v25.7 (TZ ЭТАП 2.3): admin reply button. Visible only to admins.
-          Toggles an inline textarea where the admin can write a reply. */}
-      {isAdmin && (
+      {/* v25.16 (owner): «ответить на комментарий — то же самое и в товарах».
+          Раньше кнопка была только у админа — теперь отвечают ВСЕ авторизованные
+          пользователи. Автор исходного комментария получает push-уведомление.
+          Админ видит отдельный стиль («от имени администратора»). */}
+      {isAdmin ? (
         <div className="mt-3">
           {!replyOpen ? (
             <button
-              onClick={() => setReplyOpen(true)}
+              onClick={() => { setReplyTarget({ id: review.id, name: review.user?.displayName || review.user?.username || 'автора' }); setReplyOpen(true) }}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 transition-colors"
             >
               <CornerDownRight className="h-3.5 w-3.5" />
@@ -590,7 +648,7 @@ function ReviewCard({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { setReplyOpen(false); setReplyText('') }}
+                  onClick={() => { setReplyOpen(false); setReplyText(''); setReplyTarget(null) }}
                   disabled={replyBusy}
                 >
                   Отмена
@@ -607,18 +665,58 @@ function ReviewCard({
             </div>
           )}
         </div>
+      ) : isAuthed && (
+        <div className="mt-3">
+          {!replyOpen ? (
+            <button
+              onClick={() => { setReplyTarget({ id: review.id, name: review.user?.displayName || review.user?.username || 'автора' }); setReplyOpen(true) }}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 transition-colors"
+            >
+              <CornerDownRight className="h-3.5 w-3.5" />
+              Ответить
+            </button>
+          ) : (
+            <div className="space-y-2 rounded-xl border border-border/60 bg-accent/30 p-3">
+              <div className="text-xs font-semibold text-muted-foreground">
+                Ваш ответ для {replyTarget?.name || review.user?.displayName || review.user?.username || 'автора'}
+              </div>
+              <Textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="Введите ответ…"
+                className="min-h-[64px] bg-background text-sm"
+                disabled={replyBusy}
+                autoFocus
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => { setReplyOpen(false); setReplyText(''); setReplyTarget(null) }} disabled={replyBusy}>
+                  Отмена
+                </Button>
+                <Button size="sm" onClick={submitReply} disabled={replyBusy || !replyText.trim()}>
+                  {replyBusy && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}
+                  Отправить
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* v25.7 (TZ ЭТАП 2.3): nested admin replies. The backend includes
-          replies via Prisma `include: { replies: true }` on GET /api/reviews.
-          Each reply is rendered as a smaller, indented card with an
-          "Администратор" badge. Replies have no rating (rating=0).
-          v25.8 (999PRO launch): admin can delete any reply (own or another
-          admin's). The backend's DELETE /api/reviews/:id allows admin to
-          delete any review including replies. */}
+      {/* v25.7: nested replies.
+          v25.16: отвечать может любой пользователь — бейдж «АДМИН» показываем
+          только админам, обычные ответы рендерим без бейджа. Свои ответы можно
+          удалять (и админ — любые). */}
       {review.replies && review.replies.length > 0 && (
         <div className="mt-3 ml-3 pl-3 border-l-2 border-primary/30 space-y-2">
-          {review.replies.map((reply) => (
+          {review.replies.map((reply) => {
+            const replyIsAdmin = (reply as any).user?.role === 'admin'
+            const isOwnReply = isAuthed && (reply as any).userId === meId
+            const canDelete = isAdmin || isOwnReply
+            // v25.17: править свой ответ может только автор (админ правит через
+            // общий режим редактирования отзыва — здесь достаточно своего).
+            const canEdit = isOwnReply && editingReplyId !== reply.id
+            const isEditing = editingReplyId === reply.id
+            return (
             <div key={reply.id} className="rounded-xl bg-accent/30 p-3">
               <div className="flex items-center gap-2 mb-1">
                 <Avatar className="h-6 w-6">
@@ -628,18 +726,24 @@ function ReviewCard({
                   </AvatarFallback>
                 </Avatar>
                 <span className="font-semibold text-xs">
-                  {reply.user?.displayName || reply.user?.username || 'Администратор'}
+                  {(reply as any).user?.displayName || (reply as any).user?.username || 'Пользователь'}
                 </span>
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
-                  <ShieldCheck className="h-2.5 w-2.5" />
-                  АДМИН
-                </span>
+                {/* v25.24: признак «ответ X» для вложенных ответов */}
+                {(reply as any).replyToName && (reply as any).replyToId && (reply as any).replyToId !== review.id && (
+                  <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
+                    ↩ {(reply as any).replyToName}
+                  </span>
+                )}
+                {replyIsAdmin && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
+                    <ShieldCheck className="h-2.5 w-2.5" />
+                    АДМИН
+                  </span>
+                )}
                 <span className="text-[10px] text-muted-foreground ml-auto">
                   {timeAgo(new Date(reply.createdAt))}
                 </span>
-                {/* v25.8: admin can delete any reply (own or another admin's).
-                    Backend DELETE /api/reviews/:id allows this for admin role. */}
-                {isAdmin && (
+                {canDelete && (
                   <button
                     onClick={async () => {
                       if (!confirm('Удалить этот ответ?')) return
@@ -658,11 +762,73 @@ function ReviewCard({
                   </button>
                 )}
               </div>
-              <p className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">
-                {reply.content}
-              </p>
+              {/* v25.17: инлайн-редактирование своего ответа */}
+              {isEditing ? (
+                <div>
+                  <textarea
+                    value={replyEditText}
+                    onChange={(e) => setReplyEditText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveReplyEdit(reply.id) }
+                      if (e.key === 'Escape') setEditingReplyId(null)
+                    }}
+                    rows={2}
+                    maxLength={2000}
+                    autoFocus
+                    disabled={replyEditBusy}
+                    className="w-full resize-none rounded-lg bg-background ring-1 ring-primary/30 outline-none text-xs leading-relaxed p-2 min-h-[52px]"
+                  />
+                  <div className="flex items-center justify-end gap-2 mt-1.5">
+                    <button
+                      onClick={() => setEditingReplyId(null)}
+                      className="text-[11px] font-semibold text-muted-foreground hover:text-foreground px-2 py-0.5"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      onClick={() => saveReplyEdit(reply.id)}
+                      disabled={replyEditBusy || !replyEditText.trim()}
+                      className="text-[11px] font-bold text-white gradient-brand rounded-full px-3 py-1 disabled:opacity-40"
+                    >
+                      {replyEditBusy ? 'Сохранение…' : 'Сохранить'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* v25.24: длинный ответ сворачивается */}
+                  <CollapsibleText
+                    text={reply.content}
+                    maxLines={5}
+                    className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed"
+                  />
+                  <div className="flex items-center gap-3 mt-1">
+                    {/* v25.24: ответить МОЖНО на любой ответ — вложенность без ограничений */}
+                    {isAuthed && (
+                      <button
+                        onClick={() => {
+                          setReplyTarget({ id: reply.id, name: (reply as any).user?.displayName || (reply as any).user?.username || 'автора' })
+                          setReplyOpen(true)
+                        }}
+                        className="text-[11px] font-semibold text-primary hover:text-primary/80 transition-colors"
+                      >
+                        Ответить
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button
+                        onClick={() => { setReplyEditText(reply.content); setEditingReplyId(reply.id) }}
+                        className="text-[11px] font-semibold text-muted-foreground hover:text-primary transition-colors"
+                      >
+                        Изменить
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

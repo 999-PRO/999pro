@@ -17,10 +17,16 @@ const router = Router()
 //                    primaryButton: {text, view, link}, secondaryButton: {...}, gradient }
 
 // Whitelist of settings readable without auth (public)
-const PUBLIC_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'address', 'workingHours', 'heroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen'])
+// v25.15: + notifyNewProduct — статус авто-push «Новый товар»
+// v25.19: + catalogBannerEnabled — баннер в каталоге; seoSettings — SEO-теги для поисковиков
+const PUBLIC_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'address', 'workingHours', 'heroBlock', 'mobileHeroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen', 'notifyNewProduct', 'catalogBannerEnabled', 'seoSettings'])
 
 // Whitelist of all known setting keys (so attackers can't fill the DB with junk)
-const KNOWN_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'address', 'workingHours', 'heroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen'])
+// v25.15: boolean-only settings (stored as JSON booleans)
+// v25.19: + catalogBannerEnabled
+const BOOLEAN_SETTING_KEYS = new Set(['notifyNewProduct', 'catalogBannerEnabled'])
+
+const KNOWN_SETTING_KEYS = new Set(['headerImage', 'headerEnabled', 'whatsapp', 'telegram', 'email', 'phone', 'address', 'workingHours', 'heroBlock', 'mobileHeroBlock', 'appTitle', 'homeLayout', 'modulesEnabled', 'bonusPointsSettings', 'communicationSettings', 'splashScreen', 'notifyNewProduct', 'catalogBannerEnabled', 'seoSettings'])
 
 // Zod schema for the headerImage setting value
 const headerImageValueSchema = z.object({
@@ -73,6 +79,22 @@ const heroBlockValueSchema = z.object({
   // persists them instead of silently stripping via Zod default)
   objectFit: z.enum(['cover', 'contain']).default('cover').optional(),
   mode: z.enum(['image-text', 'image-only']).default('image-text').optional(),
+  // v25.21 (owner): видео в hero. GIF загружаются в images (это картинки),
+  // видео — отдельный массив; фронт собирает слайды [...images, ...videos].
+  videos: z.array(z.string().max(2048)).max(5).default([]).optional(),
+})
+
+// v25.21: ОТДЕЛЬНЫЙ мобильный hero-баннер («на мобиле hero слишком большой —
+// сделай размером с баннер, с картинками/видео и кнопками»). Медиа — картинки
+// (вкл. GIF) и видео вперемешку, тип определяется на клиенте по расширению.
+const mobileHeroBlockValueSchema = z.object({
+  enabled: z.boolean().default(false),
+  media: z.array(z.string().max(2048)).max(10).default([]),
+  badge: z.string().max(120).nullable(),
+  title: z.string().max(200).nullable(),
+  description: z.string().max(400).nullable(),
+  primaryButton: heroButtonSchema,
+  secondaryButton: heroButtonSchema,
 })
 
 // String-valued settings (whatsapp, telegram, email, phone, address, workingHours).
@@ -134,6 +156,15 @@ const communicationSettingsSchema = z.object({
   voiceMessages: z.boolean().default(true),       // voice messages
   screenShare: z.boolean().default(false),        // screen share (not yet implemented)
   videoConferences: z.boolean().default(false),   // video conferences (future)
+}).passthrough()
+
+// v25.19: SEO-настройки — владелец сам управляет тем, как приложение
+// выглядит для поисковиков (title / description / ключевые слова / OG-картинка).
+const seoSettingsSchema = z.object({
+  siteTitle: z.string().max(140).nullable().optional(),
+  siteDescription: z.string().max(400).nullable().optional(),
+  siteKeywords: z.string().max(800).nullable().optional(),
+  ogImage: z.string().max(2048).nullable().optional(),
 }).passthrough()
 
 // GET /api/settings/:key — public for whitelisted keys, auth-required otherwise
@@ -206,13 +237,26 @@ router.put(
       if (typeof hero.description === 'string') hero.description = sanitiseInlineHtml(hero.description)
     } else if (key === 'homeLayout') {
       valueToStore = homeLayoutSchema.parse(req.body)
+    } else if (key === 'mobileHeroBlock') {
+      // v25.21: мобильный hero-баннер (санитизация текстов — как у heroBlock)
+      valueToStore = mobileHeroBlockValueSchema.parse(req.body)
+      const m = valueToStore as Record<string, unknown>
+      if (typeof m.badge === 'string') m.badge = sanitiseInlineHtml(m.badge)
+      if (typeof m.title === 'string') m.title = sanitiseInlineHtml(m.title)
+      if (typeof m.description === 'string') m.description = sanitiseInlineHtml(m.description)
     } else if (key === 'modulesEnabled') {
       valueToStore = modulesEnabledSchema.parse(req.body)
     } else if (key === 'communicationSettings') {
       valueToStore = communicationSettingsSchema.parse(req.body)
+    } else if (key === 'seoSettings') {
+      // v25.19: SEO-теги для поисковиков (title/description/keywords/ogImage)
+      valueToStore = seoSettingsSchema.parse(req.body)
     } else if (key === 'splashScreen') {
       // v20: splash screen settings — passthrough (admin-controlled shape)
       valueToStore = req.body
+    } else if (BOOLEAN_SETTING_KEYS.has(key)) {
+      // v25.15: строго boolean — защита от мусора в значении переключателя
+      valueToStore = z.boolean().parse(req.body)
     } else if (STRING_SETTING_KEYS.has(key)) {
       // Reject wrapped objects (e.g. `{ value: "+7999..." }`) — only accept
       // a raw string or null. This prevents the triple-wrapping bug that

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, Search, LogOut, KeyRound, Phone, Sparkles, Activity, Share2, Users, Sun, Moon, Truck, ShoppingBag, Home, FileText, Shield, ShieldCheck, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, UserPlus, Smartphone, Megaphone, MessagesSquare, FolderTree, FileSpreadsheet } from 'lucide-react'
+import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, Search, LogOut, KeyRound, Phone, Sparkles, Activity, Share2, Users, Sun, Moon, Truck, ShoppingBag, Home, FileText, Shield, ShieldCheck, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, UserPlus, Smartphone, Megaphone, MessagesSquare, FolderTree, FileSpreadsheet, UsersRound } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
@@ -21,6 +21,7 @@ const NAV = [
   { id: 'share', label: 'Smart Share', icon: Share2 },
   { id: 'products', label: 'Товары', icon: Package },
   { id: 'categories', label: 'Категории', icon: FolderTree },
+  { id: 'communities', label: 'Сообщества', icon: UsersRound },
   { id: 'price-lists', label: 'Прайс-листы', icon: FileSpreadsheet },
   { id: 'orders', label: 'Заказы', icon: ShoppingBag },
   { id: 'delivery', label: 'Доставка', icon: Truck },
@@ -38,6 +39,8 @@ const NAV = [
   { id: 'hero', label: 'Hero блок', icon: Sparkles },
   { id: 'header', label: 'Шапка', icon: ImagePlus },
   { id: 'info-pages', label: 'Инфо-страницы', icon: FileText },
+  // v25.19: SEO — видимость в Google/Яндексе
+  { id: 'seo', label: 'SEO и поиск', icon: Search },
   { id: 'aikb', label: 'AI Knowledge Base', icon: Bot },
   // v19.0: New admin sections
   { id: 'ai-providers', label: 'AI API', icon: Cpu },

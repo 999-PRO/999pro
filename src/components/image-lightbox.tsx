@@ -7,7 +7,6 @@ import { assetUrl } from '@/lib/api'
 import { useScrollLock } from '@/lib/use-scroll-lock'
 import { useFocusTrap } from '@/lib/use-focus-trap'
 import { haptic } from '@/lib/haptic'
-import { useIsDesktop } from '@/lib/use-media-query'
 
 interface ImageLightboxProps {
   images: string[]
@@ -68,6 +67,9 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
   const [panY, setPanY] = useState(0)
   const [isClosing, setIsClosing] = useState(false)
   const [swipeDownY, setSwipeDownY] = useState(0)
+  // v25.16: горизонтальный «follow» жест — картинка тянется за пальцем,
+  // при отпускании возвращается/перелистывается. Работает в ОБЕ стороны.
+  const [dragDelta, setDragDelta] = useState(0)
   // v12.2: auto-hide UI panels (top bar + bottom thumbnail strip).
   // Panels are visible by default; they fade out after 3s of inactivity.
   // They are FORCED hidden while the image is zoomed (scale > 1) or during
@@ -87,7 +89,8 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
   // v12.2.1: navigation arrows are desktop-only. On mobile, users navigate
   // via swipe gestures + the bottom thumbnail strip — on-screen arrows would
   // cover the photo unnecessarily on small touch screens.
-  const isDesktop = useIsDesktop()
+  // v25.16: стрелки теперь показываются и на мобиле (компактные), так что
+  // isDesktop больше не нужен здесь — удалён за ненадобностью.
 
   // Touch tracking refs (avoid re-renders during gesture)
   const touchRef = useRef<{
@@ -354,14 +357,22 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
         setPanX(touchRef.current.panBaseX + dx)
         setPanY(touchRef.current.panBaseY + dy)
       } else if (touchRef.current.mode === 'swipe') {
-        // if vertical movement dominates AND is downward → close gesture
-        // if horizontal dominates → gallery swipe (handled on touchend)
-        if (dy > 20 && Math.abs(dy) > Math.abs(dx)) {
+        // v25.16 FIX («в чате картинки листаются только в одну сторону»):
+        // раньше почти любой горизонтальный свайп с МИНИМАЛЬНЫМ наклоном вниз
+        // переключался в режим закрытия (порог был всего dy>20 при малом dx)
+        // и прев не срабатывал. Теперь закрываем ТОЛЬКО при явном движении
+        // вниз (|dy| значительно больше |dx|), во всех остальных случаях
+        // остаёмся в режиме свайпа галереи.
+        if (Math.abs(dy) > Math.abs(dx) && dy > 56) {
           touchRef.current.mode = 'close'
-          setSwipeDownY(Math.max(0, dy))
-        } else if (Math.abs(dx) > Math.abs(dy)) {
-          // Horizontal swipe — track for snap-back or navigation on release
-          // (we don't move the image during swipe; we navigate on touchend)
+          setSwipeDownY(dy)
+        }
+        // Горизонтальный компонент показываем визуально (follow-жест).
+        else if (touchRef.current.mode === 'swipe') {
+          const pull = dx
+          const atStartEdge = (pull > 0 && index === 0)
+          const atEndEdge = (pull < 0 && index === images.length - 1)
+          setDragDelta(atStartEdge || atEndEdge ? pull * 0.25 : pull)
         }
       } else if (touchRef.current.mode === 'close') {
         setSwipeDownY(Math.max(0, dy))
@@ -413,16 +424,18 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
       // Tap — toggle UI visibility (matches iOS Photos behavior:
       // tapping the photo hides/shows the chrome).
       t.mode = 'none'
+      setDragDelta(0)
       setUiVisible((v) => !v)
       return
     }
 
-    // Bidirectional navigation — both left and right swipes work
-    if (dx < -threshold) {
-      next()
-    } else if (dx > threshold) {
-      prev()
+    // Bidirectional navigation — both left and right swipes work.
+    // v25.16: порог ниже для более отзывчивого листания.
+    if (dx < -threshold || dx > threshold) {
+      if (dx < 0) next()
+      else prev()
     }
+    setDragDelta(0)
     t.mode = 'none'
     revealUi()
   }
@@ -437,7 +450,7 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
         await navigator.share({
-          title: '999PRO',
+          title: 'TRI999',
           url: assetUrl(url),
         })
       } catch {
@@ -748,8 +761,8 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
         onTouchEnd={onTouchEnd}
         onClick={(e) => e.stopPropagation()}
         style={{
-          transform: `translate(${scale > 1 ? panX : 0}px, ${scale > 1 ? panY : swipeDownY}px) scale(${imgScale})`,
-          transition: (swipeDownY === 0 && panX === 0 && panY === 0 && !isClosing && touchRef.current.mode === 'none')
+          transform: `translate(${scale > 1 ? panX : 0 + dragDelta}px, ${scale > 1 ? panY : swipeDownY}px) scale(${imgScale})`,
+          transition: (dragDelta === 0 && swipeDownY === 0 && panX === 0 && panY === 0 && !isClosing && touchRef.current.mode === 'none')
             ? 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)'
             : 'none',
           maxWidth: '100vw',
@@ -764,38 +777,48 @@ export function ImageLightbox({ images, initialIndex, open, onClose }: ImageLigh
         draggable={false}
       />
 
-      {/* ===== NAVIGATION ARROWS (desktop only) ===== */}
-      {/* v12.2.1: hidden on mobile (<768px) — users navigate via swipe
-          gestures + bottom thumbnail strip on touch devices. On-screen
-          arrows would cover the photo unnecessarily on small screens. */}
-      {isDesktop && images.length > 1 && scale === 1 && panelsVisible && (
+      {/* ===== NAVIGATION ARROWS (desktop + компактные на мобиле) =====
+          v25.16: раньше стрелки были ТОЛЬКО на десктопе, а свайп вправо
+          часто перехватывался режимом «закрыть» — казалось, что листается
+          только в одну сторону. Теперь: мягкий follow-жест в обе стороны
+          (+ исправленный порог закрытия) И деликатные полупрозрачные стрелки
+          на мобиле — направление листания очевидно всегда. */}
+      {images.length > 1 && scale === 1 && !isClosing && (
         <>
           {index > 0 && (
             <button
-              className="absolute left-4 top-1/2 -translate-y-1/2 h-12 w-12 rounded-full grid place-items-center z-10 text-white hover:bg-white/15 active:bg-white/25 transition-colors"
+              className="absolute top-1/2 -translate-y-1/2 h-11 w-11 md:h-12 md:w-12 rounded-full grid place-items-center z-10 text-white transition-colors"
               onClick={(e) => { e.stopPropagation(); prev() }}
               aria-label="Предыдущая"
               style={{
-                background: 'rgba(0,0,0,0.40)',
+                left: 8,
+                background: 'rgba(0,0,0,0.35)',
                 backdropFilter: 'blur(8px)',
                 WebkitBackdropFilter: 'blur(8px)',
+                opacity: panelsVisible ? 0.55 : 0,
+                pointerEvents: panelsVisible ? 'auto' : 'none',
+                transition: 'opacity 0.2s ease, background 0.2s ease',
               }}
             >
-              <ChevronLeft className="h-6 w-6" />
+              <ChevronLeft className="h-5 w-5 md:h-6 md:w-6" />
             </button>
           )}
           {index < images.length - 1 && (
             <button
-              className="absolute right-4 top-1/2 -translate-y-1/2 h-12 w-12 rounded-full grid place-items-center z-10 text-white hover:bg-white/15 active:bg-white/25 transition-colors"
+              className="absolute top-1/2 -translate-y-1/2 h-11 w-11 md:h-12 md:w-12 rounded-full grid place-items-center z-10 text-white transition-colors"
               onClick={(e) => { e.stopPropagation(); next() }}
               aria-label="Следующая"
               style={{
-                background: 'rgba(0,0,0,0.40)',
+                right: 8,
+                background: 'rgba(0,0,0,0.35)',
                 backdropFilter: 'blur(8px)',
                 WebkitBackdropFilter: 'blur(8px)',
+                opacity: panelsVisible ? 0.55 : 0,
+                pointerEvents: panelsVisible ? 'auto' : 'none',
+                transition: 'opacity 0.2s ease, background 0.2s ease',
               }}
             >
-              <ChevronRight className="h-6 w-6" />
+              <ChevronRight className="h-5 w-5 md:h-6 md:w-6" />
             </button>
           )}
         </>

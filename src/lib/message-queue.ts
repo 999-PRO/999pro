@@ -20,7 +20,7 @@ export interface QueuedMessage {
   conversationId: string
   content?: string
   mediaUrl?: string
-  mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film'
+  mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film' | 'game'
   duration?: number
   replyToId?: string
   // v13.0 (audit P1-9 fix): include attachments so offline multi-file

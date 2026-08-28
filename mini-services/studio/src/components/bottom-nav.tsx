@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, MoreHorizontal, Phone, X, Sparkles, Activity, Users, Share2, Truck, ShoppingBag, Home, FileText, Shield, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, UserPlus, Smartphone, ShieldCheck, Sun, Moon } from 'lucide-react'
+import { BarChart3, Package, Image, Crown, RectangleHorizontal, ImagePlus, MoreHorizontal, Phone, X, Sparkles, Activity, Users, UsersRound, Share2, Truck, ShoppingBag, Home, FileText, Shield, Bot, Tag, Coins, Grid3x3, Cpu, MessageSquare, MessagesSquare, Megaphone, FolderTree, FileSpreadsheet, UserPlus, Smartphone, ShieldCheck, Sun, Moon, Search } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useTheme } from 'next-themes'
 import { cn } from '@/lib/utils'
@@ -12,14 +12,21 @@ import { cn } from '@/lib/utils'
 // 'audit' and 'hero' (less frequently used) live in moreNav (slice 5+).
 // v12.3.1: Stories RESTORED. v12.3: Feed removed, replaced by 999 CLUB.
 // v8: 'managers' added to mobile NAV — was desktop-only before.
+// v25.19 (owner): «на мобильном не все функции, не все разделы в студии» —
+// мобильный список ДОПОЛНЕН недостающими разделами (categories, communities,
+// price-lists, chat-settings, mass-push, departments) и теперь ПОЛНОСТЬЮ
+// совпадает с десктопным сайдбаром (32 раздела).
 const NAV = [
   { id: 'analytics', label: 'Аналитика', icon: BarChart3 },
   { id: 'home', label: 'Главная', icon: Home },
   { id: 'products', label: 'Товары', icon: Package },
+  { id: 'categories', label: 'Категории', icon: FolderTree },
+  { id: 'communities', label: 'Сообщества', icon: UsersRound },
   { id: 'orders', label: 'Заказы', icon: ShoppingBag },
   { id: 'delivery', label: 'Доставка', icon: Truck },
   { id: 'stories', label: 'Сторис', icon: Image },
   { id: 'club', label: 'CLUB', icon: Crown },
+  { id: 'price-lists', label: 'Прайс-листы', icon: FileSpreadsheet },
   { id: 'contacts', label: 'Контакты', icon: Phone },
   { id: 'users', label: 'Юзеры', icon: Users },
   // v8: Менеджеры — теперь доступны и на мобильном
@@ -28,7 +35,12 @@ const NAV = [
   { id: 'banners', label: 'Баннеры', icon: RectangleHorizontal },
   { id: 'header', label: 'Шапка', icon: ImagePlus },
   { id: 'hero', label: 'Hero блок', icon: Sparkles },
+  { id: 'chat-settings', label: 'Настройки чата', icon: MessagesSquare },
+  { id: 'mass-push', label: 'Push-рассылка', icon: Megaphone },
+  { id: 'departments', label: 'Направления', icon: Phone },
   { id: 'info-pages', label: 'Инфо', icon: FileText },
+  // v25.19: SEO
+  { id: 'seo', label: 'SEO', icon: Search },
   { id: 'aikb', label: 'AI KB', icon: Bot },
   { id: 'ai-providers', label: 'AI API', icon: Cpu },
   { id: 'promo-codes', label: 'Промо', icon: Tag },

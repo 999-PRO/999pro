@@ -101,6 +101,32 @@ async function main() {
     createdUsers.push(u)
   }
 
+  // --- Categories (v25.25: owner report «пропали категории с главной») ---
+  // The home page renders beautiful category tiles from /api/categories.
+  // Previously the seed never created them, so a fresh DB showed no
+  // categories at all. Icons must exist in category-cards.tsx ICONS map.
+  const categorySeed = [
+    { name: 'Реклама',          slug: 'reklama',            icon: 'Megaphone',    description: 'Рекламные кампании, таргет, контекст' },
+    { name: 'Наружная реклама', slug: 'naruzhnaya-reklama', icon: 'Presentation', description: 'Баннеры, лайтбоксы, вывески' },
+    { name: 'Полиграфия',       slug: 'poligrafiya',        icon: 'Newspaper',    description: 'Визитки, листовки, буклеты' },
+    { name: 'Печать',           slug: 'pechat',             icon: 'Printer',      description: 'Печать фото, книг, сувенирка' },
+    { name: 'Дизайн',           slug: 'dizayn',             icon: 'Palette',      description: 'Логотипы, фирменный стиль, креатив' },
+    { name: 'Интерьер',         slug: 'interer',            icon: 'Home',         description: 'Постеры, декор, предметы интерьера' },
+    { name: 'Мебель',           slug: 'mebel',              icon: 'Armchair',     description: 'Офисная и домашняя мебель' },
+    { name: 'Подарки',          slug: 'podarki',            icon: 'Gift',         description: 'Подарочные наборы и гаджеты' },
+    { name: 'Упаковка',         slug: 'upakovka',           icon: 'Box',          description: 'Коробки, пакеты, стикеры' },
+    { name: 'Сувениры',         slug: 'suveniry',           icon: 'Gem',          description: 'Брендирование, мерч, сувенирка' },
+  ]
+  for (let i = 0; i < categorySeed.length; i++) {
+    const c = categorySeed[i]
+    await prisma.category.upsert({
+      where: { name: c.name },
+      update: { icon: c.icon, description: c.description, sortOrder: i, visible: true },
+      create: { ...c, sortOrder: i, visible: true },
+    })
+  }
+  console.log(`Categories seeded: ${categorySeed.length}`)
+
   // --- Products ---
   const productSeed = [
     { title: 'Кроссовки Air Runner Pro', category: 'Подарки', price: 8990, oldPrice: 12990, popular: true, images: PRODUCT_IMAGES.sneakers, description: 'Лёгкие беговые кроссовки с амортизирующей подошвой и дышащим верхом. Идеальный подарок для активных людей.' },

@@ -375,9 +375,9 @@ const save = async () => {
     if (!user) return toast.error('Войдите в аккаунт')
     setSaving(true)
     try {
-      // Backend creates ONE separate Story per URL (was: one Story with N
-      // slides). mediaType is detected per-URL on the backend, so a mixed
-      // image+video batch is handled correctly.
+      // v25.17 (owner): ВСЕ выбранные фото/видео попадают в ОДНУ сторис —
+      // раньше бэкенд резал мультивыбор на отдельные сторис (теперь это
+      // поведение по умолчанию на бэкенде, grouped: true).
       await api.post('/api/stories', {
         json: {
           media,
@@ -385,10 +385,11 @@ const save = async () => {
           caption: caption.trim() || undefined,
           category: category.trim() || undefined,
           durationHours: 24,
+          grouped: true,
         },
         auth: true,
       })
-      toast.success(media.length > 1 ? `Опубликовано сторис: ${media.length}` : 'Сторис опубликована')
+      toast.success(media.length > 1 ? `Сторис опубликована · ${media.length} медиа внутри` : 'Сторис опубликована')
       onSaved()
     } catch (e: unknown) {
       toast.error('Ошибка', { description: e instanceof Error ? e.message : String(e) })
@@ -402,10 +403,12 @@ const save = async () => {
       <DialogContent className="sm:max-w-md rounded-3xl">
         <DialogHeader>
           <DialogTitle>Новая сторис</DialogTitle>
-          <DialogDescription>Живёт 24 часа. Каждое загруженное фото станет отдельной сторис.</DialogDescription>
+          <DialogDescription>
+            Живёт 24 часа. Все выбранные фото/видео будут в ОДНОЙ сторис — внутри неё их можно листать свайпом.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <ImageUploader value={media} onChange={setMedia} multiple max={10} aspect="video" label="Медиа (каждое фото — отдельная сторис)" kind="any" />
+          <ImageUploader value={media} onChange={setMedia} multiple max={10} aspect="video" label="Медиа (все файлы — одна сторис)" kind="any" />
           <div className="space-y-1.5">
             <Label htmlFor="category">Категория (необязательно)</Label>
             <Input
@@ -416,6 +419,9 @@ const save = async () => {
               placeholder="Например: Акция, Новости, Лето…"
               list="story-category-suggestions"
             />
+            <p className="text-[11px] text-muted-foreground">
+              Без категории и подписи сторис останется «чистой» — только фото/видео.
+            </p>
             <datalist id="story-category-suggestions">
               {existingCategories.map((c) => (
                 <option key={c} value={c} />

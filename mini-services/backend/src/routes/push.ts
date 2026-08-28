@@ -185,6 +185,56 @@ router.post('/broadcast', requireAuth, requireAdminOnly, asyncHandler(async (req
 }))
 
 // ============================================================================
+// v25.15: broadcastPushToAll — авто-push всем подписчикам (кроме исключённых).
+// Вызывается из products.ts при СОЗДАНИИ товара (если включён переключатель
+// notifyNewProduct в Студии). В отличие от /broadcast-роута — это внутренний
+// helper без HTTP: fire-and-forget, с лимитом на параллелизм.
+// ============================================================================
+export async function broadcastPushToAll(
+  payload: {
+    title: string
+    body: string
+    url?: string
+    icon?: string
+    tag?: string
+  },
+  excludeUserIds: string[] = [],
+): Promise<void> {
+  try {
+    const subs = await prisma.pushSubscription.findMany({
+      select: { userId: true },
+      distinct: ['userId'],
+    })
+    const excluded = new Set(excludeUserIds)
+    const userIds = subs.map((s) => s.userId).filter((id) => !excluded.has(id))
+    if (userIds.length === 0) return
+
+    logger.info('Auto push (new product)', {
+      module: 'push',
+      title: payload.title.slice(0, 50),
+      recipientCount: userIds.length,
+    })
+
+    // Последовательная отправка с троттлингом нет — web-push сам держит
+    // коннекты; но чтобы не упасть на сотнях подписчиков, шлём пачками по 20.
+    const BATCH = 20
+    for (let i = 0; i < userIds.length; i += BATCH) {
+      const batch = userIds.slice(i, i + BATCH)
+      await Promise.allSettled(
+        batch.map((userId) =>
+          sendPushToUser(userId, {
+            ...payload,
+            renotify: false,
+          }),
+        ),
+      )
+    }
+  } catch (e) {
+    logger.error('broadcastPushToAll error:', { module: 'push', error: e })
+  }
+}
+
+// ============================================================================
 // Helper: send a push notification to all of a user's subscribed devices.
 // Called from socket handlers when a message is received, so the user gets
 // a native push notification EVEN IF the app is fully closed.

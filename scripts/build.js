@@ -123,9 +123,12 @@ runStep('Build backend (prisma generate + tsc)', () => {
 });
 
 // ---------- 2. Frontend: next build ----------
-runStep('Build frontend (next build → standalone)', () => {
-  log('  Running next build...', ANSI.dim);
-  run('npx', ['next', 'build'], { cwd: ROOT });
+runStep('Build frontend (next build --webpack → standalone)', () => {
+  // v25.27: --webpack — Turbopack-сборка этого проекта требует >4GB RAM и
+  // падает по OOM на хостах 4GB; webpack-сборка стабильно проходит и даёт
+  // идентичный результат (проверено на v25.27).
+  log('  Running next build (--webpack)...', ANSI.dim);
+  run('npx', ['next', 'build', '--webpack'], { cwd: ROOT, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=2560' } });
 
   const standaloneDir = path.join(ROOT, '.next', 'standalone');
   if (!exists(path.join(standaloneDir, 'server.js'))) {
@@ -143,6 +146,22 @@ runStep('Build frontend (next build → standalone)', () => {
     fs.cpSync(publicSrc, publicDst, { recursive: true });
   }
   log('  → .next/standalone/server.js created', ANSI.green);
+});
+
+// ---------- 2b. Legacy CSS downlevel (TV / old browsers) ----------
+// v25.27: владелец reported «на телевизоре приложение открывается без CSS».
+// Tailwind v4 выдаёт @layer/oklch/color-mix, которые старые ТВ-браузеры
+// выбрасывают целиком. Скрипт разворачивает слои и понижает цвет/вложенность
+// прямо в .next/static/css (после копирования в standalone).
+runStep('Legacy CSS downlevel (TV / old browsers)', () => {
+  run('node', [path.join(__dirname, 'legacy-css.mjs')], { cwd: ROOT });
+
+  // Повторяем копирование статиков в standalone — с уже сконвертированным CSS.
+  const staticSrc2 = path.join(ROOT, '.next', 'static');
+  const staticDst2 = path.join(ROOT, '.next', 'standalone', '.next', 'static');
+  if (exists(staticSrc2) && exists(staticDst2)) {
+    fs.cpSync(staticSrc2, staticDst2, { recursive: true });
+  }
 });
 
 // ---------- 3. Studio: next build ----------
@@ -165,6 +184,11 @@ runStep('Build studio (next build → standalone)', () => {
     fs.cpSync(publicSrc, publicDst, { recursive: true });
   }
   log('  → .next/standalone/server.js created', ANSI.green);
+});
+
+// ---------- 3b. Studio: legacy CSS downlevel (TV / old browsers) ----------
+runStep('Studio: legacy CSS downlevel (TV / old browsers)', () => {
+  run('node', [path.join(__dirname, 'legacy-css.mjs'), path.join(STUDIO, '.next', 'static')], { cwd: ROOT });
 });
 
 // ---------- done ----------

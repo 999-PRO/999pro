@@ -211,7 +211,7 @@ function CookiesContent() {
     <div className="space-y-4 text-sm">
       <h2 className="text-xl font-bold">Использование Cookies</h2>
       <p className="text-muted-foreground">
-        999PRO использует cookies и локальное хранилище (localStorage) для обеспечения
+        TRI999 использует cookies и локальное хранилище (localStorage) для обеспечения
         работоспособности приложения и улучшения пользовательского опыта.
       </p>
 

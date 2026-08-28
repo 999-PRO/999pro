@@ -6,7 +6,12 @@
 // ============================================================================
 
 // v25.5: bump cache version to force SW update + remove diagnostic date suffix.
-const CACHE_VERSION = '999pro-v25-5-production'
+// v25.26: CRITICAL FIX — bump every deploy. The previous version kept serving
+// STALE /_next/static/ chunks (cache-first) to users with an installed PWA,
+// so after a redeploy the page HTML was new but the JS chunks were old:
+// dynamic-imported games crashed on start, chat menus behaved like old code,
+// etc. New version name forces every client to purge old caches on activate.
+const CACHE_VERSION = 'tri999-v25-27-production'
 const OFFLINE_URL = '/offline.html'
 // v25.5: SW_DEBUG flag — set to true only when debugging SW issues.
 // In production this is false so no console noise is generated.
@@ -382,8 +387,9 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Static Next.js chunks — cache-first + stale-while-revalidate
+  // v25.26 SPLIT: immutable, content-addressed assets (icons/images with
+  // hashed or fixed names) stay CACHE-FIRST — they never go stale.
   if (
-    url.pathname.startsWith('/_next/static/') ||
     url.pathname.startsWith('/icons/') ||
     url.pathname.match(/\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$/i)
   ) {
@@ -403,6 +409,35 @@ self.addEventListener('fetch', (event) => {
         if (network) return network
         return Response.error()
       }),
+    )
+    return
+  }
+
+  // v25.26 FIX (root cause of «игры не запускаются вообще»):
+  // /_next/static/ JS chunks used to be CACHE-FIRST. In this deployment the
+  // chunk URLs are stable across redeploys, so after a new version shipped,
+  // PWA users kept getting OLD game components from the cache while the
+  // rest of the app was new — dynamic imports crashed and games would not
+  // start at all. Chunks are now NETWORK-FIRST with cache fallback (still
+  // fully offline-capable): the browser always gets the fresh code when
+  // online, and the cached copy only serves when the network is down.
+  if (url.pathname.startsWith('/_next/static/')) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(CACHE_VERSION)
+        try {
+          const networkRes = await fetch(req)
+          if (networkRes && networkRes.ok && networkRes.type === 'basic') {
+            cache.put(req, networkRes.clone()).catch(() => {})
+          }
+          if (networkRes) return networkRes
+        } catch (e) {
+          // network down — fall through to cache
+        }
+        const cached = await cache.match(req)
+        if (cached) return cached
+        return Response.error()
+      })(),
     )
     return
   }

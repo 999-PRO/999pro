@@ -68,7 +68,7 @@ function downloadIcs(event: ClubEvent) {
   const ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//999PRO//CLUB//RU',
+    'PRODID:-//TRI999//CLUB//RU',
     'BEGIN:VEVENT',
     `UID:${event.id}@999pro`,
     `DTSTAMP:${fmt(new Date())}`,

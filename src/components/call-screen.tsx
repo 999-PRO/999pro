@@ -211,23 +211,46 @@ export function CallScreen(props: CallScreenProps) {
   }
 
   // ====== INCOMING CALL SCREEN ======
+  // v25.18: премиум-редизайн — размытый фон из аватара + аурора-орбы,
+  // расходящиеся кольца вокруг аватара, стеклянные кнопки.
   if (isIncoming) {
     return (
-      <div className="fixed inset-0 z-[200] flex flex-col items-center justify-between p-8"
-        style={{
-          background: 'linear-gradient(135deg, rgba(56,189,248,0.18) 0%, rgba(37,99,235,0.25) 50%, rgba(124,58,237,0.25) 100%)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        }}
+      <div className="fixed inset-0 z-[200] flex flex-col items-center justify-between p-8 overflow-hidden"
+        style={{ background: '#0b0714' }}
       >
+        {/* Размытый фон из аватара собеседника */}
+        {peer?.avatar && (
+          <div
+            aria-hidden
+            className="absolute inset-[-12%]"
+            style={{
+              backgroundImage: `url(${assetUrl(peer.avatar)})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              filter: 'blur(70px) saturate(160%) brightness(0.55)',
+              transform: 'scale(1.25)',
+            }}
+          />
+        )}
+        <div aria-hidden className="absolute inset-0" style={{ background: 'radial-gradient(90% 70% at 50% 30%, rgba(124,58,237,0.18) 0%, rgba(8,6,20,0.82) 70%)' }} />
+        <div aria-hidden className="absolute -top-[18%] -right-[20%] w-[70vmax] h-[70vmax] rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(236,72,153,0.16) 0%, transparent 65%)', filter: 'blur(30px)' }} />
+
         {/* Top: caller info */}
-        <div className="flex flex-col items-center gap-4 pt-12">
-          <div className="text-sm font-medium text-white/70 uppercase tracking-wider">
+        <div className="relative flex flex-col items-center gap-5 pt-10">
+          <div
+            className="px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-[0.22em] text-white/85"
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.16)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
+          >
             {isVideo ? 'Видеозвонок' : 'Аудиозвонок'}
           </div>
-          <div className="relative">
+          <div className="relative grid place-items-center">
+            {/* Расходящиеся кольца */}
+            <span aria-hidden className="absolute h-40 w-40 rounded-full border border-white/25" style={{ animation: 'call-ring 2.6s ease-out infinite' }} />
+            <span aria-hidden className="absolute h-40 w-40 rounded-full border border-white/20" style={{ animation: 'call-ring 2.6s ease-out 1.3s infinite' }} />
             <div className="absolute inset-0 rounded-full bg-white/20 blur-2xl animate-pulse" />
-            <div className="relative h-32 w-32 rounded-full overflow-hidden border-4 border-white/30 shadow-2xl">
+            <div className="relative h-36 w-36 rounded-full overflow-hidden ring-1 ring-white/35"
+              style={{ boxShadow: '0 24px 60px -18px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.25)' }}
+            >
               {peer?.avatar ? (
                 <img
                   src={assetUrl(peer.avatar)}
@@ -242,28 +265,34 @@ export function CallScreen(props: CallScreenProps) {
             </div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-white">{peerName}</div>
-            <div className="text-sm text-white/70 mt-1">Входящий звонок…</div>
+            <div className="text-[26px] font-extrabold text-white tracking-tight">{peerName}</div>
+            <div className="text-sm text-white/65 mt-1">Входящий звонок…</div>
           </div>
         </div>
 
         {/* Bottom: accept / reject buttons */}
-        <div className="flex items-center gap-16 pb-12">
+        <div className="relative flex items-center gap-20 pb-10">
           <button
             onClick={() => {
               setMicOn(true)
               setCamOn(true)
               props.onReject()
             }}
-            className="flex flex-col items-center gap-2 group"
+            className="flex flex-col items-center gap-2.5 group"
             aria-label="Отклонить"
           >
-            <div className="h-18 w-18 rounded-full bg-red-500 grid place-items-center shadow-2xl group-hover:scale-105 group-active:scale-95 transition-transform"
-              style={{ height: 72, width: 72 }}
+            <div
+              className="rounded-full grid place-items-center group-hover:scale-105 group-active:scale-95 transition-transform"
+              style={{
+                height: 74,
+                width: 74,
+                background: 'linear-gradient(135deg, #F43F5E 0%, #E11D48 100%)',
+                boxShadow: '0 16px 44px -10px rgba(225,29,72,0.6), inset 0 1px 0 rgba(255,255,255,0.3)',
+              }}
             >
               <PhoneOff className="h-8 w-8 text-white" />
             </div>
-            <span className="text-xs text-white/80 font-medium">Отклонить</span>
+            <span className="text-xs text-white/75 font-medium">Отклонить</span>
           </button>
 
           <button
@@ -272,18 +301,22 @@ export function CallScreen(props: CallScreenProps) {
               setCamOn(true)
               props.onAccept()
             }}
-            className="flex flex-col items-center gap-2 group animate-bounce"
+            className="flex flex-col items-center gap-2.5 group"
             aria-label="Принять"
-            style={{ animationDuration: '1.2s' }}
           >
             <div
-              className="rounded-full bg-emerald-500 grid place-items-center shadow-2xl group-hover:scale-105 group-active:scale-95 transition-transform relative"
-              style={{ height: 72, width: 72 }}
+              className="rounded-full grid place-items-center group-hover:scale-105 group-active:scale-95 transition-transform relative"
+              style={{
+                height: 74,
+                width: 74,
+                background: 'linear-gradient(135deg, #34D399 0%, #059669 100%)',
+                boxShadow: '0 16px 44px -10px rgba(5,150,105,0.6), inset 0 1px 0 rgba(255,255,255,0.3)',
+              }}
             >
-              <div className="absolute inset-0 rounded-full bg-emerald-500/40 animate-ping" />
+              <span aria-hidden className="absolute inset-0 rounded-full" style={{ background: 'rgba(16,185,129,0.5)', animation: 'call-ring-fill 1.8s ease-out infinite' }} />
               <Phone className="relative h-8 w-8 text-white" />
             </div>
-            <span className="text-xs text-white/80 font-medium">Принять</span>
+            <span className="text-xs text-white/75 font-medium">Принять</span>
           </button>
         </div>
       </div>
@@ -297,19 +330,37 @@ export function CallScreen(props: CallScreenProps) {
   // off the display. When the phone moves away, the screen returns.
   const proximityScreenOff = isNearProximity && call.type === 'audio' && call.status === 'connected'
   return (
-    <div className="fixed inset-0 z-[200] flex flex-col transition-opacity duration-300"
+    <div className="fixed inset-0 z-[200] flex flex-col transition-opacity duration-300 overflow-hidden"
       style={{
         background: proximityScreenOff
           ? '#000'
           : isVideo
             ? '#000'
-            : 'linear-gradient(135deg, rgba(56,189,248,0.18) 0%, rgba(37,99,235,0.25) 50%, rgba(124,58,237,0.25) 100%)',
-        backdropFilter: proximityScreenOff ? 'none' : 'blur(40px) saturate(180%)',
-        WebkitBackdropFilter: proximityScreenOff ? 'none' : 'blur(40px) saturate(180%)',
+            : '#0b0714',
         opacity: proximityScreenOff ? 0 : 1,
         pointerEvents: proximityScreenOff ? 'none' : 'auto',
       }}
     >
+      {/* v25.18: для аудиозвонков — размытый фон из аватара + аурора */}
+      {!isVideo && !proximityScreenOff && (
+        <>
+          {peer?.avatar && (
+            <div
+              aria-hidden
+              className="absolute inset-[-12%]"
+              style={{
+                backgroundImage: `url(${assetUrl(peer.avatar)})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                filter: 'blur(80px) saturate(150%) brightness(0.5)',
+                transform: 'scale(1.25)',
+              }}
+            />
+          )}
+          <div aria-hidden className="absolute inset-0" style={{ background: 'radial-gradient(90% 70% at 50% 25%, rgba(124,58,237,0.16) 0%, rgba(8,6,20,0.85) 72%)' }} />
+          <div aria-hidden className="absolute -bottom-[20%] -left-[20%] w-[70vmax] h-[70vmax] rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(236,72,153,0.14) 0%, transparent 65%)', filter: 'blur(30px)' }} />
+        </>
+      )}
       {/* ═══════════════════════════════════════════════════════════════
           CRITICAL: Hidden audio element for audio-only calls.
           Without this, the remote stream's audio tracks have nowhere to
@@ -374,9 +425,19 @@ export function CallScreen(props: CallScreenProps) {
         )}
 
         {!isVideo && (
-          <div className="relative mb-2">
+          <div className="relative grid place-items-center mb-2">
+            {/* v25.18: мягкие расходящиеся кольца, когда идёт соединение/вызов */}
+            {call.status !== 'connected' && (
+              <>
+                <span aria-hidden className="absolute h-32 w-32 rounded-full border border-white/25" style={{ animation: 'call-ring 2.6s ease-out infinite' }} />
+                <span aria-hidden className="absolute h-32 w-32 rounded-full border border-white/20" style={{ animation: 'call-ring 2.6s ease-out 1.3s infinite' }} />
+              </>
+            )}
             <div className="absolute inset-0 rounded-full bg-white/20 blur-2xl" />
-            <div className="relative h-24 w-24 rounded-full overflow-hidden border-2 border-white/30 shadow-xl">
+            <div
+              className="relative h-28 w-28 rounded-full overflow-hidden ring-1 ring-white/30"
+              style={{ boxShadow: '0 22px 54px -16px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.22)' }}
+            >
               {peer?.avatar ? (
                 <img
                   src={assetUrl(peer.avatar)}
@@ -392,17 +453,23 @@ export function CallScreen(props: CallScreenProps) {
           </div>
         )}
 
-        <div className="text-xl font-bold text-white drop-shadow-md">{peerName}</div>
+        <div className="text-[22px] font-extrabold text-white tracking-tight drop-shadow-md">{peerName}</div>
 
-        <div className="flex items-center gap-3 text-sm text-white/80">
-          <span>
+        {/* v25.18: статус-таймер и качество — стеклянные чипы */}
+        <div className="flex items-center gap-2 mt-1.5">
+          <span
+            className="text-xs font-semibold tabular-nums px-3 py-1 rounded-full text-white/90"
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.14)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}
+          >
             {call.status === 'connected' ? formatDuration(seconds) : call.status === 'ringing' ? 'Вызов…' : call.status === 'connecting' ? 'Соединение…' : call.status}
           </span>
-          <span className="text-white/40">·</span>
-          <span className="flex items-center gap-1">
+          <span
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-full text-white/85"
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.14)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}
+          >
             <span
-              className="h-2 w-2 rounded-full"
-              style={{ backgroundColor: quality.color }}
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: quality.color, boxShadow: `0 0 8px ${quality.color}` }}
             />
             {quality.label}
           </span>
@@ -482,10 +549,21 @@ export function CallScreen(props: CallScreenProps) {
         {/* End call button */}
         <button
           onClick={props.onEnd}
-          className="flex flex-col items-center gap-2 group"
+          className="flex flex-col items-center gap-2 group relative"
           aria-label="Завершить"
         >
-          <div className="h-16 w-16 rounded-full bg-red-500 grid place-items-center shadow-2xl group-hover:scale-105 group-active:scale-95 transition-transform">
+          <span
+            aria-hidden
+            className="absolute top-0 left-1/2 -translate-x-1/2 h-16 w-16 rounded-full"
+            style={{ background: 'rgba(244,63,94,0.45)', animation: 'call-ring-fill 1.8s ease-out infinite' }}
+          />
+          <div
+            className="relative h-16 w-16 rounded-full grid place-items-center group-hover:scale-105 group-active:scale-95 transition-transform"
+            style={{
+              background: 'linear-gradient(135deg, #F43F5E 0%, #E11D48 100%)',
+              boxShadow: '0 14px 38px -8px rgba(225,29,72,0.6), inset 0 1px 0 rgba(255,255,255,0.3)',
+            }}
+          >
             <PhoneOff className="h-7 w-7 text-white" />
           </div>
         </button>
@@ -512,12 +590,17 @@ function CallControlButton({ active, onClick, activeIcon, inactiveIcon, label, c
     >
       <div
         className={cn(
-          'rounded-full grid place-items-center shadow-xl backdrop-blur-md transition-all group-hover:scale-105 group-active:scale-95',
+          'rounded-full grid place-items-center backdrop-blur-md transition-all group-hover:scale-105 group-active:scale-95',
           compact ? 'h-12 w-12' : 'h-14 w-14',
           active
-            ? 'bg-white/15 border border-white/20 text-white'
-            : 'bg-white border-2 border-red-400 text-red-500',
+            ? 'text-white'
+            : 'text-red-400',
         )}
+        style={
+          active
+            ? { background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.18)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.16)' }
+            : { background: 'rgba(255,255,255,0.92)', border: '1.5px solid rgba(244,63,94,0.65)', boxShadow: '0 10px 28px -10px rgba(244,63,94,0.5)' }
+        }
       >
         {active ? activeIcon : inactiveIcon}
       </div>

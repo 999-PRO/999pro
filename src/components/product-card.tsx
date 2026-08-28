@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, memo } from 'react'
+import React, { useState, useRef, memo } from 'react'
 import Image from 'next/image'
 import { Heart, Star, ChevronLeft, ChevronRight, ShoppingCart, Share2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -26,6 +26,11 @@ interface ProductCardProps {
 
 const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardProps) => {
   const [imgIndex, setImgIndex] = useState(0)
+  // v25.15: горизонтальный свайп фото ПРЯМО ВНУТРИ карточки («я могу там
+  // листать картинки внутри товара, даже если не открыл»). Диагональный
+  // фильтр |dx|>|dy| не конфликтует с вертикальным скроллом страницы.
+  const touchStartX = useRef<number | null>(null)
+  const touchStartY = useRef<number | null>(null)
   const favorited = useFavoritesStore((s) => s.ids.includes(product.id))
   const toggleFavorite = useFavoritesStore((s) => s.toggle)
   const cartAdd = useCartStore((s) => s.add)
@@ -90,57 +95,118 @@ const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardPr
       // also hard-coded to dark (`text-[#111827]`) which is fine on white
       // but invisible on the dark card surface once the surface followed
       // the theme. Now both surface AND text follow the theme.
-      className="group relative rounded-xl overflow-hidden bg-card shadow-[0_2px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.4)] hover:shadow-[0_8px_24px_-8px_rgba(160,32,112,0.2)] transition-all cursor-pointer hover:-translate-y-0.5"
+      // v25.14 premium polish: larger radius, layered shadows, image zoom
+      // on hover, softer border. Theme-adaptive surfaces kept from v25.13.
+      className="group relative rounded-2xl overflow-hidden bg-card ring-1 ring-black/[0.04] dark:ring-white/[0.06] shadow-[0_2px_10px_-4px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.5)] hover:shadow-[0_16px_36px_-12px_rgba(160,32,112,0.28)] transition-all duration-300 cursor-pointer hover:-translate-y-1"
     >
       {/* Image carousel — v25.12: 3:4 aspect ratio (was square) */}
       <div className={cn(
         'relative overflow-hidden bg-muted',
         'aspect-[3/4]',
-      )}>
+      )}
+        onTouchStart={(e) => {
+          if (product.images.length <= 1) return
+          touchStartX.current = e.touches[0].clientX
+          touchStartY.current = e.touches[0].clientY
+        }}
+        onTouchMove={() => {
+          /* pass-through — вертикальный скролл страницы не блокируется */
+        }}
+        onTouchEnd={(e) => {
+          if (product.images.length <= 1 || touchStartX.current === null || touchStartY.current === null) return
+          const dx = e.changedTouches[0].clientX - touchStartX.current
+          const dy = e.changedTouches[0].clientY - touchStartY.current
+          if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 36) {
+            if (dx < 0 && imgIndex < product.images.length - 1) {
+              e.stopPropagation()
+              setImgIndex((i) => i + 1)
+              haptic.select()
+            } else if (dx > 0 && imgIndex > 0) {
+              e.stopPropagation()
+              setImgIndex((i) => i - 1)
+              haptic.select()
+            }
+          }
+          touchStartX.current = null
+          touchStartY.current = null
+        }}
+      >
+        {/* Zoom-on-hover wrapper (separate from the translateX track so
+            the two transforms never fight each other) */}
+        <div className="h-full w-full transition-transform duration-700 ease-out group-hover:scale-[1.05]">
         <div
-          className="flex h-full transition-transform duration-300 ease-out"
-          style={{ transform: `translateX(-${imgIndex * 100}%)` }}
+          className="flex h-full"
+          style={{
+            // v25.17: пружинная анимация листания (лёгкий overshoot на выходе —
+            // «какая-нибудь анимация» из фидбека). Обычный bezier(0.22,1,0.36,1)
+            // монотонный, а тут лёгкий отскок cubic-bezier(0.34, 1.3, 0.44, 1).
+            transform: `translateX(-${imgIndex * 100}%)`,
+            transition: 'transform 520ms cubic-bezier(0.34, 1.3, 0.44, 1)',
+          }}
         >
           {product.images.length > 0 ? (
-            product.images.map((src, i) => (
-              <div key={i} className="relative h-full w-full shrink-0">
-                <Image
-                  src={assetUrl(src)}
-                  alt={`${product.title} — фото ${i + 1}`}
-                  fill
-                  sizes="(max-width: 768px) 50vw, 25vw"
-                  className="object-cover"
-                  loading={i < 2 ? 'eager' : 'lazy'}
-                  draggable={false}
-                />
-              </div>
-            ))
+            product.images.map((src, i) => {
+              // v25.17: параллакс + микро-зум активного слайда — картинка
+              // «дышит» при листании даже без открытия товара.
+              const offset = i - imgIndex
+              const isActive = offset === 0
+              return (
+                <div key={i} className="relative h-full w-full shrink-0 overflow-hidden">
+                  {/* v25.17: сдвиг параллакса на ОБЁРТКЕ, а Ken Burns-анимация
+                      (v25.18, «как в ленте») — на самой картинке: два transform
+                      не конфликтуют. Чётные кадры — траектория «a»,
+                      нечётные — «b», чтобы соседние фото двигались вразнобой. */}
+                  <div
+                    className="h-full w-full will-change-transform"
+                    style={{
+                      transform: `translateX(${offset * 14}%) scale(${isActive ? 1 : 0.94})`,
+                      transition: 'transform 560ms cubic-bezier(0.34, 1.3, 0.44, 1)',
+                    }}
+                  >
+                    <Image
+                      src={assetUrl(src)}
+                      alt={`${product.title} — фото ${i + 1}`}
+                      fill
+                      sizes="(max-width: 768px) 50vw, 25vw"
+                      className={cn(
+                        'object-cover',
+                        isActive && product.images.length > 0 && (i % 2 === 0 ? 'kb-ambient-a' : 'kb-ambient-b'),
+                      )}
+                      style={{ filter: isActive ? 'none' : 'saturate(0.92)' }}
+                      loading={i < 2 ? 'eager' : 'lazy'}
+                      draggable={false}
+                    />
+                  </div>
+                </div>
+              )
+            })
           ) : (
             <div className="h-full w-full grid place-items-center text-muted-foreground/40">
               <ShoppingCart className="h-8 w-8" />
             </div>
           )}
         </div>
+        </div>
 
         {/* Badges — верхний левый угол (стек) */}
         <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
           {isDeal && (
-            <span className="px-2 py-0.5 rounded-full bg-[#FB7185] text-white text-[10px] font-bold shadow">
+            <span className="px-2 py-0.5 rounded-full text-white text-[10px] font-bold shadow" style={{ background: 'linear-gradient(135deg,#FB7185,#F43F5E)' }}>
               Скидка
             </span>
           )}
           {discount > 0 && (
-            <span className="px-2 py-0.5 rounded-full bg-[#FF3B30] text-white text-[10px] font-bold shadow">
-              -{discount}%
+            <span className="px-2 py-0.5 rounded-full text-white text-[10px] font-bold shadow" style={{ background: 'linear-gradient(135deg,#FF3B30,#FF6B5B)' }}>
+              −{discount}%
             </span>
           )}
           {product.isNew && (
-            <span className="px-2 py-0.5 rounded-full bg-[#10B981] text-white text-[10px] font-bold shadow">
+            <span className="px-2 py-0.5 rounded-full text-white text-[10px] font-bold shadow" style={{ background: 'linear-gradient(135deg,#10B981,#34D399)' }}>
               Новинка
             </span>
           )}
           {product.isPopular && (
-            <span className="px-2 py-0.5 rounded-full bg-[#F59E0B] text-white text-[10px] font-bold shadow">
+            <span className="px-2 py-0.5 rounded-full text-white text-[10px] font-bold shadow" style={{ background: 'linear-gradient(135deg,#F59E0B,#FBBF24)' }}>
               Хит
             </span>
           )}
@@ -167,16 +233,27 @@ const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardPr
           </button>
         </div>
 
-        {/* Image dots */}
+        {/* v25.17: анимированные сегменты вместо точек — активный сегмент
+            растягивается с пружинкой, как в нативных галереях iOS/Android. */}
         {product.images.length > 1 && (
-          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-1.5 h-4 rounded-full bg-black/25 backdrop-blur-sm">
             {product.images.map((_, i) => (
               <button
                 key={i}
                 onClick={(e) => { e.stopPropagation(); setImgIndex(i) }}
                 aria-label={`Фото ${i + 1}`}
-                className={cn('h-1.5 rounded-full transition-all', i === imgIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/60')}
-              />
+                className="grid place-items-center h-full"
+              >
+                <span
+                  className="block rounded-full transition-all duration-300"
+                  style={{
+                    width: i === imgIndex ? 12 : 4,
+                    height: 3,
+                    background: i === imgIndex ? '#ffffff' : 'rgba(255,255,255,0.55)',
+                    transitionTimingFunction: 'cubic-bezier(0.34, 1.3, 0.44, 1)',
+                  }}
+                />
+              </button>
             ))}
           </div>
         )}
@@ -231,10 +308,12 @@ const ProductCardImpl = ({ product, onOpen, variant = 'default' }: ProductCardPr
                 {formatPrice(product.oldPrice, product.currency)}
               </div>
             )}
-            {/* v25.13: text-primary adapts to theme (light: deep magenta,
-                dark: lighter magenta, neon: violet). Previously hard-coded
-                `text-[#A02070]` which was unreadable on neon theme. */}
-            <div className="text-base md:text-lg font-bold text-primary">
+            {/* v25.14: gradient price — premium accent that stays readable
+                on every theme via bg-clip-text. */}
+            <div
+              className="text-base md:text-lg font-extrabold bg-clip-text text-transparent"
+              style={{ backgroundImage: 'var(--gradient-brand, linear-gradient(135deg,#A02070,#EC4899))' }}
+            >
               {formatPrice(product.price, product.currency)}
             </div>
           </div>

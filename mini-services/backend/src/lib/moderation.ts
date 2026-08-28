@@ -25,7 +25,7 @@ import { prisma } from './prisma.js'
 // Types
 // ============================================================================
 
-export type ModerationTargetType = 'message' | 'review' | 'profile' | 'username' | 'display_name' | 'bio'
+export type ModerationTargetType = 'message' | 'review' | 'profile' | 'username' | 'display_name' | 'bio' | 'community_post'
 
 export interface ModerationContext {
   userId: string
@@ -212,7 +212,18 @@ const SUSPICIOUS_TLD_REGEX = /\.(zip|mov|xyz|top|click|link|country|stream|revie
 
 // Spam patterns: repetitive chars, all-caps shouting, excessive emojis
 const REPETITIVE_CHARS_REGEX = /(.)\1{6,}/  // 7+ same char in a row
-const EXCESSIVE_CAPS_REGEX = /^[A-ZА-Я\s\W\d]{20,}$/  // 20+ chars all caps
+// v25.14 CRITICAL FIX: the old regex /^[A-ZА-Я\s\W\d]{20,}$/ matched EVERY
+// Russian text ≥ 20 chars — in JavaScript `\W` means "not [A-Za-z0-9_]",
+// which INCLUDES ALL Cyrillic letters. Result: every honest Russian comment
+// was silently blocked as "spam" (the "second comment doesn't post" bug
+// reported by the owner). Replaced with a Unicode-aware caps-ratio check.
+const EXCESSIVE_CAPS_MIN_LEN = 20
+function isExcessiveCaps(text: string): boolean {
+  const letters = text.match(/\p{L}/gu)
+  if (!letters || letters.length < EXCESSIVE_CAPS_MIN_LEN) return false
+  const upper = text.match(/\p{Lu}/gu)?.length ?? 0
+  return upper / letters.length > 0.7
+}
 const EXCESSIVE_EMOJI_REGEX = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu
 
 /**
@@ -264,7 +275,7 @@ export async function checkLocal(text: string, ctx: ModerationContext): Promise<
     categories.add('spam')
     if (maxSeverity === 'low') maxSeverity = 'low'
   }
-  if (EXCESSIVE_CAPS_REGEX.test(text) && text.length >= 20) {
+  if (isExcessiveCaps(text)) {
     categories.add('spam')
   }
   const emojiMatches = text.match(EXCESSIVE_EMOJI_REGEX)

@@ -526,7 +526,7 @@ export function registerChatHandlers(io: IoServer) {
         conversationId: string
         content?: string
         mediaUrl?: string
-        mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film'
+        mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film' | 'game'
         duration?: number
         tempId?: string
         replyToId?: string

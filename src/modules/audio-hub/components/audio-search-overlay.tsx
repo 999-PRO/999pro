@@ -1,16 +1,13 @@
 'use client'
 
 // ============================================================================
-// AudioSearchOverlay — компактное стеклянное окно Audio Hub (v17)
+// AudioSearchOverlay — стеклянное окно Media Hub · Музыка (v25.16 polish)
 // ----------------------------------------------------------------------------
-// Полный редизайн:
-//   • Тёмный glass-стиль, точно как у Media Hub selector
-//   • Убраны все категории (Музыка/Нашиды/Коран/Подкасты)
-//   • Убран селектор источников (hitmos/muzce) — поиск идёт по всем
-//     источникам автоматически
-//   • Осталось: строка поиска + табы (Поиск / Избранное / История)
-//   • Единый brand-градиент indigo → purple → pink
-//   • Плавные spring-анимации как в Media Hub
+//   • Премиальный хедер: брендовый орб-логотип + подзаголовок + верхняя
+//     радужная линия — единый облик с остальными шапками приложения
+//   • Живой аурора-фон в цветах бренда за списком (как у Apple Music)
+//   • Мини-плеер «Сейчас играет» получил прогресс-полосу внизу карточки
+//   • Остальное поведение (табы Поиск/Избранное/История) сохранено
 // ============================================================================
 
 import { useState, useEffect, useRef } from 'react'
@@ -70,6 +67,8 @@ export function AudioSearchOverlay({
   const currentTrack = useAudioPlayer((s) => s.currentTrack)
   const isPlaying = useAudioPlayer((s) => s.isPlaying)
   const togglePlay = useAudioPlayer((s) => s.togglePlay)
+  // v25.16: прогресс для волосинки мини-плеера
+  const npProgress = useAudioPlayer((s) => s.progress)
 
   const openFullPlayer = () => {
     if (typeof window !== 'undefined') {
@@ -128,9 +127,9 @@ export function AudioSearchOverlay({
             style={{ height: '85vh' }}
           >
             <div
-              className="rounded-t-[28px] overflow-hidden flex flex-col h-full"
+              className="rounded-t-[32px] overflow-hidden flex flex-col h-full relative"
               style={{
-                background: 'linear-gradient(180deg, rgba(15,15,30,0.92) 0%, rgba(10,10,20,0.95) 100%)',
+                background: 'linear-gradient(180deg, rgba(15,15,30,0.92) 0%, rgba(10,10,20,0.96) 100%)',
                 backdropFilter: 'blur(28px) saturate(160%)',
                 WebkitBackdropFilter: 'blur(28px) saturate(160%)',
                 border: '1px solid rgba(255,255,255,0.1)',
@@ -138,26 +137,39 @@ export function AudioSearchOverlay({
                 boxShadow: '0 -10px 40px -10px rgba(0,0,0,0.5)',
               }}
             >
+              {/* v25.16: верхняя градиентная линия бренда */}
+              <span aria-hidden className="absolute inset-x-0 top-0 h-[2px] pointer-events-none"
+                style={{ background: 'linear-gradient(90deg,#F59E0B,#8B5CF6 45%,#6366F1 75%,#EC4899)' }} />
+              {/* v25.16: мягкая аурора в фоне списка */}
+              <motion.span aria-hidden className="absolute -top-24 -right-20 h-72 w-72 rounded-full pointer-events-none"
+                style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.18), transparent 70%)', filter: 'blur(24px)' }}
+                animate={{ scale: [1, 1.15, 1], opacity: [0.7, 1, 0.7] }}
+                transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut' }} />
+              <motion.span aria-hidden className="absolute bottom-10 -left-24 h-80 w-80 rounded-full pointer-events-none"
+                style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.14), transparent 70%)', filter: 'blur(28px)' }}
+                animate={{ scale: [1.1, 1, 1.1] }}
+                transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }} />
               {/* Handle bar */}
               <div className="flex justify-center pt-2.5 pb-1">
                 <div className="h-1 w-10 rounded-full bg-white/20" />
               </div>
 
-              {/* Header — matches Media Hub selector style */}
-              <div className="flex items-center gap-2 px-5 py-2">
-                <div
-                  className="grid place-items-center h-8 w-8 rounded-xl shrink-0"
+              {/* Header — v25.16: брендовый облик Media Hub */}
+              <div className="flex items-center gap-3 px-5 py-2.5">
+                <div className="relative grid place-items-center h-11 w-11 rounded-2xl shrink-0"
                   style={{
-                    background: 'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
-                    boxShadow: '0 4px 14px -2px rgba(245,158,11,0.45)',
-                  }}
-                >
-                  <Music2 className="h-4 w-4 text-white" />
+                    background: 'linear-gradient(135deg, #F59E0B 0%, #EC4899 55%, #8B5CF6 120%)',
+                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,.35), 0 8px 22px -6px rgba(236,72,153,0.5)',
+                  }}>
+                  <Music2 className="h-5 w-5 text-white" fill="currentColor" />
                 </div>
-                <div className="text-base font-semibold text-white flex-1">Audio Hub</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-base font-bold text-white leading-none">Медиахаб</div>
+                  <div className="text-[11px] text-white/50 mt-1">Музыка · поиск по всем источникам</div>
+                </div>
                 <button
                   onClick={onClose}
-                  className="grid place-items-center h-8 w-8 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                  className="grid place-items-center h-9 w-9 rounded-full text-white/60 hover:text-white hover:bg-white/10 active:scale-95 transition-all"
                   aria-label="Закрыть"
                 >
                   <X className="h-4 w-4" />
@@ -211,7 +223,7 @@ export function AudioSearchOverlay({
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
                     onClick={openFullPlayer}
-                    className="flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer"
+                    className="relative overflow-hidden flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer"
                     style={{
                       background: 'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(139,92,246,0.1) 100%)',
                       border: '1px solid rgba(139,92,246,0.2)',
@@ -235,13 +247,25 @@ export function AudioSearchOverlay({
                     {/* Play/Pause */}
                     <button
                       onClick={(e) => { e.stopPropagation(); togglePlay() }}
-                      className="grid place-items-center h-8 w-8 rounded-full shrink-0"
-                      style={{ background: 'var(--gradient-brand)' }}
+                      className="grid place-items-center h-9 w-9 rounded-full shrink-0 shadow-lg"
+                      style={{
+                        background: isPlaying ? 'var(--gradient-brand)' : 'rgba(255,255,255,0.14)',
+                        border: '1px solid rgba(255,255,255,0.2)',
+                      }}
+                      aria-label={isPlaying ? 'Пауза' : 'Играть'}
                     >
                       {isPlaying
-                        ? <Pause className="h-3.5 w-3.5 text-white" fill="currentColor" />
-                        : <Play className="h-3.5 w-3.5 text-white ml-0.5" fill="currentColor" />}
+                        ? <Pause className="h-4 w-4 text-white" fill="currentColor" />
+                        : <Play className="h-4 w-4 text-white ml-0.5" fill="currentColor" />}
                     </button>
+                    {/* v25.16: прогресс-волосинка внизу мини-плеера */}
+                    {typeof npProgress === 'number' && npProgress >= 0 && (
+                      <span
+                        aria-hidden
+                        className="absolute left-0 bottom-0 h-[2px] rounded-full"
+                        style={{ width: `${Math.min(npProgress, 1) * 100}%`, background: 'var(--gradient-brand)' }}
+                      />
+                    )}
                   </motion.div>
                 </div>
               )}

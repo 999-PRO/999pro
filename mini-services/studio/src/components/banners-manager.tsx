@@ -51,6 +51,31 @@ const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useCon
 
   useEffect(() => { refresh() }, [refresh])
 
+  // v25.19 (owner): «в каталоге тоже сделать бы баннер, но чтобы можно было
+  // отключить в студии» — тумблер показа баннерной карусели на странице
+  // каталога. Хранится как boolean-настройка catalogBannerEnabled.
+  const [catalogBanner, setCatalogBanner] = useState(true)
+  const [catalogBannerSaving, setCatalogBannerSaving] = useState(false)
+  useEffect(() => {
+    api.get<{ value: boolean | null }>('/api/settings/catalogBannerEnabled', { auth: true })
+      .then((d) => setCatalogBanner(d.value !== false))
+      .catch(() => {})
+  }, [])
+  const toggleCatalogBanner = async (v: boolean) => {
+    setCatalogBannerSaving(true)
+    const prev = catalogBanner
+    setCatalogBanner(v)
+    try {
+      await api.put('/api/settings/catalogBannerEnabled', { json: v, auth: true })
+      toast.success(v ? 'Баннер в каталоге включён' : 'Баннер в каталоге скрыт')
+    } catch (e: unknown) {
+      setCatalogBanner(prev)
+      toast.error('Ошибка', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setCatalogBannerSaving(false)
+    }
+  }
+
   const handleDelete = (id: string) => {
     if (deletingId) return // prevent double-click
     openConfirm({
@@ -116,6 +141,26 @@ const { dialog: confirmDlg, confirm: openConfirm, close: closeConfirm } = useCon
         <Button onClick={() => setCreating(true)} className="rounded-full gradient-brand text-white shadow-glow h-11 px-5">
           <Plus className="h-4 w-4" /> Добавить
         </Button>
+      </div>
+
+      {/* v25.19: тумблер показа баннерной карусели в КАТАЛОГЕ (баннеры те же,
+          что на главной — управлять показом можно независимо) */}
+      <div className="rounded-2xl border border-border/50 bg-card p-4 mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#EC4899] to-[#9333EA] grid place-items-center shrink-0">
+            <RectangleHorizontal className="h-5 w-5 text-white" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">Баннер в каталоге</div>
+            <div className="text-xs text-muted-foreground">Показывать эту же карусель на странице «Каталог»</div>
+          </div>
+        </div>
+        <Switch
+          checked={catalogBanner}
+          onCheckedChange={toggleCatalogBanner}
+          disabled={catalogBannerSaving}
+          aria-label="Баннер в каталоге"
+        />
       </div>
 
       {loading ? (

@@ -19,6 +19,8 @@ import { HomeView } from '@/components/home/home-view'
 import { CatalogPage } from '@/components/catalog/catalog-page'
 // v25.12: Price lists page (public)
 import { PriceListsPage } from '@/components/price-lists/price-lists-page'
+// v25.14: Сообщества — публичные объявления + закрытый оптовый клуб
+const CommunityView = dynamic(() => import('@/components/community/community-view').then((m) => m.CommunityView), { ssr: false })
 
 // v12.3: the Feed module has been removed and replaced by the 999 CLUB module.
 // The entire CLUB module is code-split via `next/dynamic` — if the user never
@@ -51,8 +53,10 @@ const SettingsView = dynamic(() => import('@/components/settings-view').then((m)
 const PrivacyView = dynamic(() => import('@/components/privacy-view').then((m) => m.PrivacyView), { ssr: false })
 const AboutView = dynamic(() => import('@/components/about-view').then((m) => m.AboutView), { ssr: false })
 const InfoPageView = dynamic(() => import('@/components/info-page-view').then((m) => m.InfoPageView), { ssr: false })
+// v25.24: ИГРОВОЙ КЛУБ — раздел «Игры» (15 игр, код-сплит по игре внутри хаба)
+const GamesHub = dynamic(() => import('@/components/games/games-hub').then((m) => m.GamesHub), { ssr: false })
 
-type View = 'home' | 'catalog' | 'club' | 'chat' | 'profile' | 'search' | 'studio' | 'orders' | 'reviews' | 'support' | 'contacts' | 'settings' | 'privacy' | 'about' | 'info' | 'admin-login' | 'analytics' | 'price'
+type View = 'home' | 'catalog' | 'club' | 'chat' | 'profile' | 'search' | 'studio' | 'orders' | 'reviews' | 'support' | 'contacts' | 'settings' | 'privacy' | 'about' | 'info' | 'admin-login' | 'analytics' | 'price' | 'community' | 'games'
 
 function getInitialView(): View {
   if (typeof window === 'undefined') return 'home'
@@ -61,7 +65,7 @@ function getInitialView(): View {
   // v25.6: 'support' is kept as a valid view for backward-compat with deep
   // links, but it now resolves to ContactsView (see routing below). Old
   // bookmarks /?view=support still work — they show Contacts.
-  const validViews: View[] = ['home', 'catalog', 'club', 'chat', 'profile', 'search', 'studio', 'orders', 'reviews', 'support', 'contacts', 'settings', 'privacy', 'about', 'info', 'admin-login', 'price']
+  const validViews: View[] = ['home', 'catalog', 'club', 'chat', 'profile', 'search', 'studio', 'orders', 'reviews', 'support', 'contacts', 'settings', 'privacy', 'about', 'info', 'admin-login', 'price', 'community', 'games']
   if (v && validViews.includes(v as View)) return v as View
   return 'home'
 }
@@ -86,6 +90,10 @@ export default function Home() {
   const [view, setView] = useState<View>(() => getInitialView())
   const [authOpen, setAuthOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  // v25.14: category tapped on the home page is carried into the catalog.
+  // (Previously discarded — clicking a category tile just opened a generic
+  // catalog, which made custom categories feel "broken".)
+  const [catalogCategory, setCatalogCategory] = useState<string | undefined>(undefined)
   const [activeProductId, setActiveProductId] = useState<string | null>(() => getInitialProductId())
   // v21: initial product data (from orders) — allows ProductPage to render
   // soft-deleted products that are no longer in the catalog.
@@ -496,18 +504,25 @@ export default function Home() {
         {view === 'home' && (
           <>
             {/* v25.11: unified HomeView for both mobile and desktop.
-                Replaces the separate DesktopHome + mobile HomeView. */}
+                Replaces the separate DesktopHome + mobile HomeView.
+                v25.14: onOpenCategory now carries the tapped category into
+                the catalog — previously the selection was discarded. */}
             <HomeView
               key="unified-home"
               onNavigate={navigate}
               onOpenProduct={openProduct}
               onOpenSearch={openSearch}
+              onOpenCategory={(cat) => { setCatalogCategory(cat); navigate('catalog') }}
             />
           </>
         )}
         {view === 'catalog' && (
           <RetryableErrorBoundary key="catalog">
-            <CatalogPage key="catalog-children" onOpenProduct={openProduct} />
+            <CatalogPage
+              key={`catalog-${catalogCategory || 'all'}`}
+              onOpenProduct={openProduct}
+              initialCategory={catalogCategory}
+            />
           </RetryableErrorBoundary>
         )}
         {view === 'price' && (
@@ -515,9 +530,19 @@ export default function Home() {
             <PriceListsPage key="price-children" onNavigate={navigate} />
           </RetryableErrorBoundary>
         )}
+        {view === 'community' && (
+          <RetryableErrorBoundary key="community">
+            <CommunityView key="community-children" />
+          </RetryableErrorBoundary>
+        )}
         {view === 'club' && (
           <RetryableErrorBoundary key="club">
             <ClubView key="club-children" />
+          </RetryableErrorBoundary>
+        )}
+        {view === 'games' && (
+          <RetryableErrorBoundary key="games">
+            <GamesHub key="games-children" />
           </RetryableErrorBoundary>
         )}
         {view === 'chat' && (

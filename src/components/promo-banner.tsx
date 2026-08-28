@@ -69,9 +69,8 @@ export function PromoBannerCarousel() {
   if (loading) {
     return (
       <section aria-label="Промо-баннеры" className="py-2">
-        <div className="px-4 md:px-6">
-          <div className="h-44 sm:h-52 md:h-64 rounded-3xl skeleton" />
-        </div>
+        {/* v25.15: лёгкие поля по краям + мягкое скругление на мобиле */}
+        <div className="h-[200px] sm:h-52 md:h-64 mx-3 sm:mx-0 rounded-[18px] sm:rounded-2xl md:rounded-3xl skeleton" />
       </section>
     )
   }
@@ -132,11 +131,16 @@ export function PromoBannerCarousel() {
           return (
             <div
               key={b.id}
-              className="shrink-0 w-full px-4 md:px-6 snap-center"
+              // v25.15 (owner feedback: «баннеру чуть-чуть оставить бы отступы
+              // по краям и чуть-чуть сделать бы закруглённые углы»): небольшой
+              // внутренний отступ px-3 на мобиле + мягкое скругление 18px.
+              // Snap-математика не ломается — паддинг живёт НА слайде,
+              // а не на скролл-контейнере.
+              className="shrink-0 w-full snap-center px-3 sm:px-0"
               style={{ scrollSnapStop: 'always' }}
             >
               <div
-                className="relative h-44 sm:h-52 md:h-64 rounded-3xl overflow-hidden"
+                className="relative h-[200px] sm:h-[230px] md:h-64 rounded-[18px] sm:rounded-2xl md:rounded-3xl overflow-hidden"
                 style={
                   !isImageOnly && b.useGradient
                     ? { backgroundImage: gradientCss(b.gradient) }
@@ -174,10 +178,10 @@ export function PromoBannerCarousel() {
                 {/* Content — v12.6.4: only rendered in image-text mode AND only
                     if at least one text field is non-empty. No empty blocks. */}
                 {!isImageOnly && (b.title || b.subtitle || b.cta) && (
-                  <div className="relative h-full p-6 md:p-8 flex flex-col justify-between text-white">
-                    <div className="space-y-1.5 max-w-[70%]">
+                  <div className="relative h-full p-5 sm:p-6 md:p-8 flex flex-col justify-between text-white">
+                    <div className="space-y-1.5 max-w-[78%]">
                       {b.title && (
-                        <h3 className="text-2xl md:text-3xl font-extrabold tracking-tight leading-tight drop-shadow-sm">
+                        <h3 className="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight leading-tight drop-shadow-sm">
                           {b.title}
                         </h3>
                       )}

@@ -368,7 +368,7 @@ router.get(
         where: { id: { in: allConvIds } },
         include: {
           participants: { include: { user: { select: userSelect } } },
-          messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+          messages: { orderBy: { createdAt: 'desc' }, take: 8 }, // v25.28: 8 последних — первое ВИДИМОЕ мне станет превью
         },
       })
 
@@ -414,7 +414,7 @@ router.get(
       where: { participants: { some: { userId: meId } } },
       include: {
         participants: { include: { user: { select: userSelect } } },
-        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+        messages: { orderBy: { createdAt: 'desc' }, take: 8 }, // v25.28: 8 последних — первое ВИДИМОЕ мне станет превью
       },
       orderBy: [
         { type: 'desc' },
@@ -1074,6 +1074,113 @@ router.patch(
   }),
 )
 
+// PATCH /api/chat/conversations/:id/state — v25.24: закрепить/архивировать чат
+// для СЕБЯ (per-user state в строке ConversationParticipant).
+// Body: { isPinned?: boolean, isArchived?: boolean }
+router.patch(
+  '/conversations/:id/state',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const meId = req.user!.id
+    const convId = req.params.id
+    const participation = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: convId, userId: meId } },
+      select: { id: true },
+    })
+    if (!participation) return res.status(404).json({ error: 'Conversation not found' })
+    const data: { isPinned?: boolean; isArchived?: boolean } = {}
+    if (typeof req.body?.isPinned === 'boolean') data.isPinned = req.body.isPinned
+    if (typeof req.body?.isArchived === 'boolean') data.isArchived = req.body.isArchived
+    if (Object.keys(data).length === 0) return res.status(400).json({ error: 'Nothing to update' })
+    await prisma.conversationParticipant.update({ where: { id: participation.id }, data })
+    res.json({ ok: true, ...data })
+  }),
+)
+
+// ════════════════════════════════════════════════════════════════════════════
+// v25.27: ЗАКРЕПЛЁННЫЕ СООБЩЕНИЯ (owner: «в меню сообщения есть функции,
+// которые ещё не разработаны — разработай полностью»). Как в Telegram:
+// в диалоге закреплено ОДНО сообщение; закрепить может любой участник;
+// открепление снимает pin. Событие socket `message:pinned` синхронизирует
+// всех участников в реальном времени.
+// ════════════════════════════════════════════════════════════════════════════
+
+// POST /api/chat/conversations/:id/pin — закрепить/открепить сообщение.
+// Body: { messageId: string, pinned?: boolean } (pinned=false → открепить)
+router.post(
+  '/conversations/:id/pin',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const meId = req.user!.id
+    const convId = req.params.id
+    const messageId = typeof req.body?.messageId === 'string' ? req.body.messageId : ''
+    const pinned = req.body?.pinned !== false
+    if (!messageId) return res.status(400).json({ error: 'messageId required' })
+    const participation = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: convId, userId: meId } },
+      select: { id: true },
+    })
+    if (!participation) return res.status(403).json({ error: 'Forbidden' })
+    const msg = await prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, conversationId: true, deletedForAll: true },
+    })
+    if (!msg || msg.conversationId !== convId) return res.status(404).json({ error: 'Message not found' })
+    if (msg.deletedForAll) return res.status(400).json({ error: 'Message deleted' })
+    const pinnedAt = pinned ? new Date() : null
+    // Одно закреплённое сообщение на диалог: снимаем pin со всех, ставим на выбранное.
+    await prisma.$transaction([
+      prisma.message.updateMany({
+        where: { conversationId: convId, pinnedAt: { not: null } },
+        data: { pinnedAt: null },
+      }),
+      ...(pinned
+        ? [prisma.message.update({ where: { id: msg.id }, data: { pinnedAt } })]
+        : []),
+    ])
+    // Broadcast всем участникам через socket (не критично при сбое).
+    try {
+      const { getIo } = await import('../socket/handlers.js')
+      const io = getIo()
+      if (io) {
+        io.to(`conversation:${convId}`).emit('message:pinned', {
+          conversationId: convId,
+          messageId: pinned ? msg.id : null,
+          pinnedAt: pinnedAt ? pinnedAt.toISOString() : null,
+        })
+      }
+    } catch { /* non-critical */ }
+    res.json({ ok: true, messageId: pinned ? msg.id : null, pinnedAt: pinnedAt ? pinnedAt.toISOString() : null })
+  }),
+)
+
+// GET /api/chat/conversations/:id/pinned — текущее закреплённое сообщение
+// (или null). Используется при открытии диалога, т.к. история подгружается
+// постранично и закреплённое сообщение может не попасть в первую страницу.
+router.get(
+  '/conversations/:id/pinned',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const meId = req.user!.id
+    const convId = req.params.id
+    const participation = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId: convId, userId: meId } },
+      select: { id: true },
+    })
+    if (!participation) return res.status(403).json({ error: 'Forbidden' })
+    const msg = await prisma.message.findFirst({
+      where: { conversationId: convId, pinnedAt: { not: null }, deletedForAll: false },
+      orderBy: { pinnedAt: 'desc' },
+      include: {
+        sender: { select: userSelect },
+        replyTo: { include: { sender: { select: userSelect } } },
+        forwardedFrom: { include: { sender: { select: userSelect } } },
+      },
+    })
+    res.json({ message: msg ? serialiseMessage(msg, meId) : null })
+  }),
+)
+
 // DELETE /api/chat/conversations/:id/messages — clear history (v25.9)
 // Soft-deletes all messages in the conversation for the caller only (adds
 // the caller's userId to each message's `deletedFor` JSON array). Other
@@ -1151,12 +1258,28 @@ function formatConversation(c: any, meId: string) {
     .filter((p: any) => p.userId !== meId)
     .map((p: any) => p.user)
   const other = others[0]
-  const lastMessage = c.messages?.[0]
+  // v25.28 FIX (владелец): «в списке чатов написано “нет сообщения”, хотя
+  // сообщения есть». Причины было две:
+  //   1) последнее сообщение было группой вложений (фото/файлы) — поле
+  //      attachments НЕ попадало в ответ, фронт показывал заглушку;
+  //   2) последнее сообщение было удалено У МЕНЯ (deletedFor) — оно всё равно
+  //      показывалось как последнее.
+  // Теперь: берём до 8 последних сообщений и выбираем первое ВИДИМОЕ мне;
+  // attachments парсится и отдаётся клиенту (фронт умеет рисовать «📷 2 · 📄 1»).
+  const visibleMessages = (c.messages || []).filter((m: any) => {
+    if (m.deletedForAll) return true // удалиные у всех — показываем «Сообщение удалено»
+    try { return !(JSON.parse(m.deletedFor || '[]')).includes(meId) } catch { return true }
+  })
+  const lastMessage = visibleMessages[0]
+  // v25.24: per-user pinned/archived flags из МОЕЙ строки участника
+  const mine = Array.isArray(c.participants) ? c.participants.find((p: any) => p.userId === meId) : null
   return {
     id: c.id,
     // 'direct' | 'support' — support conversations are pinned to the top
     // of the chat list and cannot be deleted by the user.
     type: c.type || 'direct',
+    isPinned: !!mine?.isPinned,
+    isArchived: !!mine?.isArchived,
     participant: other
       ? {
           id: other.id,
@@ -1181,6 +1304,12 @@ function formatConversation(c: any, meId: string) {
           content: lastMessage.deletedForAll ? null : lastMessage.content,
           mediaUrl: lastMessage.deletedForAll ? null : lastMessage.mediaUrl,
           mediaType: lastMessage.deletedForAll ? null : lastMessage.mediaType,
+          // v25.28 FIX: attachments для превью групп вложений в списке чатов
+          attachments: lastMessage.deletedForAll
+            ? null
+            : (() => {
+                try { return JSON.parse(lastMessage.attachments || 'null') } catch { return null }
+              })(),
           createdAt: lastMessage.createdAt,
           senderId: lastMessage.senderId,
           deletedForAll: lastMessage.deletedForAll,

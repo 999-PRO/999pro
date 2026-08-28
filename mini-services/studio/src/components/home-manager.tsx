@@ -11,6 +11,16 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/notifications'
 
+// v25.16: ТА ЖЕ сортировка, что на клиенте (src/lib/home-layout.ts,
+// sortHomeLayout): пиновые блоки первыми, внутри групп — по order.
+// Дублируем функцию вместо кросс-импорта — у Студии свой api-клиент и свой
+// бандл; тянуть модуль из фронтенда нельзя.
+function sortHomeLayout<T extends { pinned?: boolean; order: number }>(items: T[]): T[] {
+  return [...items].sort(
+    (a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false) || a.order - b.order,
+  )
+}
+
 interface HomeBlock {
   id: string
   label: string
@@ -21,16 +31,18 @@ interface HomeBlock {
   order: number
 }
 
+// v25.17: синхронизировано с src/lib/home-layout.ts — Stories сразу под
+// Hero-блоком. v25.20 (owner): блок «ИИ-агент» убран с главной — агент
+// живёт на плавающей кнопке справа над навигацией.
 const DEFAULT_BLOCKS: HomeBlock[] = [
-  { id: 'hero', label: 'Hero блок', emoji: '🏠', type: 'Главный баннер с ИИ-Зои', visible: true, pinned: true, order: 0 },
-  { id: 'categories', label: 'Категории', emoji: '🏷️', type: '3 цветные карточки', visible: true, pinned: false, order: 1 },
-  { id: 'deals', label: 'Горячие скидки', emoji: '🔥', type: 'С таймером обратного отсчёта', visible: true, pinned: false, order: 2 },
-  { id: 'ai-assistant', label: 'ИИ-агент Зои', emoji: '🤖', type: 'Встроенный чат с ИИ', visible: true, pinned: false, order: 3 },
+  { id: 'hero', label: 'Hero блок', emoji: '🏠', type: 'Главный баннер', visible: true, pinned: true, order: 0 },
+  { id: 'stories', label: 'Stories', emoji: '📖', type: 'Истории — сразу под Hero', visible: true, pinned: false, order: 1 },
+  { id: 'categories', label: 'Категории', emoji: '🏷️', type: 'Цветные карточки', visible: true, pinned: false, order: 2 },
+  { id: 'deals', label: 'Горячие скидки', emoji: '🔥', type: 'Товары со скидкой', visible: true, pinned: false, order: 3 },
   { id: 'recently-viewed', label: 'Недавно просмотренные', emoji: '👁️', type: 'Карусель просмотренных', visible: true, pinned: false, order: 4 },
-  { id: 'stories', label: 'Stories', emoji: '📖', type: 'Истории', visible: true, pinned: false, order: 5 },
-  { id: 'banner', label: 'Баннер', emoji: '🎯', type: 'Промо-баннер', visible: true, pinned: false, order: 6 },
-  { id: 'popular', label: 'Популярные товары', emoji: '⭐', type: 'Лучшие предложения', visible: true, pinned: false, order: 7 },
-  { id: 'new', label: 'Новинки', emoji: '🆕', type: 'Свежее поступление', visible: true, pinned: false, order: 8 },
+  { id: 'banner', label: 'Баннер', emoji: '🎯', type: 'Промо-баннер', visible: true, pinned: false, order: 5 },
+  { id: 'popular', label: 'Популярные товары', emoji: '⭐', type: 'Лучшие предложения', visible: true, pinned: false, order: 6 },
+  { id: 'new', label: 'Новинки', emoji: '🆕', type: 'Свежее поступление', visible: true, pinned: false, order: 7 },
 ]
 
 export function HomeManager() {
@@ -49,7 +61,9 @@ export function HomeManager() {
             ? { ...d, visible: saved.visible, pinned: saved.pinned, order: saved.order ?? d.order }
             : d
         })
-        setBlocks(merged.sort((a, b) => a.order - b.order))
+        // v25.16: та же сортировка, что на клиенте — то, что владелец видит
+        // здесь, совпадает с реальным порядком секций на главной странице.
+        setBlocks(sortHomeLayout(merged))
       }
     } catch {
       // use defaults
@@ -79,8 +93,12 @@ export function HomeManager() {
     if (newIdx < 0 || newIdx >= blocks.length) return
     const reordered = [...blocks]
     ;[reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]]
-    setBlocks(reordered)
-    save(reordered)
+    // Нормализуем order по новой позиции ДО сохранения, иначе между
+    // перезагрузками могли оставаться дублирующиеся порядковые номера
+    // (вторая половина бага «перестановка не работает»).
+    const normalized = reordered.map((b, i) => ({ ...b, order: i }))
+    setBlocks(normalized)
+    save(normalized)
   }
 
   const toggleVisible = (id: string) => {
@@ -110,7 +128,7 @@ export function HomeManager() {
       <div className="rounded-2xl border border-border/40 bg-card p-4 text-xs text-muted-foreground space-y-1">
         <p>📌 <b>Закреплённые</b> блоки всегда отображаются первыми.</p>
         <p>👁 <b>Скрытые</b> блоки не показываются клиентам.</p>
-        <p>⬆⬇ <b>Порядок</b> меняется кнопками вверх/вниз. Изменения сохраняются автоматически.</p>
+        <p>⬆⬇ <b>Порядок</b> меняется кнопками вверх/вниз и применяется к главной странице сразу после сохранения (v25.16: порядок теперь реально применяется к приложению). Изменения сохраняются автоматически.</p>
       </div>
 
       {loading ? (

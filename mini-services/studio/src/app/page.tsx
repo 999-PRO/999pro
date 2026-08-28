@@ -35,6 +35,8 @@ const MassPushManager = dynamic(() => import('@/components/mass-push-manager').t
 const DepartmentsManager = dynamic(() => import('@/components/departments-manager').then(m => ({ default: m.DepartmentsManager })), { ssr: false, loading: loadingFallback })
 // v25.11: Categories Manager — replaces hardcoded PROJECT_CATEGORIES
 const CategoriesManager = dynamic(() => import('@/components/categories-manager').then(m => ({ default: m.CategoriesManager })), { ssr: false, loading: loadingFallback })
+// v25.14: Сообщества — публичные объявления + закрытый оптовый клуб
+const CommunitiesManager = dynamic(() => import('@/components/communities-manager').then(m => ({ default: m.CommunitiesManager })), { ssr: false, loading: loadingFallback })
 // v25.12: Price Lists Manager — upload PDF/Word/images with prices for clients
 const PriceListsManager = dynamic(() => import('@/components/price-lists-manager').then(m => ({ default: m.PriceListsManager })), { ssr: false, loading: loadingFallback })
 // v24.5: Global AI Assistant for ALL studio sections
@@ -44,6 +46,8 @@ const GlobalStudioAI = dynamic(() => import('@/components/global-studio-ai').the
 const StoriesManager = dynamic(() => import('@/components/stories-manager').then(m => ({ default: m.StoriesManager })), { ssr: false, loading: loadingFallback })
 const ClubManager = dynamic(() => import('@/components/club-manager').then(m => ({ default: m.ClubManager })), { ssr: false, loading: loadingFallback })
 const BannersManager = dynamic(() => import('@/components/banners-manager').then(m => ({ default: m.BannersManager })), { ssr: false, loading: loadingFallback })
+// v25.19: SEO-настройки (title/description/keywords/og) — видимость в поисковиках
+const SeoManager = dynamic(() => import('@/components/seo-manager').then(m => ({ default: m.SeoManager })), { ssr: false, loading: loadingFallback })
 const HeaderManager = dynamic(() => import('@/components/header-manager').then(m => ({ default: m.HeaderManager })), { ssr: false, loading: loadingFallback })
 const HeroManager = dynamic(() => import('@/components/hero-manager').then(m => ({ default: m.HeroManager })), { ssr: false, loading: loadingFallback })
 const AuditView = dynamic(() => import('@/components/audit-view').then(m => ({ default: m.AuditView })), { ssr: false, loading: loadingFallback })
@@ -71,9 +75,9 @@ const ManagersManager = dynamic(() => import('@/components/managers-manager').th
 // v25.8 (TRI999 launch): Chat settings — visibility + test-data cleanup
 const ChatSettingsManager = dynamic(() => import('@/components/chat-settings-manager').then(m => ({ default: m.ChatSettingsManager })), { ssr: false, loading: loadingFallback })
 
-type View = 'analytics' | 'share' | 'products' | 'users' | 'managers' | 'leads' | 'contacts' | 'stories' | 'club' | 'banners' | 'hero' | 'header' | 'audit' | 'orders' | 'delivery' | 'home' | 'info-pages' | 'moderation' | 'aikb' | 'ai-providers' | 'promo-codes' | 'bonus-points' | 'module-access' | 'security' | 'registration-settings' | 'communication' | 'splash-screen' | 'mass-push' | 'departments' | 'categories' | 'price-lists' | 'chat-settings'
+type View = 'analytics' | 'share' | 'products' | 'users' | 'managers' | 'leads' | 'contacts' | 'stories' | 'club' | 'banners' | 'hero' | 'header' | 'audit' | 'orders' | 'delivery' | 'home' | 'info-pages' | 'moderation' | 'aikb' | 'ai-providers' | 'promo-codes' | 'bonus-points' | 'module-access' | 'security' | 'registration-settings' | 'communication' | 'splash-screen' | 'mass-push' | 'departments' | 'categories' | 'price-lists' | 'chat-settings' | 'communities' | 'seo'
 
-const VALID_VIEWS = ['analytics', 'share', 'products', 'users', 'managers', 'leads', 'contacts', 'stories', 'club', 'banners', 'hero', 'header', 'audit', 'orders', 'delivery', 'home', 'info-pages', 'moderation', 'aikb', 'ai-providers', 'promo-codes', 'bonus-points', 'module-access', 'security', 'registration-settings', 'communication', 'splash-screen', 'mass-push', 'departments', 'categories', 'price-lists', 'chat-settings']
+const VALID_VIEWS = ['analytics', 'share', 'products', 'users', 'managers', 'leads', 'contacts', 'stories', 'club', 'banners', 'hero', 'header', 'audit', 'orders', 'delivery', 'home', 'info-pages', 'moderation', 'aikb', 'ai-providers', 'promo-codes', 'bonus-points', 'module-access', 'security', 'registration-settings', 'communication', 'splash-screen', 'mass-push', 'departments', 'categories', 'price-lists', 'chat-settings', 'communities', 'seo']
 
 function getInitialView(): View {
   if (typeof window === 'undefined') return 'analytics'
@@ -322,11 +326,15 @@ useEffect(() => {
               {view === 'mass-push' && <MassPushManager key="mass-push" />}
               {view === 'departments' && <DepartmentsManager key="departments" />}
               {view === 'categories' && <CategoriesManager key="categories" />}
+              {/* v25.14: Сообщества */}
+              {view === 'communities' && <CommunitiesManager key="communities" />}
               {view === 'price-lists' && <PriceListsManager key="price-lists" />}
               {/* v12.3.1: Stories render block RESTORED. */}
               {view === 'stories' && <StoriesManager key="stories" />}
               {view === 'club' && <ClubManager key="club" />}
               {view === 'banners' && <BannersManager key="banners" />}
+              {/* v25.19: SEO */}
+              {view === 'seo' && <SeoManager key="seo" />}
               {view === 'hero' && <HeroManager key="hero" />}
               {view === 'header' && <HeaderManager key="header" />}
               {view === 'audit' && <AuditView key="audit" />}

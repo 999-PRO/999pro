@@ -233,87 +233,96 @@ function ToastCard({
   onClick,
   onActionClick,
 }: ToastCardProps) {
+  // v25.22 — БРЕНДОВЫЙ РЕДИЗАЙН (владелец: «карточка «Добавлено в список»
+  // стандартная и некрасивая — сделай красивую»). Теперь тост — в фирменном
+  // стиле остальных шитов приложения (меню/шаринг/ИИ): тёмное стекло,
+  // аурора-подсветка сверху, плоский цветной чип иконки, градиентная
+  // волосяная полоса прогресса. Функциональность не тронута.
   return (
     <div
       role="status"
       onClick={hasOnClick ? onClick : undefined}
       className={[
-        // Glassmorphism core — strict, premium, smaller radius
-        'relative overflow-hidden rounded-[10px]',
-        'bg-white/85 dark:bg-zinc-900/85',
-        'backdrop-blur-xl backdrop-saturate-150',
-        'border border-white/50 dark:border-white/[0.08]',
-        'shadow-[0_4px_24px_-6px_rgba(15,23,42,0.16),0_1px_3px_-1px_rgba(15,23,42,0.06)]',
-        'ring-1 ' + ringClass,
-        // Layout — tighter
-        'px-3.5 py-3 pr-9',
-        'flex items-start gap-2.5',
-        // Cursor
+        'relative overflow-hidden rounded-[20px]',
+        // Тёмное стекло в фирменном стиле (одинаково в обеих темах)
+        'text-white',
         hasOnClick ? 'cursor-pointer' : 'cursor-default',
-        // Theme text
-        'text-zinc-900 dark:text-zinc-50',
       ].join(' ')}
+      style={{
+        background: 'linear-gradient(180deg, rgba(23,20,42,0.94) 0%, rgba(14,12,26,0.97) 100%)',
+        backdropFilter: 'blur(22px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+        border: '1px solid rgba(255,255,255,0.11)',
+        boxShadow: '0 18px 44px -14px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.08)',
+      }}
     >
-      {/* Accent left border (subtle, narrower) */}
+      {/* Аурора-подсветка сверху (как в шитах) */}
       <div
         aria-hidden
-        className="absolute left-0 top-0 h-full w-[3px]"
-        style={{ background: accent }}
+        className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[70%] h-16"
+        style={{
+          background: `radial-gradient(ellipse at center top, ${accent}2E 0%, rgba(236,72,153,0.08) 48%, transparent 75%)`,
+          filter: 'blur(8px)',
+        }}
       />
 
-      {/* Icon OR avatar media */}
-      {media && media.type === 'avatar' ? (
-        <div className="relative shrink-0">
-          <Avatar
-            className="h-9 w-9 ring-1 ring-white/40 dark:ring-white/10"
-            style={{ boxShadow: '0 2px 8px -1px rgba(15, 23, 42, 0.12)' }}
-          >
-            {media.src ? (
-              <AvatarImage src={assetUrl(media.src)} alt={media.fallbackName} />
-            ) : null}
-            <AvatarFallback className="bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 text-xs font-bold">
-              {initials(media.fallbackName)}
-            </AvatarFallback>
-          </Avatar>
-          {/* Small message-icon badge */}
-          <div
-            className="absolute -bottom-1 -right-1 h-[18px] w-[18px] rounded-full grid place-items-center shadow-sm"
-            style={{ background: accent }}
-          >
-            <MessageCircle className="h-2 w-2 text-white" strokeWidth={2.5} />
+      <div className="relative flex items-start gap-3 px-4 py-3.5 pr-10">
+        {/* Иконка — плоский цветной чип (или аватар) */}
+        {media && media.type === 'avatar' ? (
+          <div className="relative shrink-0">
+            <Avatar
+              className="h-10 w-10 ring-2 ring-white/20"
+              style={{ boxShadow: '0 4px 12px -4px rgba(0,0,0,0.5)' }}
+            >
+              {media.src ? (
+                <AvatarImage src={assetUrl(media.src)} alt={media.fallbackName} />
+              ) : null}
+              <AvatarFallback className="bg-white/12 text-white text-xs font-bold">
+                {initials(media.fallbackName)}
+              </AvatarFallback>
+            </Avatar>
+            {/* Small message-icon badge */}
+            <div
+              className="absolute -bottom-1 -right-1 h-[18px] w-[18px] rounded-full grid place-items-center shadow-md ring-2 ring-[#171530]"
+              style={{ background: accent }}
+            >
+              <MessageCircle className="h-2 w-2 text-white" strokeWidth={2.5} />
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="shrink-0 pt-0.5">
-          <Icon
-            className="h-[18px] w-[18px]"
-            style={{ color: accent }}
-          />
-        </div>
-      )}
+        ) : (
+          <div className="shrink-0 grid place-items-center h-10 w-10 rounded-[13px]"
+            style={{ background: `${accent}26`, boxShadow: `inset 0 0 0 1px ${accent}40` }}
+          >
+            <Icon
+              className="h-5 w-5"
+              style={{ color: accent }}
+            />
+          </div>
+        )}
 
-      {/* Content */}
-      <div className="min-w-0 flex-1">
-        <div className="text-[13.5px] font-semibold leading-tight tracking-[-0.01em]">
-          {title}
-        </div>
-        {description && (
-          <div className="mt-1 text-[12.5px] leading-snug text-zinc-600 dark:text-zinc-300 break-words">
-            {description}
+        {/* Content */}
+        <div className="min-w-0 flex-1 pt-0.5">
+          <div className="text-[13.5px] font-bold leading-tight tracking-[-0.01em] text-white">
+            {title}
           </div>
-        )}
-        {hasAction && actionLabel && (
-          <button
-            onClick={onActionClick}
-            className="mt-2 inline-flex items-center rounded-md px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-            style={{
-              color: accent,
-              background: `${accent}1A`, // 10% alpha
-            }}
-          >
-            {actionLabel}
-          </button>
-        )}
+          {description && (
+            <div className="mt-1 text-[12.5px] leading-snug text-white/65 break-words">
+              {description}
+            </div>
+          )}
+          {hasAction && actionLabel && (
+            <button
+              onClick={onActionClick}
+              className="mt-2.5 inline-flex items-center rounded-full px-3 py-1 text-[11.5px] font-bold text-white active:scale-95 transition-transform"
+              style={{
+                background: `linear-gradient(135deg, ${accent} 0%, ${accent}B3 100%)`,
+                boxShadow: `0 6px 16px -8px ${accent}`,
+              }}
+            >
+              {actionLabel}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Close button */}
@@ -323,24 +332,25 @@ function ToastCard({
           onDismiss()
         }}
         aria-label="Закрыть уведомление"
-        className="absolute right-1.5 top-1.5 rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-500/10 hover:text-zinc-600 dark:hover:text-zinc-200"
+        className="absolute right-2 top-2 rounded-full p-1.5 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
       >
         <X className="h-3.5 w-3.5" />
       </button>
 
-      {/* Progress bar */}
+      {/* Progress hairline — градиентная, с лёгким свечением */}
       <div
         aria-hidden
-        className="absolute bottom-0 left-0 h-[2px] w-full origin-left"
+        className="absolute bottom-0 left-0 h-[2.5px] w-full origin-left"
         style={{
-          background: `${accent}33`, // 20% alpha track
+          background: `${accent}2E`, // трек
         }}
       >
         <div
           ref={progressBarRef}
           className="h-full origin-left"
           style={{
-            background: accent,
+            background: `linear-gradient(90deg, ${accent} 0%, #EC4899 55%, #A855F7 100%)`,
+            boxShadow: `0 0 8px ${accent}99`,
             transform: 'scaleX(1)',
           }}
         />

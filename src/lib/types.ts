@@ -49,7 +49,7 @@ export interface Product {
     address?: string | null
     managerName?: string | null
   } | null
-  // v25.8 (999PRO launch): product colors with per-color image.
+  // v25.8 (TRI999 launch): product colors with per-color image.
   colors?: ProductColor[]
   // v25.10 (Task #6): vertical (3:4) product video — admin-only upload.
   // NULL = no video (image gallery only). When set, the Product Viewer shows
@@ -61,6 +61,9 @@ export interface Product {
   // v25.12: position of the video in the media carousel (0 = first,
   // 1 = after 1st image, etc.). null/0 = first slide. Admin controls this.
   videoPosition?: number | null
+  // v25.20 («как в Инстаграме»): фоновая музыка товара — играет при
+  // просмотре ФОТО (страница товара + лента). При видео не звучит.
+  music?: { id: string; title: string; artist?: string | null; url: string } | null
 }
 
 // v11: helper — resolve stock label from quantity + inStock.
@@ -207,6 +210,9 @@ export interface Conversation {
   /** Number of unread messages in this conversation (optional — backend
    * may or may not populate it). */
   unreadCount?: number | null
+  // v25.24: per-user chat-list state (закрепление/архив для себя)
+  isPinned?: boolean
+  isArchived?: boolean
   updatedAt: string
   createdAt: string
 }
@@ -241,7 +247,7 @@ export interface Message {
   senderId: string
   content?: string | null
   mediaUrl?: string | null
-  mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film' | null
+  mediaType?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'product' | 'audio-hub' | 'film' | 'game' | null
   // v12: attachments — array of files when the message is a group of files.
   // When present, mediaUrl/mediaType are ignored (the message is a group).
   attachments?: Attachment[] | null
@@ -258,6 +264,8 @@ export interface Message {
   // v25.9: editedAt — when set (ISO string), the message was edited by its
   // sender. UI shows an "изменено" indicator next to the timestamp.
   editedAt?: string | null
+  // v25.27: закреплённое сообщение (Telegram-style pin). ISO-строка или null.
+  pinnedAt?: string | null
   // v18.6: optimistic-upload flags. When `isUploading` is true, the message
   // is shown in the chat list immediately with a spinner badge; the mediaUrl
   // points to a local blob: URL while the real upload is in flight. Once the
@@ -348,6 +356,10 @@ export interface HeroBlockSetting {
   // Backward-compatible: empty/undefined → fall back to single `image`.
   // 2+ images → auto-rotate every ~8-10s with cinematic fade transition.
   images?: string[]
+  // v25.21 (owner): видео в hero — «добавить туда видео или GIF». GIF-файлы
+  // приходят через images (это картинки), а видео — отдельным массивом.
+  // Слайды = [...images, ...videos]; активное видео autoplay muted loop.
+  videos?: string[]
   gradient: string
   // v12.6.4: all text fields are now optional (nullable). A hero can be
   // image-only (no badge, no title, no description, no buttons).
@@ -364,6 +376,24 @@ export interface HeroBlockSetting {
   // 'image-text' = image + optional text/buttons (default, legacy behaviour)
   // 'image-only' = just the image, no text/buttons rendered at all
   mode?: 'image-text' | 'image-only'
+}
+
+// ============================================================================
+// v25.21 — MobileHeroBlockSetting: ОТДЕЛЬНЫЙ hero для мобильных.
+// Владелец: «на десктопе hero чётко, на мобильном слишком большой — сделай
+// размером как баннеры, с картинками/видео и кнопками (кнопки не обязательны)».
+// Когда enabled=true и media непустой → на телефоне вместо большого hero
+// рендерится компактный баннер; десктоп НЕ меняется вовсе.
+// ============================================================================
+export interface MobileHeroBlockSetting {
+  enabled: boolean
+  // Изображения (вкл. GIF) И/ИЛИ видео (mp4/webm) — определяются по расширению.
+  media: string[]
+  badge: string | null
+  title: string | null
+  description: string | null
+  primaryButton: HeroButton | null
+  secondaryButton: HeroButton | null
 }
 
 // ============================================================================

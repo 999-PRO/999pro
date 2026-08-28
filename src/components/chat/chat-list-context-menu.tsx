@@ -13,13 +13,25 @@
 
 import { motion, AnimatePresence } from 'framer-motion'
 import { Trash2, Eraser, Archive, Pin, X } from 'lucide-react'
+import { useRef, useEffect } from 'react'
 import { useScrollLock } from '@/lib/use-scroll-lock'
 import { haptic } from '@/lib/haptic'
+
+// v25.26: защитное окно увеличено 450 → 900мс и добавлен ДОКУМЕНТНЫЙ
+// capture-перехват. Сценарий: меню открывается ЕЩЁ во время удержания пальца;
+// при отпускании браузер успевает синтезировать click/mouseup, а на Android
+// ещё и повторный contextmenu — и шит мгновенно закрывался (жалоба владельца
+// воспроизводилась даже с guard 450мс). Теперь ЛЮБОЙ синтетический клик в
+// пределах 900мс после открытия гасится на capture-фазе, кроме кликов
+// внутри самого шита.
+const OPEN_GUARD_MS = 900
 
 interface ChatListContextMenuProps {
   open: boolean
   conversationTitle: string
   isPinned: boolean
+  // v25.24: чат в архиве — пункт меняется на «Разархивировать»
+  isArchived?: boolean
   onClose: () => void
   onDelete: () => void
   onClearHistory: () => void
@@ -31,6 +43,7 @@ export function ChatListContextMenu({
   open,
   conversationTitle,
   isPinned,
+  isArchived,
   onClose,
   onDelete,
   onClearHistory,
@@ -38,6 +51,38 @@ export function ChatListContextMenu({
   onTogglePin,
 }: ChatListContextMenuProps) {
   useScrollLock(open)
+
+  // v25.20 FIX (owner): «нажимаешь и держишь — меню появляется, отпускаешь —
+  // пропадает». v25.26: guard усилен до 900мс + document-level capture.
+  const openedAtRef = useRef(0)
+  const sheetRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (open) openedAtRef.current = Date.now()
+  }, [open])
+
+  // Capture-phase guard: гасим синтетические click/contextmenu ПО ВСЕМУ документу
+  // в первые 900мс после открытия, кроме кликов внутри самого шита.
+  useEffect(() => {
+    if (!open) return
+    const swallow = (e: Event) => {
+      if (Date.now() - openedAtRef.current >= OPEN_GUARD_MS) return
+      const target = e.target as Node | null
+      if (target && sheetRef.current && sheetRef.current.contains(target)) return
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    document.addEventListener('click', swallow, true)
+    document.addEventListener('contextmenu', swallow, true)
+    return () => {
+      document.removeEventListener('click', swallow, true)
+      document.removeEventListener('contextmenu', swallow, true)
+    }
+  }, [open])
+
+  const requestClose = () => {
+    if (Date.now() - openedAtRef.current < OPEN_GUARD_MS) return // палец ещё отпускается
+    onClose()
+  }
 
   const handleAction = (action: () => void) => {
     haptic.tap()
@@ -57,7 +102,12 @@ export function ChatListContextMenu({
             transition={{ duration: 0.2 }}
             className="fixed inset-0 z-[95] bg-black/40"
             style={{ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
-            onClick={onClose}
+            onClick={requestClose}
+            onTouchEnd={(e) => {
+              // Гасим синтетический клик от пальца, отпущенного после long-press
+              e.preventDefault()
+              requestClose()
+            }}
           />
 
           {/* Sheet */}
@@ -69,6 +119,7 @@ export function ChatListContextMenu({
             className="fixed left-0 right-0 bottom-0 z-[96] mx-auto max-w-md"
           >
             <div
+              ref={sheetRef}
               className="rounded-t-[28px] overflow-hidden"
               style={{
                 background: 'color-mix(in oklch, var(--card) 92%, transparent)',
@@ -133,9 +184,9 @@ export function ChatListContextMenu({
                     <Archive className="h-4 w-4 text-primary" />
                   </div>
                   <div className="flex-1">
-                    <div className="text-sm font-medium">Архивировать</div>
+                    <div className="text-sm font-medium">{isArchived ? 'Разархивировать' : 'Архивировать'}</div>
                     <div className="text-xs text-muted-foreground">
-                      Скрыть чат из основного списка
+                      {isArchived ? 'Вернуть чат в общий список' : 'Скрыть чат в папке «Архив»'}
                     </div>
                   </div>
                 </button>
@@ -171,9 +222,9 @@ export function ChatListContextMenu({
                     <Trash2 className="h-4 w-4" style={{ color: '#ef4444' }} />
                   </div>
                   <div className="flex-1">
-                    <div className="text-sm font-medium text-destructive">Удалить чат</div>
+                    <div className="text-sm font-medium text-destructive">Удалить чат навсегда</div>
                     <div className="text-xs text-muted-foreground">
-                      Удалить диалог для себя безвозвратно
+                      Полностью убрать диалог и историю для себя
                     </div>
                   </div>
                 </button>

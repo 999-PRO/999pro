@@ -1,5 +1,9 @@
 import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+// v25.27: ребрендинг TRI999 + дизайнерские шрифты (кириллица):
+//   • Onest — основной текст (современная гарнитура, отличная кириллица)
+//   • Unbounded — дисплейная гарнитура бренда (логотип, заголовки)
+// Размеры аккуратные — «красиво и НЕ крупно» (просьба владельца).
+import { Onest, Unbounded } from 'next/font/google'
 import './globals.css'
 import { NotificationContainer } from '@/components/notification-container'
 // v25.7 (TZ ЭТАП 2.5): global visit tracker — records a page view on every
@@ -18,14 +22,19 @@ import { OnboardingOverlay } from '@/components/onboarding-overlay'
 // first API call by pre-resolving DNS + TLS in parallel with HTML parsing.
 const BACKEND_PUBLIC_ORIGIN = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
-const geistSans = Geist({
-  variable: '--font-geist-sans',
+const onestSans = Onest({
+  variable: '--font-onest',
   subsets: ['latin', 'cyrillic'],
+  weight: ['300', '400', '500', '600', '700', '800'],
+  display: 'swap',
 })
 
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
-  subsets: ['latin'],
+// Дисплейная гарнитура бренда TRI999 — только для логотипа/заголовков.
+const unboundedDisplay = Unbounded({
+  variable: '--font-unbounded',
+  subsets: ['latin', 'cyrillic'],
+  weight: ['400', '500', '600', '700', '800'],
+  display: 'swap',
 })
 
 // Static metadata (NOT generateMetadata) — using the async form with headers()
@@ -45,23 +54,31 @@ const APP_PUBLIC_URL = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:300
 
 // v25.13 (share metadata): removed marketing phrases like "Marketplace нового
 // поколения" — replaced with serious, business-accurate copy reflecting what
-// 999PRO actually is: рекламная продукция + мебель + подарки.
-const SITE_TITLE = '999PRO'
-const SITE_DESCRIPTION = '999PRO — рекламная продукция, мебель и подарки. Каталог, чат с продавцом, заявки и доставка по России.'
+// TRI999 actually is: рекламная продукция + мебель + подарки.
+const SITE_TITLE = 'TRI999'
+const SITE_DESCRIPTION = 'TRI999 — рекламная продукция, мебель и подарки. Каталог, чат с продавцом, заявки и доставка по России.'
 
 export const metadata: Metadata = {
   // v9-audit-fix: metadataBase ensures all relative OG/Twitter image URLs are
   // resolved to absolute URLs. Without this, WhatsApp/Facebook/Telegram/X
   // crawlers can't resolve relative image URLs and show no preview image.
   metadataBase: new URL(APP_PUBLIC_URL),
-  // v25.12: minimal title "999PRO" per Phase 6 spec. Description kept short
+  // v25.12: minimal title "TRI999" per Phase 6 spec. Description kept short
   // and on-brand for SEO/social cards.
-  // v25.13: changed title to "999PRO" (was "999PRO" — rebrand per user).
+  // v25.13: changed title to "TRI999" (was "TRI999" — rebrand per user).
   title: SITE_TITLE,
   description: SITE_DESCRIPTION,
   applicationName: SITE_TITLE,
-  authors: [{ name: '999PRO Team' }],
-  keywords: ['999PRO', 'реклама', 'мебель', 'подарки', 'каталог', 'чат', 'AI'],
+  authors: [{ name: 'TRI999 Team' }],
+  keywords: ['TRI999', '999', 'три девятки', 'реклама', 'мебель', 'подарки', 'каталог', 'чат', 'AI'],
+  // v25.19 (owner): SEO — верификация Яндекс.Вебмастер / Google Search Console
+  // через env. Индексация/canonical заданы ниже (robots + alternates);
+  // живые title/description/keywords/OG владелец меняет в Студии → «SEO и
+  // поиск» (клиентский слой seo-head.tsx применяет их без пересборки).
+  verification: {
+    ...(process.env.YANDEX_VERIFICATION ? { yandex: process.env.YANDEX_VERIFICATION } : {}),
+    ...(process.env.GOOGLE_SITE_VERIFICATION ? { 'google-site-verification': process.env.GOOGLE_SITE_VERIFICATION } : {}),
+  },
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
@@ -309,52 +326,65 @@ const SPLASH_BOOTSTRAP = `
     }
 
     // v25.12: Modern splash screen — gradient bg, animated logo, pulse indicator
+    // v25.20 (owner): «минималистичный, с моим названием. Без Pro. 999 и внизу
+    // Три девятки, красиво анимировано» — чистый тёмный фон с мягким свечением,
+    // крупное «999» (буквы въезжают по очереди), под ним «ТРИ ДЕВЯТКИ» с
+    // разрядкой проявляется. Полностью plain-JS (работает до гидрации).
     document.addEventListener('DOMContentLoaded', function() {
       if (document.getElementById('app-splash')) return;
-      var stored2 = null;
-      try { stored2 = localStorage.getItem('theme'); } catch (e) {}
-      var isNeon = stored2 === 'neon';
-
       var s = document.createElement('div');
       s.id = 'app-splash';
-      s.style.cssText = 'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;transition:opacity .4s ease;overflow:hidden;background:linear-gradient(135deg,#EC4899 0%,#A855F7 50%,#9333EA 100%);';
+      s.style.cssText = 'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;transition:opacity .45s ease;overflow:hidden;' +
+        'background:radial-gradient(120% 90% at 50% 0%, #1c1226 0%, #120b1c 55%, #0a0612 100%);';
 
-      // Animated logo container
-      var logoWrap = document.createElement('div');
-      logoWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:12px;animation:app-splash-fadeIn .6s ease;';
+      // Мягкое свечение за логотипом
+      var glow = document.createElement('div');
+      glow.style.cssText = 'position:absolute;width:70vmax;height:70vmax;border-radius:50%;pointer-events:none;' +
+        'background:radial-gradient(circle, rgba(168,85,247,0.16) 0%, rgba(236,72,153,0.07) 45%, transparent 70%);' +
+        'filter:blur(30px);animation:app-splash-glow 4s ease-in-out infinite alternate;';
+      s.appendChild(glow);
 
-      // 999PRO wordmark — white with glow
-      // v25.13 (rebrand): 999PRO → 999PRO per user request.
-      var logo = document.createElement('div');
-      logo.style.cssText = 'font-size:42px;font-weight:900;letter-spacing:-0.03em;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;text-shadow:0 4px 24px rgba(0,0,0,0.25);animation:app-splash-pulse 2s ease-in-out infinite;';
-      logo.textContent = '999PRO';
-      logoWrap.appendChild(logo);
-
-      // Tagline
-      var tagline = document.createElement('div');
-      tagline.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.8);font-weight:500;letter-spacing:0.05em;text-transform:uppercase;';
-      tagline.textContent = 'Реклама · Мебель · Подарки';
-      logoWrap.appendChild(tagline);
-
-      s.appendChild(logoWrap);
-
-      // Modern loading indicator — 3 bouncing dots
-      var dots = document.createElement('div');
-      dots.style.cssText = 'position:absolute;bottom:20%;display:flex;gap:8px;';
-      for (var i = 0; i < 3; i++) {
-        var dot = document.createElement('div');
-        dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.9);animation:app-splash-bounce 1.4s ease-in-out ' + (i * 0.16) + 's infinite;';
-        dots.appendChild(dot);
+      // «999» — три цифры въезжают по очереди (blur → резкость, снизу вверх)
+      var row = document.createElement('div');
+      row.style.cssText = 'position:relative;display:flex;align-items:baseline;';
+      var digits = ['9', '9', '9'];
+      for (var di = 0; di < digits.length; di++) {
+        var d = document.createElement('span');
+        d.textContent = digits[di];
+        d.style.cssText = 'font-size:96px;font-weight:900;line-height:1;letter-spacing:-0.02em;' +
+          'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;' +
+          'background:linear-gradient(180deg,#ffffff 15%,#F9A8D4 60%,#C4B5FD 100%);' +
+          '-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;' +
+          'animation:app-splash-digit .7s cubic-bezier(0.22,1,0.36,1) both;' +
+          'animation-delay:' + (0.12 + di * 0.14) + 's;';
+        row.appendChild(d);
       }
-      s.appendChild(dots);
+      s.appendChild(row);
+
+      // «ТРИ ДЕВЯТКИ» — проявляется с большой разрядкой
+      var tag = document.createElement('div');
+      tag.textContent = 'ТРИ ДЕВЯТКИ';
+      tag.style.cssText = 'margin-top:14px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.72);' +
+        'letter-spacing:0.55em;text-indent:0.55em;text-transform:uppercase;text-align:center;' +
+        'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;' +
+        'animation:app-splash-tag 1s cubic-bezier(0.22,1,0.36,1) 0.65s both;';
+      s.appendChild(tag);
+
+      // Тонкая линия прогресса
+      var track = document.createElement('div');
+      track.style.cssText = 'position:absolute;bottom:20%;left:50%;transform:translateX(-50%);width:110px;height:2px;border-radius:99px;background:rgba(255,255,255,0.12);overflow:hidden;';
+      var fill = document.createElement('div');
+      fill.style.cssText = 'height:100%;width:40%;border-radius:99px;background:linear-gradient(90deg,#F9A8D4,#A855F7);animation:app-splash-progress 1.6s ease-in-out infinite;';
+      track.appendChild(fill);
+      s.appendChild(track);
 
       // Styles for animations
       var st = document.createElement('style');
       st.textContent =
-        '@keyframes app-splash-spin{to{transform:rotate(360deg)}}' +
-        '@keyframes app-splash-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.85;transform:scale(0.98)}}' +
-        '@keyframes app-splash-bounce{0%,80%,100%{transform:scale(0.6);opacity:0.5}40%{transform:scale(1);opacity:1}}' +
-        '@keyframes app-splash-fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}';
+        '@keyframes app-splash-glow{from{transform:translateY(-2%) scale(1);opacity:0.8}to{transform:translateY(2%) scale(1.1);opacity:1}}' +
+        '@keyframes app-splash-digit{from{opacity:0;transform:translateY(26px) scale(0.9);filter:blur(10px)}to{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}}' +
+        '@keyframes app-splash-tag{from{opacity:0;letter-spacing:0.2em;filter:blur(6px)}to{opacity:1;letter-spacing:0.55em;filter:blur(0)}}' +
+        '@keyframes app-splash-progress{0%{width:12%;opacity:0.6}50%{width:78%;opacity:1}100%{width:12%;opacity:0.6}}';
       document.head.appendChild(st);
       document.body.appendChild(s);
 
@@ -383,6 +413,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="ru" suppressHydrationWarning>
       <head>
+        {/* v25.27 (TV fix): полифиллы для старых ТВ-браузеров — обычный
+            (не module) скрипт, выполняется ДО всех бандлов и сплеш-скрипта.
+            Без него на Tizen/webOS нет ResizeObserver/IntersectionObserver и
+            нет сообщения «обновите браузер» там, где ES-модули недоступны. */}
+        <script src="/legacy-polyfills.js" />
         {/* v9-theme-flash-fix: inline script runs BEFORE React hydrates.
             Must be the first thing in <head> so it executes before any
             CSS / paint. Sets the dark/light class on <html> and the
@@ -498,7 +533,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           }}
         />
       </head>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${onestSans.variable} ${unboundedDisplay.variable} antialiased`}>
         {/* Wave 3 (C-MON-001): Sentry client-side init — no-op without NEXT_PUBLIC_SENTRY_DSN */}
         <SentryInit />
         {/* Phase 23: Skip-to-content link for screen reader / keyboard users.

@@ -48,6 +48,7 @@ import leadsRoutes from './routes/leads.js'
 import ordersRoutes from './routes/orders.js'
 import deliveryRoutes from './routes/delivery.js'
 import reviewsRoutes from './routes/reviews.js'
+import communitiesRoutes from './routes/communities.js'
 import searchRoutes from './routes/search.js'
 import universalSearchRoutes from './routes/universal-search.js'
 import callsRoutes from './routes/calls.js'
@@ -55,6 +56,7 @@ import auditRoutes from './routes/audit.js'
 import shareRoutes from './routes/share.js'
 // v12.4: 999 CLUB Phase 2 — full backend with CRUD + points + referrals.
 import clubRoutes from './routes/club.js'
+import gameDuelRoutes from './routes/game-duels.js'
 // v16.9.2: Audio Hub — search proxy (iTunes API) + stream proxy for offline cache.
 import audioHubRoutes from './routes/audio-hub.js'
 import filmsRoutes from './routes/films.js'
@@ -547,12 +549,14 @@ app.use('/api/leads', leadsRoutes)
 app.use('/api/orders', ordersRoutes)
 app.use('/api/delivery', deliveryRoutes)
 app.use('/api/reviews', reviewsRoutes)
+app.use('/api/communities', communitiesRoutes) // v25.14: сообщества (публичные + закрытый оптовый клуб)
 app.use('/api/search', searchRoutes) // /api/search/track — records user searches for personalization
 app.use('/api/search', universalSearchRoutes) // /api/search/universal — parallel entity search
 app.use('/api/calls', callsRoutes) // /api/calls/ice-servers — WebRTC ICE config
 app.use('/api/audit', auditRoutes) // /api/audit — admin audit log (admin-only)
 app.use('/api/share', shareRoutes) // Smart Share — public share links + tracking + analytics
 app.use('/api/club', clubRoutes) // v12.4: 999 CLUB Phase 2 — gifts, promos, giveaways, bonuses, tasks, coupons, events, points, referrals
+app.use('/api/game-duels', gameDuelRoutes) // v25.24: онлайн-дуэли из чата (крестики-нолики, нарды)
 app.use('/api/audio-hub', audioHubRoutes) // v16.9.2: Audio Hub — search proxy + stream proxy
 app.use('/api/films', filmsRoutes) // v16.20: Films Hub — Turkish series search + episode player
 app.use('/api/live-info', liveInfoRoutes) // v18.4: Floating Live Info — finance/weather/shop/personal

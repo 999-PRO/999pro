@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
 import { ProductCard } from '../product-card'
+import { NeuroReveal } from '../neuro-reveal'
 import { cn } from '@/lib/utils'
 import type { Product } from '@/lib/types'
 
@@ -99,8 +100,11 @@ export function SmartSection({
            at 1920px width. New: 2 mobile / 3 tablet / 4 desktop / 5 xl.
            Cards stay readable with generous whitespace between them. */
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-          {items.map((p) => (
-            <ProductCard key={p.id} product={p} onOpen={onOpenProduct} />
+          {/* v25.19: «нейро-генерация» при скролле */}
+          {items.map((p, i) => (
+            <NeuroReveal key={p.id} delay={(i % 10) * 0.04}>
+              <ProductCard product={p} onOpen={onOpenProduct} />
+            </NeuroReveal>
           ))}
         </div>
       )}

@@ -200,7 +200,8 @@ export function UniversalSearchOverlay({
   const userRole = useAuthStore((s) => s.user?.role)
   const isAdmin = userRole === 'admin'
   // v18.12: filter out the 'films' category for non-admins.
-  const visibleCategories = useMemo(() => CATEGORIES.filter((c) => isAdmin || c.key !== 'films'), [isAdmin])
+  // v25.18: Video Hub открыт всем — категория «Фильмы» видна всем.
+  const visibleCategories = useMemo(() => CATEGORIES, [])
   const {
     products,
     users,
@@ -270,13 +271,7 @@ export function UniversalSearchOverlay({
 
   const handleOpenFilm = useCallback(
     (film: Film) => {
-      // v18.12: Video Hub is admin-only. Non-admins can't open films
-      // (the category is hidden, but this is a defense-in-depth check in
-      // case a film result slips through via the "All" tab).
-      if (!isAdmin) {
-        toast.info('Video Hub скоро будет доступен. Раздел в разработке.')
-        return
-      }
+      // v25.18: Video Hub ОТКРЫТ для всех — гейт снят (владелец просил дважды).
       // page.tsx listens for '999pro:open-film' and opens FilmBottomSheet.
       window.dispatchEvent(
         new CustomEvent('999pro:open-film', {
@@ -297,7 +292,7 @@ export function UniversalSearchOverlay({
       )
       onClose()
     },
-    [onClose, isAdmin],
+    [onClose],
   )
 
   const handleOpenProduct = useCallback(
@@ -410,7 +405,7 @@ export function UniversalSearchOverlay({
             className="fixed left-0 right-0 bottom-0 z-[98] mx-auto max-w-2xl"
           >
             <div
-              className="rounded-t-[28px] overflow-hidden flex flex-col"
+              className="rounded-t-[30px] overflow-hidden flex flex-col relative"
               style={{
                 height: '88vh',
                 background:
@@ -422,18 +417,43 @@ export function UniversalSearchOverlay({
                 boxShadow: '0 -20px 60px -10px rgba(0,0,0,0.6)',
               }}
             >
+              {/* v25.17: аурора-свечение сверху + ручка-грэб — премиальный вид */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[70%] h-40 z-0"
+                style={{
+                  background: 'radial-gradient(ellipse at center top, rgba(139,92,246,0.22) 0%, rgba(236,72,153,0.08) 45%, transparent 75%)',
+                  filter: 'blur(10px)',
+                }}
+              />
+              <div aria-hidden className="absolute top-0 left-1/2 -translate-x-1/2 h-[3px] w-24 rounded-full bg-white/25 z-10 mt-2" />
+
               {/* Search input row */}
-              <div className="px-4 pt-4 pb-3 shrink-0">
-                <div className="flex items-center gap-3">
+              <div className="px-4 pt-5 pb-3 shrink-0 relative z-10">
+                <div className="flex items-center justify-between mb-2.5 px-1">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/45">
+                    Универсальный поиск
+                  </span>
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-white/40">
+                    <Command className="h-3 w-3" /> K
+                  </span>
+                </div>
+                <div
+                  className="flex items-center gap-3 rounded-2xl px-3 h-12 transition-all"
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06)',
+                  }}
+                >
                   <div
-                    className="grid place-items-center h-10 w-10 rounded-xl shrink-0"
+                    className="grid place-items-center h-8 w-8 rounded-xl shrink-0"
                     style={{
-                      background:
-                        'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%)',
-                      boxShadow: '0 6px 20px -4px rgba(99,102,241,0.5)',
+                      background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%)',
+                      boxShadow: '0 4px 16px -2px rgba(139,92,246,0.6)',
                     }}
                   >
-                    <Search className="h-5 w-5 text-foreground" />
+                    <Search className="h-4 w-4 text-white" />
                   </div>
                   <input
                     ref={inputRef}
@@ -444,8 +464,8 @@ export function UniversalSearchOverlay({
                       if (e.key === 'Enter') handleSubmitQuery(query)
                       if (e.key === 'Escape') onClose()
                     }}
-                    placeholder="Поиск по всему приложению..."
-                    className="flex-1 bg-transparent text-foreground text-base placeholder:text-muted-foreground/70 outline-none min-w-0"
+                    placeholder="Товары, музыка, фильмы, чаты…"
+                    className="flex-1 bg-transparent text-white text-[15px] placeholder:text-white/35 outline-none min-w-0"
                   />
                   {/* Voice search button — uses Web Speech API (Chrome/Edge/Safari).
                       Hidden on browsers that don't support SpeechRecognition. */}
@@ -465,7 +485,7 @@ export function UniversalSearchOverlay({
                   <button
                     onClick={onClose}
                     aria-label="Закрыть"
-                    className="grid place-items-center h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-foreground/10 transition-colors shrink-0"
+                    className="grid place-items-center h-8 w-8 rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-colors shrink-0"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -1007,8 +1027,8 @@ function InitialContent({
   /** v18.12: admin flag — hides the "Фильмы" card for non-admins. */
   isAdmin: boolean
 }) {
-  // v18.12: filter out 'films' for non-admins.
-  const cats = CATEGORIES.filter((c) => isAdmin || c.key !== 'films')
+  // v25.18: Video Hub открыт всем — карточка «Фильмы» видна всем.
+  const cats = CATEGORIES
   return (
     <div className="pt-4">
       {recents.length > 0 && (

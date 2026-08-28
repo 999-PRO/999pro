@@ -1,13 +1,14 @@
 'use client'
 
-import { Home, LayoutGrid, MessageCircle, User, MoreHorizontal, Search, ShoppingBag, Heart, Sparkles } from 'lucide-react'
+import { Home, LayoutGrid, MessageCircle, User, MoreHorizontal, Search, ShoppingBag, Heart, Sparkles, Gamepad2 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
 import { useCartStore, useFavoritesStore } from '@/lib/cart-store'
+// v25.21: реальный счётчик непрочитанных чата на рельсе (как в мессенджерах).
+import { useNotificationsStore } from '@/lib/use-notifications'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { initials } from '@/lib/format'
-import { useClubStore } from '@/modules/999-club'
 import { useAudioPlayer } from '@/lib/audio-player-manager'
 import { MediaHubIcon } from '@/components/icons/media-hub-icon'
 // v25.5 (TZ-3 task #10): module access filtering — sidebar now respects
@@ -23,12 +24,13 @@ interface SidebarProps {
   onOpenSearch: () => void
 }
 
-// v39: CLUB moved to the top section (next to Search + Media Hub) as a
-// prominent CTA. Media Hub moved DOWN into the nav stack as a regular item.
+// v39: CLUB был в верхнем блоке — УДАЛЕН в v25.16 (owner: «можно убрать
+// кнопку клуб из хедера… с левой стороны» — клуб остался в «Ещё» и TopBar).
 const NAV = [
   { id: 'home', label: 'Главная', icon: Home },
   { id: 'catalog', label: 'Каталог', icon: LayoutGrid },
   { id: 'media-hub', label: 'Media Hub', icon: MediaHubIcon },
+  { id: 'games', label: 'Игры', icon: Gamepad2 },
   { id: 'chat', label: 'Чат', icon: MessageCircle },
   { id: 'profile', label: 'Профиль', icon: User },
 ] as const
@@ -50,7 +52,8 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
   const user = useAuthStore((s) => s.user)
   const favoritesCount = useFavoritesStore((s) => s.ids.length)
   const cartCount = useCartStore((s) => s.count())
-  const clubHasUnread = useClubStore((s) => s.hasUnread)
+  // v25.21: badge «Чат» — живой счётчик из нотификационного стора.
+  const chatUnread = useNotificationsStore((s) => s.unread.total)
   const audioIsPlaying = useAudioPlayer((s) => s.isPlaying)
   // v25.5: module access — filter nav items the same way as bottom-nav.
   const modules = useModuleAccess()
@@ -58,11 +61,11 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
 
   return (
     <aside className="hidden md:flex w-[76px] xl:w-[88px] shrink-0 fixed top-0 left-0 h-screen flex-col items-center z-50 premium-rail">
-      {/* Brand mark — 999PRO wordmark (gradient). */}
+      {/* Brand mark — TRI999 wordmark (gradient). */}
       <button
         onClick={() => onNavigate('home')}
         className="mt-6 mb-8 px-1 py-2 group flex flex-col items-center"
-        aria-label="999PRO — на главную"
+        aria-label="TRI999 — на главную"
       >
         <span
           className="block font-extrabold text-base leading-none tracking-tight"
@@ -74,7 +77,7 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
             filter: 'drop-shadow(0 2px 8px rgba(99,102,241,0.4))',
           }}
         >
-          999PRO
+          TRI999
         </span>
       </button>
 
@@ -90,55 +93,6 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
         <Search className="h-[18px] w-[18px]" strokeWidth={2.2} />
         <span className="premium-tooltip">Поиск · ⌘K</span>
       </button>
-
-      {/* v39: 999 CLUB button — moved to the top section (replaces Media Hub).
-          Media Hub moved into the nav stack below.
-          v25.5: conditional on module access (club). */}
-      {isModuleEnabled(modules, 'club') && (
-      <button
-        onClick={() => onNavigate('club')}
-        className={cn(
-          'h-11 w-11 rounded-2xl grid place-items-center transition-all duration-300 group relative premium-tooltip-host',
-          view === 'club' ? 'premium-rail-active' : 'premium-rail-item',
-        )}
-        aria-label="999 CLUB"
-        style={
-          view !== 'club'
-            ? {
-                backgroundImage:
-                  'linear-gradient(135deg, rgba(245,158,11,0.18) 0%, rgba(236,72,153,0.14) 50%, rgba(139,92,246,0.18) 100%)',
-              }
-            : undefined
-        }
-      >
-        {/* Crown icon — uses lucide Crown (re-imported locally to keep this
-            section self-contained). Tinted amber to match the CLUB brand. */}
-        <svg
-          className="h-[18px] w-[18px]"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={view === 'club' ? 2.4 : 2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={view !== 'club' ? { color: '#f59e0b' } : undefined}
-        >
-          <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z" />
-          <path d="M5 20h14" />
-        </svg>
-        <span className="premium-tooltip">{clubHasUnread ? 'CLUB · Новое' : '999 CLUB'}</span>
-        {/* CLUB unread badge — amber pulsing dot */}
-        {clubHasUnread && (
-          <span
-            className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full animate-pulse"
-            style={{
-              background: 'linear-gradient(135deg, #f59e0b 0%, #ec4899 100%)',
-              boxShadow: '0 0 8px rgba(245, 158, 11, 0.6)',
-            }}
-          />
-        )}
-      </button>
-      )}
 
       {/* Divider */}
       <div className="my-5 h-px w-7 bg-border/60" />
@@ -221,9 +175,19 @@ export function Sidebar({ view, onNavigate, onMore, onOpenSearch }: SidebarProps
                   {favoritesCount > 9 ? '9+' : favoritesCount}
                 </span>
               )}
-              {/* Chat badge placeholder (would show unread count) */}
-              {item.id === 'chat' && (
-                <span className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
+              {/* v25.21: бейдж непрочитанных чата — красная пилюля с числом
+                  (раньше была декоративная зелёная точка без счётчика). */}
+              {item.id === 'chat' && chatUnread > 0 && (
+                <span
+                  key={chatUnread}
+                  className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] px-1 rounded-full grid place-items-center text-[10px] font-extrabold text-white ring-2 ring-white/90 dark:ring-white/20 animate-[badge-pop_0.3s_ease-out]"
+                  style={{
+                    background: 'linear-gradient(135deg,#F43F5E,#E11D48)',
+                    boxShadow: '0 2px 8px -1px rgba(225,29,72,0.55)',
+                  }}
+                >
+                  {chatUnread > 99 ? '99+' : chatUnread}
+                </span>
               )}
             </button>
           )

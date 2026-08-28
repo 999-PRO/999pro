@@ -143,11 +143,34 @@ function getAudioEl(): HTMLAudioElement {
     // user gesture. Все вызовы play() идут из click handler'ов — жест
     // пользователя есть.
     audioEl.crossOrigin = 'anonymous'
+    // v25.20 (owner): музыка должна играть, даже когда приложение свёрнуто.
+    // playsinline + audioSession:'playback' помогают мобильным платформам
+    // не обрывать воспроизведение в фоне.
+    audioEl.setAttribute('playsinline', 'true')
+    audioEl.setAttribute('webkit-playsinline', 'true')
+    try {
+      const nav = navigator as any
+      if (nav.audioSession) nav.audioSession.type = 'playback'
+    } catch { /* не поддерживается — не критично */ }
   }
   return audioEl
 }
 
 // ---- Helpers ----
+
+// v25.24 (owner): «скорость голосовых некорректно работает на разных
+// устройствах». Причина №1 — без preservesPitch ускорение повышает тон
+// («бурундук»), что и воспринимается как сломанная скорость. Ставим флаг
+// на элемент при каждом изменении rate (включая webkit/moz-префиксы).
+function applyPlaybackRate(el: HTMLMediaElement, rate: number) {
+  try {
+    el.playbackRate = rate
+    const anyEl = el as any
+    if ('preservesPitch' in el) el.preservesPitch = true
+    if ('webkitPreservesPitch' in anyEl) anyEl.webkitPreservesPitch = true
+    if ('mozPreservesPitch' in anyEl) anyEl.mozPreservesPitch = true
+  } catch { /* старые браузеры */ }
+}
 
 /** Shuffle array (Fisher-Yates), возвращает новую копию. */
 function shuffleArray<T>(arr: T[]): T[] {
@@ -191,6 +214,18 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
     el.addEventListener('pause', () => {
       set({ isPlaying: false })
       try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused' } catch {}
+      // v25.20 (owner): «если свернул приложение — музыка должна играть дальше».
+      // Некоторые мобильные браузеры сами ставят паузу при уходе в фон.
+      // Если пауза произошла НЕ по инициативе пользователя (документ скрыт,
+      // трек не остановлен пользователем) — один раз тихо возобновляем.
+      if (typeof document !== 'undefined' && document.hidden && get().currentTrack) {
+        setTimeout(() => {
+          const st = get()
+          if (document.hidden && st.currentTrack && el.paused && !st.isLoading) {
+            el.play().catch(() => { /* браузер запретил — ничего не делаем */ })
+          }
+        }, 300)
+      }
     })
 
     el.addEventListener('waiting', () => set({ isLoading: true }))
@@ -303,7 +338,7 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
         resolvedUrl = `/api/audio-hub/stream?url=${encodeURIComponent(resolvedUrl)}`
       }
       el.src = resolvedUrl
-      el.playbackRate = st.playbackRate
+      applyPlaybackRate(el, st.playbackRate)
       set({
         currentTrack: track,
         isPlaying: false,
@@ -328,7 +363,7 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
       // media keys all work. Without this:
       //   - iOS Safari pauses background audio when the screen locks (no
       //     mediaSession.metadata = the OS doesn't know it's "media").
-      //   - Android Chrome shows a generic "999 PRO" notification with no
+      //   - Android Chrome shows a generic "TRI999" notification with no
       //     title/artist/artwork — no play/pause/seek buttons.
       //   - Bluetooth next/prev buttons do nothing.
       // We register metadata on every play() (cheap), and action handlers
@@ -345,8 +380,8 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
             : []
           navigator.mediaSession.metadata = new MediaMetadata({
             title: track.title || 'Трек',
-            artist: track.subtitle || track.senderName || '999PRO',
-            album: '999PRO AudioHub',
+            artist: track.subtitle || track.senderName || 'TRI999',
+            album: 'TRI999 AudioHub',
             artwork,
           })
           navigator.mediaSession.playbackState = 'playing'
@@ -548,7 +583,7 @@ export const useAudioPlayer = create<AudioPlayerState>((set, get) => {
     toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
 
     setPlaybackRate: (rate) => {
-      getAudioEl().playbackRate = rate
+      applyPlaybackRate(getAudioEl(), rate)
       set({ playbackRate: rate })
     },
 

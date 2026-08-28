@@ -376,11 +376,9 @@ export function AuthDialog({
             </button>
           </div>
 
-          {mode === 'login' && process.env.NODE_ENV === 'development' && (
-            <div className="text-xs text-center text-muted-foreground border-t border-border/40 pt-3 mt-2">
-              Демо-доступ: <code className="font-mono">maria@999.pro</code> / <code className="font-mono">123456</code>
-            </div>
-          )}
+          {/* v25.14: the fake "demo access" hint (maria@999.pro / 123456) was
+              removed — the store has ONE real owner account and exposing
+              demo credentials confused real customers. */}
         </form>
       </DialogContent>
 

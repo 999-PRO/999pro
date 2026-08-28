@@ -2,13 +2,28 @@
 
 import { useState, useEffect } from 'react'
 import { FileText, FileSpreadsheet, FileImage, File, Download, Eye, Calendar, Tag } from 'lucide-react'
-import { api, assetUrl } from '@/lib/api'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/haptic'
 import { Loader2 } from 'lucide-react'
+import { PriceListsViewer } from './price-lists-viewer'
+import { ImageLightbox } from '../image-lightbox'
 
 // v25.12: PriceListsPage — публичная страница со списком прайс-листов.
 // Клиенты видят только видимые прайс-листы, могут просмотреть/скачать файл.
+// v25.21 (owner): просмотр переделан — БОЛЬШЕ НЕТ window.open (на мобиле/PWA
+// он давал белый экран без выхода). Все файлы открываются во встроенном
+// полноэкранном PriceListsViewer каруселью: свайп между прайсами, PDF
+// рендерится через pdf.js, у всего есть крестик/скачивание.
+//
+// v25.22 (owner): «картинки хочу КАК В ЛЕНТЕ — на весь экран, со свайпом
+// и щипком, и PDF тоже». Теперь:
+//  • тап по КАРТИНКЕ открывает ЛЕНТОВЫЙ ImageLightbox (тот самый, из ленты:
+//    pinch-zoom, двойной тап, свайп вниз-закрыть, миниатюры внизу) — галерея
+//    составлена из ВСЕХ картинок-прайсов, свайп листает между ними;
+//  • PDF/Word/Excel — прежний просмотрщик-карусель (владельцу он нравится),
+//    но страницы PDF теперь во всю ширину экрана, без рамок и скруглений —
+//    тот же «лентовый» полноэкранный вид.
 
 interface PriceList {
   id: string
@@ -66,7 +81,10 @@ interface PriceListsPageProps {
 export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
   const [items, setItems] = useState<PriceList[]>([])
   const [loading, setLoading] = useState(true)
-  const [preview, setPreview] = useState<PriceList | null>(null)
+  // v25.21: индекс открытого прайса в отфильтрованном списке (карусель).
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null)
+  // v25.22: индекс открытой КАРТИНКИ в лентовом ImageLightbox.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [filterCategory, setFilterCategory] = useState<string | null>(null)
 
   useEffect(() => {
@@ -79,13 +97,19 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
   const categories = Array.from(new Set(items.map((i) => i.category).filter(Boolean))) as string[]
   const filtered = filterCategory ? items.filter((i) => i.category === filterCategory) : items
 
+  // v25.22: картинки → лентовый лайтбокс; документы → карусель просмотрщика.
+  const imageItems = filtered.filter((i) => i.fileType === 'image')
+  const docItems = filtered.filter((i) => i.fileType !== 'image')
+
   const handleOpen = (item: PriceList) => {
     haptic.tap()
     if (item.fileType === 'image') {
-      setPreview(item)
-    } else {
-      window.open(assetUrl(item.fileUrl), '_blank', 'noopener,noreferrer')
+      const idx = imageItems.findIndex((i) => i.id === item.id)
+      if (idx >= 0) setLightboxIndex(idx)
+      return
     }
+    const idx = docItems.findIndex((i) => i.id === item.id)
+    if (idx >= 0) setViewerIndex(idx)
   }
 
   if (loading) {
@@ -237,38 +261,35 @@ export function PriceListsPage({ onNavigate }: PriceListsPageProps) {
         )}
       </div>
 
-      {/* Image preview modal */}
-      {preview && (
-        <div
-          className="fixed inset-0 z-[500] bg-black/80 backdrop-blur-sm grid place-items-center p-4"
-          onClick={() => setPreview(null)}
-        >
-          <div className="relative max-w-4xl max-h-[90vh] w-full" onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => setPreview(null)}
-              className="absolute -top-12 right-0 h-10 w-10 rounded-full bg-white/15 backdrop-blur grid place-items-center text-white hover:scale-105 transition-transform"
-              aria-label="Закрыть"
-            >
-              ✕
-            </button>
-            <img
-              src={assetUrl(preview.fileUrl)}
-              alt={preview.title}
-              className="max-w-full max-h-[85vh] mx-auto rounded-2xl shadow-2xl"
-            />
-            <div className="mt-4 text-center">
-              <h3 className="text-white font-semibold text-lg">{preview.title}</h3>
-              {preview.description && <p className="text-white/70 text-sm mt-1">{preview.description}</p>}
-              <a
-                href={assetUrl(preview.fileUrl)}
-                download={preview.title}
-                className="inline-flex items-center gap-2 mt-4 h-10 px-5 rounded-full bg-white text-[#1A1A1A] font-semibold text-sm hover:bg-white/90"
-              >
-                <Download className="h-4 w-4" /> Скачать
-              </a>
-            </div>
-          </div>
-        </div>
+      {/* v25.22: КАРТИНКИ-прайсы открываются ЛЕНТОВЫМ лайтбоксом —
+          ровно тот же просмотр, что в ленте: pinch-zoom, двойной тап,
+          свайп между картинками, свайп вниз — закрыть, миниатюры внизу. */}
+      {lightboxIndex !== null && imageItems.length > 0 && (
+        <ImageLightbox
+          images={imageItems.map((i) => i.fileUrl)}
+          initialIndex={lightboxIndex}
+          open
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
+
+      {/* v25.21: полноэкранный просмотрщик-карусель (PDF через pdf.js).
+          v25.22: в карусели — только ДОКУМЕНТЫ (картинки ушли в лентовый
+          лайтбокс выше), страницы PDF рендерятся full-bleed. */}
+      {viewerIndex !== null && docItems.length > 0 && (
+        <PriceListsViewer
+          items={docItems.map((i) => ({
+            id: i.id,
+            title: i.title,
+            description: i.description,
+            fileUrl: i.fileUrl,
+            fileType: i.fileType,
+            category: i.category,
+          }))}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onIndexChange={setViewerIndex}
+        />
       )}
     </div>
   )

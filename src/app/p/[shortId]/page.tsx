@@ -37,7 +37,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { shortId } = await params
   if (!shortId || !/^[A-Za-z0-9]{4,32}$/.test(shortId)) {
-    return { title: 'Товар не найден — 999PRO' }
+    return { title: 'Товар не найден — TRI999' }
   }
 
   // Resolve the public URL from the request headers — this ensures OG tags
@@ -50,17 +50,17 @@ export async function generateMetadata({
 
   const data = await fetchShareData(shortId)
   if (!data) {
-    return { title: 'Товар не найден — 999PRO' }
+    return { title: 'Товар не найден — TRI999' }
   }
 
   const { product } = data
   // Use the request-resolved shareUrl — overrides whatever the backend sent
   // (which may have used a different host if the request came through a proxy).
   const shareUrl = `${publicUrl}/p/${shortId}`
-  const title = `${product.title} — ${formatPrice(product.price, product.currency)} | 999PRO`
+  const title = `${product.title} — ${formatPrice(product.price, product.currency)} | TRI999`
   const description =
     (product.description ? product.description.slice(0, 160) : null) ||
-    `${product.title} за ${formatPrice(product.price, product.currency)}. 999PRO.`
+    `${product.title} за ${formatPrice(product.price, product.currency)}. TRI999.`
 
   // ─── OG Image — use OUR proxy endpoint, not the raw Unsplash URL ───
   // WhatsApp / Facebook / Telegram crawlers don't reliably fetch OG images
@@ -91,7 +91,7 @@ export async function generateMetadata({
       // Changed to 'website' — OG spec supports 'product' but Next.js doesn't.
       type: 'website',
       locale: 'ru_RU',
-      siteName: '999PRO',
+      siteName: 'TRI999',
       url: shareUrl,
       // Single OG image (not multiple) — WhatsApp prefers ONE og:image
       // and may ignore the rest. Pointing to our proxy ensures it's
@@ -101,7 +101,7 @@ export async function generateMetadata({
           url: ogImageUrl,
           width: 1200,
           height: 1200,
-          alt: `${product.title} — 999PRO`,
+          alt: `${product.title} — TRI999`,
           type: 'image/jpeg',
         },
       ],
@@ -201,11 +201,11 @@ export default async function SharePage({
       <html>
         <head>
           <meta httpEquiv="refresh" content={`0; url=${productUrl}`} />
-          <title>999PRO — {data.product.title}</title>
+          <title>TRI999 — {data.product.title}</title>
         </head>
         <body style={{ margin: 0, background: 'linear-gradient(135deg, #EC4899, #A855F7, #9333EA)', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <div style={{ textAlign: 'center', color: 'white', fontFamily: 'sans-serif' }}>
-            <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '0.5rem' }}>999PRO</h1>
+            <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '0.5rem' }}>TRI999</h1>
             <p style={{ fontSize: '1rem', opacity: 0.8 }}>Открываем товар…</p>
             <a href={productUrl} style={{ color: 'white', textDecoration: 'underline', marginTop: '1rem', display: 'inline-block' }}>Открыть вручную</a>
           </div>
@@ -236,7 +236,7 @@ export default async function SharePage({
     sku: data.shortId,
     brand: {
       '@type': 'Brand',
-      name: '999PRO',
+      name: 'TRI999',
     },
     offers: {
       '@type': 'Offer',

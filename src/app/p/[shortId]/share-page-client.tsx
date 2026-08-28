@@ -16,7 +16,7 @@
 //       crawlers (WhatsApp, Telegram, FB, X, iMessage) read these WITHOUT
 //       executing JS, so the rich link preview still works.
 //    2. This client component renders a minimal branded splash
-//       ("Открываем товар в 999PRO…") and IMMEDIATELY redirects to
+//       ("Открываем товар в TRI999…") and IMMEDIATELY redirects to
 //       /?product=<id> — the SPA opens the SAME Product Viewer that users
 //       see when they tap a product card inside the app.
 //    3. PWA installed: the OS-level Universal Link (iOS) / App Link (Android)
@@ -113,10 +113,10 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
         transition={{ duration: 0.4, ease: 'easeOut' }}
         className="w-full max-w-md text-center"
       >
-        {/* v25.12: 999PRO — plain white text */}
+        {/* v25.12: TRI999 — plain white text */}
         <div className="mb-6">
           <span className="text-3xl font-extrabold tracking-tight text-white">
-            999PRO
+            TRI999
           </span>
         </div>
 
@@ -163,7 +163,7 @@ export function SharePageClient({ data, appPublicUrl }: Props) {
         <noscript>
           <div className="mt-8 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-sm">
             <p className="mb-3 text-amber-800 dark:text-amber-200">
-              JavaScript отключён. Нажмите кнопку ниже, чтобы открыть товар в 999PRO:
+              JavaScript отключён. Нажмите кнопку ниже, чтобы открыть товар в TRI999:
             </p>
             <a
               href={`/?product=${encodeURIComponent(product.id)}`}

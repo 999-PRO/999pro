@@ -1,7 +1,7 @@
 'use client'
 
 // ============================================================================
-//  AI Agent 999PRO — v25.9.4
+//  AI Agent TRI999 — v25.9.4
 //  Full rewrite — fixes all reported issues:
 //   1. Greeting doesn't hide product cards — they render below it.
 //   2. Vertical scroll works on long conversations.
@@ -110,11 +110,21 @@ export function AIAssistant({
   useEffect(() => {
     const openHandler = () => {
       // v25.9.10: REMOVED the `enabled` gate — the AI should ALWAYS open when
-      // the user clicks the button. Previously, if the user had toggled the
-      // Power button off (enabled=false), clicking the AI button did nothing
-      // — this was the root cause of "AI doesn't open on desktop".
+      // the user clicks the button.
       session.setOpen(true)
       if (context) session.setLastContext(context)
+
+      // v25.16 (owner): «когда мы заходим в агента — чтобы для начала был
+      // именно голосовой бот. Если человеку нужна клавиатура — он сам
+      // выберет». Пока пользователь ни разу не переключал режим вручную
+      // (флага нет в localStorage) — каждый заход стартует в voice-режиме.
+      // Первый ручной выбор сохраняет предпочтение.
+      let modeExplicit = false
+      try { modeExplicit = localStorage.getItem('999pro-ai-mode-explicit') === '1' } catch {}
+      if (!modeExplicit && session.mode !== 'voice') {
+        session.setMode('voice')
+        session.setAutoSpeak(true)
+      }
     }
     const closeHandler = () => session.setOpen(false)
     // v25.9.6: when a product is opened (from anywhere — AI card click, chat,
@@ -196,6 +206,19 @@ export function AIAssistant({
       const t = setTimeout(() => inputRef.current?.focus(), 150)
       return () => clearTimeout(t)
     }
+  }, [session.open, session.mode])
+
+  // ----- 4b. v25.16: автозапуск микрофона при открытии в голосовом режиме.
+  // Голосовой агент должен СНЯЧАЛА слушать — микрофон стартует автоматически
+  // через полсекунды после открытия (переключатель клавиатуры отключает).
+  useEffect(() => {
+    if (!session.open || session.mode !== 'voice') return
+    if (!speechSupported || listening || loading || speaking) return
+    const t = setTimeout(() => {
+      startListening()
+    }, 600)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.open, session.mode])
 
   // ----- 5. Stop TTS/STT when panel closes -----
@@ -643,7 +666,12 @@ export function AIAssistant({
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <button
-          onClick={() => session.setMode(isVoiceMode ? 'text' : 'voice')}
+          onClick={() => {
+            // v25.16: ручное переключение режима запоминаем — после этого
+            // агент больше не принудительно открывает голосовой режим.
+            try { localStorage.setItem('999pro-ai-mode-explicit', '1') } catch {}
+            session.setMode(isVoiceMode ? 'text' : 'voice')
+          }}
           className={cn(
             'h-9 w-9 grid place-items-center rounded-full transition-colors',
             isVoiceMode ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground',
@@ -832,7 +860,7 @@ export function AIAssistant({
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 + i * 0.08, duration: 0.3 }}
             onClick={() => handleSend(prompt)}
-            className="text-left px-4 py-3 rounded-xl bg-muted/40 hover:bg-accent border border-border/40 text-sm text-foreground transition-colors"
+            className="text-left px-4 py-2.5 rounded-2xl bg-card/70 backdrop-blur-md hover:bg-accent border border-border/40 hover:border-primary/40 text-sm text-foreground transition-all hover:translate-x-0.5"
           >
             {prompt}
           </motion.button>
@@ -1000,7 +1028,8 @@ export function AIAssistant({
                 ))}
               </div>
             )}
-            <div className="rounded-2xl rounded-br-md px-4 py-2.5 text-sm bg-primary text-primary-foreground">
+            {/* v25.17: брендовый градиент вместо плоского bg-primary */}
+            <div className="rounded-2xl rounded-br-md px-4 py-2.5 text-sm gradient-brand text-white shadow-[0_8px_22px_-10px_rgba(160,32,112,0.55)]">
               <p className="whitespace-pre-wrap break-words">{msg.content}</p>
             </div>
           </div>
@@ -1009,8 +1038,17 @@ export function AIAssistant({
     }
     const isPlaceholder = !msg.content && loading
     return (
-      <div key={msg.id || i} className="flex justify-start group">
-        <div className="max-w-[92%] rounded-2xl rounded-bl-md px-4 py-3 text-sm bg-card border border-border/60 space-y-2 shadow-sm">
+      <div key={msg.id || i} className="flex justify-start group gap-2">
+        {/* v25.17: мини-орб агента слева от каждого ответа — живой бренд */}
+        <div
+          className={cn(
+            'hidden sm:grid place-items-center h-7 w-7 rounded-lg shrink-0 mt-1 bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 transition-all',
+            (speaking || listening) && 'animate-pulse',
+          )}
+        >
+          <Sparkles className="h-3.5 w-3.5 text-white" />
+        </div>
+        <div className="max-w-[92%] rounded-2xl rounded-bl-md px-4 py-3 text-sm bg-card/85 backdrop-blur-md border border-border/50 space-y-2 shadow-[0_6px_20px_-12px_rgba(15,23,42,0.35)]">
           {isPlaceholder ? (
             <div className="flex items-center gap-2 py-1">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -1090,6 +1128,10 @@ export function AIAssistant({
         // flex child — without minHeight:0 the flex item grows to fit content
         // and never overflows, so overflow-y:auto has nothing to scroll.
         flex: '1 1 0%',
+        // v25.17: мягкая аурора-подложка (индиго сверху-справа, розовый
+        // снизу-слева) — «сделать ИИ-агента красивее» без ломки логики.
+        backgroundImage:
+          'radial-gradient(640px 320px at 88% -5%, rgba(139,92,246,0.12), transparent 62%), radial-gradient(520px 280px at -2% 104%, rgba(236,72,153,0.10), transparent 62%)',
       }}
     >
       {!hasMessages ? renderEmptyState() : (
@@ -1159,7 +1201,7 @@ export function AIAssistant({
           e.preventDefault()
           handleSend()
         }}
-        className="flex items-center gap-2"
+        className="flex items-center gap-2 rounded-full bg-muted/40 backdrop-blur-md p-1.5 ring-1 ring-border/60 focus-within:ring-2 focus-within:ring-primary/40 transition-all"
       >
         {isVoiceMode && (
           <button
@@ -1167,8 +1209,10 @@ export function AIAssistant({
             onClick={startListening}
             disabled={!speechSupported}
             className={cn(
-              'h-11 w-11 shrink-0 rounded-full grid place-items-center transition-colors',
-              listening ? 'bg-rose-500 text-white animate-pulse' : 'bg-primary text-primary-foreground hover:bg-primary/90',
+              'h-10 w-10 shrink-0 rounded-full grid place-items-center transition-all active:scale-90',
+              listening
+                ? 'bg-rose-500 text-white shadow-[0_0_0_6px_rgba(244,63,94,0.15)] animate-pulse'
+                : 'gradient-brand text-white shadow-[0_6px_18px_-6px_rgba(160,32,112,0.6)] hover:brightness-110',
             )}
             title={listening ? 'Остановить запись' : 'Начать запись'}
           >
@@ -1182,12 +1226,12 @@ export function AIAssistant({
           onChange={(e) => setInput(e.target.value)}
           placeholder={isVoiceMode ? 'Говорите или напишите…' : 'Напишите, что вам нужно'}
           disabled={loading}
-          className="flex-1 h-11 px-4 rounded-full bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+          className="flex-1 h-10 px-3 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none disabled:opacity-50 min-w-0"
         />
         <button
           type="submit"
           disabled={loading || !input.trim()}
-          className="h-11 w-11 shrink-0 rounded-full bg-primary text-primary-foreground grid place-items-center hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="h-10 w-10 shrink-0 rounded-full gradient-brand text-white grid place-items-center shadow-[0_6px_18px_-6px_rgba(160,32,112,0.6)] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none active:scale-90 transition-all"
           title="Отправить"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
@@ -1331,6 +1375,12 @@ export function AIAssistant({
   // properties (flex, overflow) that break `position: fixed` — the overlay
   // appeared "behind" the main content on desktop. By portaling to body, the
   // overlay escapes any parent stacking context and always renders on top.
+  // v25.21 (owner): «ИИ-агент не понравился — верни, как было». Откат
+  // v25.20-стайла (тёмное стекло/ручка/аурора): снова обычная панель
+  // bg-background — на мобайле во весь экран, на десктопе центрированное
+  // окно со скруглением. Внутренний дизайн чата (аурора, композер,
+  // градиентные кнопки из v25.17) НЕ тронут — владелец просил вернуть
+  // именно окно, а не «перекраску».
   if (typeof document === 'undefined') return null
   return createPortal(
     <AnimatePresence>
@@ -1351,6 +1401,7 @@ export function AIAssistant({
             onClick={(e) => e.stopPropagation()}
             className="w-full sm:max-w-3xl h-[100dvh] sm:h-[90vh] sm:rounded-3xl bg-background border border-border/60 shadow-2xl flex flex-col overflow-hidden relative"
           >
+
             {renderHeader()}
             <div className="flex-1 flex relative overflow-hidden">
               {renderHistoryPanel()}

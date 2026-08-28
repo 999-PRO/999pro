@@ -29,10 +29,10 @@
 // ============================================================================
 
 import { useEffect, useState, useRef } from 'react'
-import { AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   ChevronLeft, ChevronRight, Heart, ShoppingCart, Star, Share2,
-  Check, Store, AlertTriangle, X,
+  Check, Store, AlertTriangle, X, Copy, Music, VolumeX,
   Phone, MessageCircle, Send, Mail, MapPin, User, ArrowLeft,
 } from 'lucide-react'
 import { api, assetUrl } from '@/lib/api'
@@ -41,6 +41,8 @@ import { getStockLabel } from '@/lib/types'
 import { useCartStore, useFavoritesStore } from '@/lib/cart-store'
 import { formatPrice, formatCompactNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
+// v25.20: фоновая музыка товара («как в Инстаграме»)
+import { playProductMusic, stopProductMusic, useProductMusic } from '@/lib/product-music'
 import { toast } from '@/lib/notifications'
 import { haptic } from '@/lib/haptic'
 import { sounds } from '@/lib/sounds'
@@ -72,11 +74,33 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [imgIndex, setImgIndex] = useState(0)
-  // v25.8 (999PRO launch): selected color index — when set, the main image
+  // v25.20: фоновая музыка товара — играет на ФОТО-слайдах, на видео пауза
+  // (у видео свой звук). Останавливается при уходе со страницы.
+  const pmTrack = (product as any)?.music as { id: string; title: string; artist?: string | null; url: string } | null | undefined
+  const videoSlideIdx = (() => {
+    if (!product?.videoUrl) return -1
+    const imgs = (product.images || []).length
+    return Math.min(product.videoPosition ?? 0, imgs)
+  })()
+  const currentSlideIsVideo = videoSlideIdx >= 0 && imgIndex === videoSlideIdx
+  useEffect(() => {
+    if (!pmTrack?.url || currentSlideIsVideo) {
+      stopProductMusic()
+      return
+    }
+    playProductMusic(pmTrack)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pmTrack?.url, currentSlideIsVideo])
+  useEffect(() => () => stopProductMusic(), [])
+  // Состояние плеера фоновой музыки (для кнопки-переключателя на галерее)
+  const productMusic = useProductMusic()
+  // v25.8 (TRI999 launch): selected color index — when set, the main image
   // switches to that color's photo. null = use the regular image gallery.
   const [selectedColorIdx, setSelectedColorIdx] = useState<number | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
   const [qrOpen, setQrOpen] = useState(false)
+  // v25.15: выпадающее меню быстрых связей вместо верхней кнопки «Поделиться»
+  const [contactMenuOpen, setContactMenuOpen] = useState(false)
   const touchStartX = useRef(0)
 
   // F-CRIT-001: ProductPage is mounted globally via AppShell — full-store
@@ -334,6 +358,43 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                       else if (dx > 50) setImgIndex((i) => (i - 1 + mediaCount) % mediaCount)
                     }}
                   >
+                    {/* v25.20: кнопка фоновой музыки товара (только если трек задан).
+                        Пульс — когда играет; перечёркнутая нота — mute. */}
+                    {pmTrack?.url && (() => {
+                      const playing = productMusic.playing && !productMusic.muted && !currentSlideIsVideo
+                      return (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            productMusic.toggleMute()
+                            haptic.select()
+                          }}
+                          aria-label={productMusic.muted ? 'Включить музыку товара' : 'Выключить музыку товара'}
+                          title={pmTrack.title + (pmTrack.artist ? ' · ' + pmTrack.artist : '')}
+                          className="absolute bottom-3 right-3 z-20 h-10 w-10 rounded-full grid place-items-center backdrop-blur-md transition-all active:scale-90"
+                          style={{
+                            background: 'rgba(0,0,0,0.45)',
+                            border: '1px solid rgba(255,255,255,0.22)',
+                            color: playing ? '#fff' : 'rgba(255,255,255,0.75)',
+                          }}
+                        >
+                          {playing && (
+                            <motion.span
+                              aria-hidden
+                              className="absolute inset-0 rounded-full"
+                              style={{ border: '1.5px solid rgba(168,85,247,0.7)' }}
+                              animate={{ scale: [1, 1.35], opacity: [0.7, 0] }}
+                              transition={{ duration: 1.6, repeat: Infinity, ease: 'easeOut' }}
+                            />
+                          )}
+                          {productMusic.muted || currentSlideIsVideo ? (
+                            <VolumeX className="h-4.5 w-4.5" style={{ width: 18, height: 18 }} />
+                          ) : (
+                            <Music className="h-4.5 w-4.5" style={{ width: 18, height: 18 }} />
+                          )}
+                        </button>
+                      )
+                    })()}
                     <div
                       className="flex h-full transition-transform duration-300 ease-out"
                       style={{
@@ -364,10 +425,15 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                                 preload="metadata"
                               />
                             ) : (
+                              /* v25.18: Ken Burns-параллакс на активном кадре —
+                                 «как в ленте», оживляет галерею товара. */
                               <img
                                 src={assetUrl(m.url)}
                                 alt={`${product.title} — фото ${i + 1}`}
-                                className="h-full w-full object-cover"
+                                className={cn(
+                                  'h-full w-full object-cover',
+                                  i === imgIndex && (i % 2 === 0 ? 'kb-ambient-a' : 'kb-ambient-b'),
+                                )}
                                 style={{ aspectRatio: '3 / 4' }}
                                 decoding="async"
                                 draggable={false}
@@ -401,13 +467,51 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                         -{Math.round(100 - (product.price / product.oldPrice) * 100)}%
                       </div>
                     )}
-                    <button
-                      onClick={() => { haptic.tap(); setShareOpen(true) }}
-                      aria-label="Поделиться"
-                      className="h-10 w-10 rounded-full grid place-items-center bg-black/30 backdrop-blur-md text-white hover:bg-black/40 active:scale-95 transition-all shrink-0"
-                    >
-                      <Share2 className="h-5 w-5" />
-                    </button>
+                    {/* v25.15 (owner feedback): верхняя кнопка «Поделиться»
+                        заменена на выпадающее меню быстрых действий
+                        («позвонить или написать в WhatsApp») — без прокрутки
+                        вниз к блоку контактов. Нижняя кнопка Поделиться
+                        остаётся на месте. */}
+                    <div className="relative">
+                      <button
+                        onClick={() => { haptic.tap(); setContactMenuOpen((v) => !v) }}
+                        aria-label={contactMenuOpen ? 'Закрыть меню связи' : 'Связаться по товару'}
+                        aria-expanded={contactMenuOpen}
+                        className={cn(
+                          'h-10 w-10 rounded-full grid place-items-center text-white active:scale-95 transition-all shrink-0',
+                          contactMenuOpen ? 'bg-black/45 rotate-90' : 'bg-black/30 backdrop-blur-md hover:bg-black/40',
+                        )}
+                      >
+                        {contactMenuOpen ? (
+                          <X className="h-5 w-5" />
+                        ) : (
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
+                          </svg>
+                        )}
+                      </button>
+
+                      <AnimatePresence>
+                        {contactMenuOpen && (
+                          <>
+                            {/* невидимый полноэкранный слой — закрытие по тапу вне меню */}
+                            <div
+                              className="fixed inset-0 z-[1]"
+                              onClick={() => setContactMenuOpen(false)}
+                            />
+                            <motion.div
+                              initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                              animate={{ opacity: 1, y: 0, scale: 1 }}
+                              exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                              className="absolute right-0 top-12 z-[2] w-52 origin-top-right rounded-2xl overflow-hidden bg-card ring-1 ring-black/10 dark:ring-white/10 shadow-[0_20px_50px_-16px_rgba(0,0,0,0.4)]"
+                            >
+                              <ContactActionItems product={product} onAfter={() => setContactMenuOpen(false)} onOpenShare={() => { setContactMenuOpen(false); setShareOpen(true) }} />
+                            </motion.div>
+                          </>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   </div>
                 </div>
 
@@ -456,17 +560,18 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                   )
                 })()}
 
-                {/* Bottom gradient — smooth transition from image to background.
-                    The gradient goes from transparent (image visible) to the
-                    page background color, creating a "melt" effect instead of
-                    a hard cut-off. Height ~120px so the fade is visible but
-                    doesn't cover too much of the image. */}
+                {/* v25.15: белый градиент под фото УДАЛЁН (owner feedback:
+                    «между описанием, ценой и картинкой какой-то белый
+                    эффект»). Фото теперь заканчивается чётким краем,
+                    а подпись под ним идёт без цветовых примесей.
+                
                 <div
                   className="absolute bottom-0 left-0 right-0 h-32 pointer-events-none"
                   style={{
                     background: 'linear-gradient(to bottom, transparent 0%, var(--background) 100%)',
                   }}
                 />
+                */}
                 </div>
               )
               })()}
@@ -508,7 +613,7 @@ export function ProductPage({ productId, onClose, initialProduct }: ProductPageP
                 </div>
               )}
 
-              {/* v25.8 (999PRO launch): Color selector — clicking a color
+              {/* v25.8 (TRI999 launch): Color selector — clicking a color
                   instantly switches the main image to that color's photo. */}
               {product.colors && product.colors.length > 0 && (
                 <div className="py-2">
@@ -815,6 +920,149 @@ function QrEventListener({ onOpenQr }: { onOpenQr: () => void }) {
     return () => window.removeEventListener('999pro:open-qr', handler)
   }, [onOpenQr])
   return null
+}
+
+// ============================================================================
+//  v25.15: ContactActionItems — содержимое выпадающего меню быстрых связей
+//  (три точки над фото). Заменяет прежнюю кнопку «Поделиться»: теперь можно
+//  позвонить / написать в WhatsApp / Telegram сразу, не листая страницу,
+//  плюс скопировать артикул или открыть полноценный шаринг карточки.
+// ============================================================================
+export function ContactActionItems({
+  product,
+  onAfter,
+  onOpenShare,
+}: {
+  product: Product
+  onAfter: () => void
+  onOpenShare: () => void
+}) {
+  const d = product.department
+
+  const waLink =
+    d?.whatsapp
+      ? d.whatsapp.startsWith('http')
+        ? d.whatsapp
+        : `https://wa.me/${d.whatsapp.replace(/[^0-9]/g, '')}`
+      : null
+
+  const tgLink = d?.telegram
+    ? d.telegram.startsWith('http')
+      ? d.telegram
+      : d.telegram.startsWith('@')
+        ? `https://t.me/${d.telegram.slice(1)}`
+        : `https://t.me/${d.telegram}`
+    : null
+
+  const telLink = d?.phone ? `tel:${d.phone.replace(/[^0-9+]/g, '')}` : null
+  const article = product.id.slice(-8).toUpperCase()
+
+  const copyArticle = () => {
+    navigator.clipboard?.writeText(article)
+      .then(() => toast.success(`Артикул ${article} скопирован`))
+      .catch(() => toast.error('Не удалось скопировать'))
+    haptic.tap()
+    onAfter()
+  }
+
+  const rows: Array<{
+    key: string
+    label: string
+    icon: React.ReactNode
+    onClick?: () => void
+    href?: string
+    external?: boolean
+    colorClass?: string
+  }> = []
+
+  if (telLink) {
+    rows.push({
+      key: 'tel',
+      label: 'Позвонить',
+      icon: <Phone className="h-4 w-4 text-violet-500" />,
+      href: telLink,
+      onClick: () => { haptic.tap(); onAfter() },
+    })
+  }
+  if (waLink) {
+    rows.push({
+      key: 'wa',
+      label: 'WhatsApp',
+      icon: <MessageCircle className="h-4 w-4 text-emerald-500" />,
+      href: waLink,
+      external: true,
+      onClick: () => { haptic.tap(); onAfter() },
+    })
+  }
+  if (tgLink) {
+    rows.push({
+      key: 'tg',
+      label: 'Telegram',
+      icon: <Send className="h-4 w-4 text-sky-500" />,
+      href: tgLink,
+      external: true,
+      onClick: () => { haptic.tap(); onAfter() },
+    })
+  }
+  // v25.16 (owner feedback): «Поделиться кнопку убери и вместо него Позвонить
+  // или же написать в WhatsApp». Меню сверху — ТОЛЬКО контактные действия
+  // (+ артикул). Шаринг остаётся на нижней большой кнопке «Поделиться».
+  void onOpenShare
+  rows.push({
+    key: 'article',
+    label: `Артикул · ${article}`,
+    icon: <Copy className="h-4 w-4 text-muted-foreground" />,
+    onClick: copyArticle,
+  })
+
+  return (
+    <div className="py-1.5">
+      {rows.map((r) => {
+        const rowCls =
+          'flex items-center gap-3 px-3.5 py-2.5 text-sm font-medium hover:bg-accent/50 active:bg-accent transition-colors text-left'
+        // tel:/mailto: — обычная ссылка; http(s) — новая вкладка;
+        // остальное — кнопки (шаринг, копирование артикула).
+        if (r.href && r.external) {
+          return (
+            <a
+              key={r.key}
+              href={r.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={r.onClick}
+              className={rowCls}
+            >
+              {r.icon}
+              <span>{r.label}</span>
+            </a>
+          )
+        }
+        if (r.href) {
+          return (
+            <a
+              key={r.key}
+              href={r.href}
+              onClick={r.onClick}
+              className={rowCls}
+            >
+              {r.icon}
+              <span className="truncate">{r.label}</span>
+            </a>
+          )
+        }
+        return (
+          <button
+            key={r.key}
+            onClick={r.onClick}
+            className={`w-full ${rowCls}`}
+          >
+            {r.icon}
+            <span className="truncate">{r.label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 function SpecRow({ label, value }: { label: string; value: string }) {

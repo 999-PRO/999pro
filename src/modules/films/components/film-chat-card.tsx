@@ -7,13 +7,11 @@
 // При клике диспатчит событие '999pro:open-film' (точно как товар
 // диспатчит '999pro:open-product'). page.tsx слушает событие и
 // открывает FilmBottomSheet как overlay поверх чата.
-// v18.12: admin-only — non-admins see a toast on click instead of the player.
+// v25.18: Video Hub открыт для всех — гейты сняты.
 // ============================================================================
 
 import { motion } from 'framer-motion'
 import { Play, Calendar, Star, Clock, Tv, Film as FilmIcon, Lock } from 'lucide-react'
-import { useAuthStore } from '@/lib/auth-store'
-import { toast } from '@/lib/notifications'
 import type { FilmChatCardData } from '../types'
 
 interface FilmChatCardProps {
@@ -30,14 +28,9 @@ function fmtDur(sec: number | null | undefined) {
 }
 
 export function FilmChatCard({ payload, isOwn }: FilmChatCardProps) {
-  // v18.12: Video Hub is admin-only. Non-admins see a toast on click.
-  const userRole = useAuthStore((s) => s.user?.role)
-  const isAdmin = userRole === 'admin'
+  // v25.18: Video Hub ОТКРЫТ для всех — гейт «только админ» снят
+  // (владелец дважды просил открыть доступ).
   const handleClick = () => {
-    if (!isAdmin) {
-      toast.info('Video Hub скоро будет доступен. Раздел в разработке.')
-      return
-    }
     // Dispatch event — page.tsx catches it and opens FilmBottomSheet as overlay.
     // Same mechanic as product cards (999pro:open-product).
     if (typeof window !== 'undefined') {
@@ -137,7 +130,7 @@ export function FilmChatCard({ payload, isOwn }: FilmChatCardProps) {
             </span>
           )}
           <span className="inline-flex items-center gap-0.5">
-            <Star className="h-2.5 w-2.5 text-amber-400" /> 999PRO
+            <Star className="h-2.5 w-2.5 text-amber-400" /> TRI999
           </span>
         </div>
 

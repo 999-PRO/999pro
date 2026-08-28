@@ -188,10 +188,32 @@ export function AudioFullPlayer() {
     setRepeat(modes[(idx + 1) % modes.length])
   }
 
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const frac = (e.clientX - rect.left) / rect.width
+  // v25.17 (owner: «мне показалось что не работает плеер»): клик-сик работал,
+  // но перетаскивание ползунка — нет. Добавляем полноценный drag-seek через
+  // Pointer Events: зажал — тянешь — отпустил. Плюс подсветка активного трека.
+  const seekBarRef = useRef<HTMLDivElement>(null)
+  const isDraggingSeekRef = useRef(false)
+
+  const seekFromClientX = (clientX: number) => {
+    const el = seekBarRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const frac = (clientX - rect.left) / rect.width
     seek(Math.max(0, Math.min(1, frac)))
+  }
+
+  const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    isDraggingSeekRef.current = true
+    seekFromClientX(e.clientX)
+  }
+  const onSeekPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingSeekRef.current) return
+    seekFromClientX(e.clientX)
+  }
+  const onSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    isDraggingSeekRef.current = false
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
   }
 
   const formatTime = (s: number) => {
@@ -222,22 +244,33 @@ export function AudioFullPlayer() {
     <AnimatePresence>
       {open && currentTrack && (
         <>
-          {/* Backdrop with blurred cover */}
+          {/* Backdrop with blurred cover — v25.18: + аурора-орбы для глубины */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
-            className="fixed inset-0 z-[200]"
+            className="fixed inset-0 z-[200] overflow-hidden"
             onClick={() => setOpen(false)}
             style={{
               background: currentTrack.coverUrl
-                ? `linear-gradient(to bottom, rgba(15,23,42,0.85), rgba(15,23,42,0.95)), url(${currentTrack.coverUrl}) center/cover`
-                : 'rgba(15,23,42,0.9)',
+                ? `linear-gradient(to bottom, rgba(12,10,26,0.88), rgba(8,6,20,0.96)), url(${currentTrack.coverUrl}) center/cover`
+                : 'radial-gradient(120% 90% at 80% 0%, #241035 0%, #140b24 55%, #0a0616 100%)',
               backdropFilter: 'blur(40px) saturate(120%)',
               WebkitBackdropFilter: 'blur(40px) saturate(120%)',
             }}
-          />
+          >
+            <div
+              aria-hidden
+              className="absolute -top-[18%] -left-[22%] w-[75vmax] h-[75vmax] rounded-full pointer-events-none"
+              style={{ background: 'radial-gradient(circle, rgba(236,72,153,0.20) 0%, transparent 65%)', filter: 'blur(30px)' }}
+            />
+            <div
+              aria-hidden
+              className="absolute -bottom-[22%] -right-[25%] w-[80vmax] h-[80vmax] rounded-full pointer-events-none"
+              style={{ background: 'radial-gradient(circle, rgba(124,58,237,0.22) 0%, transparent 65%)', filter: 'blur(30px)' }}
+            />
+          </motion.div>
 
           {/* Sheet */}
           <motion.div
@@ -257,7 +290,7 @@ export function AudioFullPlayer() {
                 <X className="h-5 w-5" />
               </button>
               <div className="text-xs text-white/60 font-medium uppercase tracking-wider">
-                Audio Hub
+                Медиахаб · плеер
               </div>
               <div className="flex items-center gap-1">
                 {/* Full stop button — stops playback AND clears state so the
@@ -295,42 +328,55 @@ export function AudioFullPlayer() {
                   transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                   className="flex-1 flex flex-col"
                 >
-                    {/* Cover */}
+                    {/* Cover — v25.18: крупнее, вращающийся conic-гало при
+                        воспроизведении, стеклянное кольцо, глубокая тень */}
                     <div className="flex-1 flex flex-col items-center justify-center px-8 pb-4">
-                      <motion.div
-                        layout
-                        className="relative w-full max-w-[260px] aspect-square rounded-3xl overflow-hidden shadow-2xl"
-                        animate={isPlaying ? { scale: 1 } : { scale: 0.92 }}
-                        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                      >
-                        {currentTrack.coverUrl ? (
-                           
-                          <img
-                            src={currentTrack.coverUrl}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div
-                            className="h-full w-full grid place-items-center"
-                            style={{ background: 'var(--gradient-brand)' }}
-                          >
-                            <ListMusic className="h-16 w-16 text-white/80" />
-                          </div>
-                        )}
-                        {/* Glow ring while playing */}
+                      <div className="relative w-full max-w-[300px] aspect-square grid place-items-center">
+                        {/* Вращающееся гало (только когда играет) */}
                         {isPlaying && (
                           <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: [0.3, 0.6, 0.3] }}
-                            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-                            className="absolute inset-0 rounded-3xl"
+                            aria-hidden
+                            className="absolute inset-[-7%] rounded-full pointer-events-none"
                             style={{
-                              boxShadow: '0 0 60px 8px rgba(124,58,237,0.5) inset',
+                              background: 'conic-gradient(from 0deg, rgba(236,72,153,0.55), rgba(168,85,247,0.15), rgba(124,58,237,0.55), rgba(236,72,153,0.55))',
+                              filter: 'blur(26px)',
+                              opacity: 0.55,
                             }}
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 9, repeat: Infinity, ease: 'linear' }}
                           />
                         )}
-                      </motion.div>
+                        <motion.div
+                          layout
+                          className="relative w-full aspect-square rounded-[34px] overflow-hidden"
+                          animate={isPlaying ? { scale: 1 } : { scale: 0.93 }}
+                          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                          style={{
+                            boxShadow: '0 34px 80px -24px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.14), inset 0 1px 0 rgba(255,255,255,0.18)',
+                          }}
+                        >
+                          {currentTrack.coverUrl ? (
+                            <img
+                              src={currentTrack.coverUrl}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div
+                              className="h-full w-full grid place-items-center"
+                              style={{ background: 'var(--gradient-brand)' }}
+                            >
+                              <ListMusic className="h-16 w-16 text-white/80" />
+                            </div>
+                          )}
+                          {/* Лёгкий стеклянный отблеск сверху */}
+                          <div
+                            aria-hidden
+                            className="absolute inset-0 pointer-events-none"
+                            style={{ background: 'linear-gradient(160deg, rgba(255,255,255,0.14) 0%, transparent 32%)' }}
+                          />
+                        </motion.div>
+                      </div>
 
                       {/* Title + artist + source badge */}
                       <div className="mt-6 text-center w-full">
@@ -363,28 +409,50 @@ export function AudioFullPlayer() {
                       </div>
                     </div>
 
-                    {/* Progress bar */}
+                    {/* Progress bar — v25.18: толще, стеклянные чипы времени,
+                        glow при воспроизведении, drag-seek (Pointer Events) */}
                     <div className="px-8 pb-4">
                       <div
-                        onClick={handleSeek}
-                        className="relative h-1.5 rounded-full cursor-pointer group"
-                        style={{ background: 'rgba(255,255,255,0.15)' }}
+                        ref={seekBarRef}
+                        onPointerDown={onSeekPointerDown}
+                        onPointerMove={onSeekPointerMove}
+                        onPointerUp={onSeekPointerUp}
+                        onPointerCancel={onSeekPointerUp}
+                        className="relative h-2 rounded-full cursor-pointer group touch-none"
+                        style={{ background: 'rgba(255,255,255,0.14)', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.35)' }}
                       >
                         <div
                           className="absolute inset-y-0 left-0 rounded-full"
                           style={{
                             width: `${progress * 100}%`,
-                            background: 'var(--gradient-brand)',
+                            background: 'linear-gradient(90deg, #EC4899, #A855F7)',
+                            boxShadow: isPlaying ? '0 0 14px -2px rgba(168,85,247,0.8)' : 'none',
                           }}
                         />
                         <div
-                          className="absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 rounded-full bg-white shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                          style={{ left: `calc(${progress * 100}% - 7px)` }}
+                          className="absolute top-1/2 -translate-y-1/2 h-4.5 w-4.5 rounded-full transition-transform group-hover:scale-125"
+                          style={{
+                            left: `calc(${progress * 100}% - 9px)`,
+                            width: 18,
+                            height: 18,
+                            background: '#fff',
+                            boxShadow: '0 2px 10px rgba(0,0,0,0.45), 0 0 0 4px rgba(255,255,255,0.12)',
+                          }}
                         />
                       </div>
-                      <div className="flex justify-between mt-2 text-xs text-white/60 tabular-nums">
-                        <span>{formatTime(currentTime)}</span>
-                        <span>{formatTime(duration)}</span>
+                      <div className="flex justify-between mt-2.5">
+                        <span
+                          className="text-[11px] font-semibold tabular-nums px-2 py-0.5 rounded-full"
+                          style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.75)' }}
+                        >
+                          {formatTime(currentTime)}
+                        </span>
+                        <span
+                          className="text-[11px] font-semibold tabular-nums px-2 py-0.5 rounded-full"
+                          style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.75)' }}
+                        >
+                          -{formatTime(Math.max(0, (duration || 0) - currentTime))}
+                        </span>
                       </div>
                     </div>
 
@@ -407,38 +475,50 @@ export function AudioFullPlayer() {
                         {/* Previous */}
                         <button
                           onClick={prev}
-                          className="h-12 w-12 rounded-full grid place-items-center text-white hover:bg-white/10 active:scale-90 transition-all"
+                          className="h-12 w-12 rounded-full grid place-items-center text-white active:scale-90 transition-all"
+                          style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)' }}
                           aria-label="Предыдущий"
                         >
                           <SkipBack className="h-5 w-5" fill="white" />
                         </button>
 
-                        {/* Play/Pause */}
-                        <motion.button
-                          whileTap={{ scale: 0.9 }}
-                          whileHover={{ scale: 1.05 }}
-                          onClick={togglePlay}
-                          className="h-16 w-16 rounded-full grid place-items-center text-white"
-                          style={{
-                            background: 'var(--gradient-brand)',
-                            boxShadow: '0 8px 32px -4px rgba(124,58,237,0.6)',
-                            border: '2px solid rgba(255,255,255,0.2)',
-                          }}
-                          aria-label={isPlaying ? 'Пауза' : 'Воспроизвести'}
-                        >
-                          {isLoading ? (
-                            <Loader2 className="h-7 w-7 animate-spin" />
-                          ) : isPlaying ? (
-                            <Pause className="h-7 w-7" fill="white" />
-                          ) : (
-                            <Play className="h-7 w-7 ml-1" fill="white" />
+                        {/* Play/Pause — v25.18: крупнее + дышащее гало */}
+                        <div className="relative">
+                          {isPlaying && (
+                            <motion.span
+                              aria-hidden
+                              className="absolute inset-0 rounded-full pointer-events-none"
+                              style={{ background: 'rgba(168,85,247,0.45)' }}
+                              animate={{ scale: [1, 1.55], opacity: [0.5, 0] }}
+                              transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
+                            />
                           )}
-                        </motion.button>
+                          <motion.button
+                            whileTap={{ scale: 0.9 }}
+                            whileHover={{ scale: 1.05 }}
+                            onClick={togglePlay}
+                            className="relative h-[72px] w-[72px] rounded-full grid place-items-center text-white"
+                            style={{
+                              background: 'linear-gradient(135deg, #EC4899 0%, #A855F7 55%, #7C3AED 100%)',
+                              boxShadow: '0 14px 40px -8px rgba(124,58,237,0.7), inset 0 1px 0 rgba(255,255,255,0.35), 0 0 0 1.5px rgba(255,255,255,0.16)',
+                            }}
+                            aria-label={isPlaying ? 'Пауза' : 'Воспроизвести'}
+                          >
+                            {isLoading ? (
+                              <Loader2 className="h-8 w-8 animate-spin" />
+                            ) : isPlaying ? (
+                              <Pause className="h-8 w-8" fill="white" />
+                            ) : (
+                              <Play className="h-8 w-8 ml-1" fill="white" />
+                            )}
+                          </motion.button>
+                        </div>
 
                         {/* Next */}
                         <button
                           onClick={next}
-                          className="h-12 w-12 rounded-full grid place-items-center text-white hover:bg-white/10 active:scale-90 transition-all"
+                          className="h-12 w-12 rounded-full grid place-items-center text-white active:scale-90 transition-all"
+                          style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)' }}
                           aria-label="Следующий"
                         >
                           <SkipForward className="h-5 w-5" fill="white" />

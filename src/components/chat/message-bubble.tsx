@@ -4,7 +4,8 @@
 // Renders a single chat message: text, image, video, audio, document, or reply/forward.
 // Long-press (mobile) or right-click (desktop) opens the context menu.
 
-import React, { useRef } from 'react'
+import React, { useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import {
   Check, CheckCheck, Forward, Trash2, Star,
 } from 'lucide-react'
@@ -17,6 +18,8 @@ import type { Message } from '@/lib/types'
 import { DocumentAttachment } from '@/components/document-attachment'
 import { AudioMessage } from './audio-message'
 import { ProductMessageCard } from './product-message-card'
+// v25.24: карточка приглашения в онлайн-игру (нарды / крестики-нолики)
+import { GameInviteCard } from './game-invite-card'
 import { AttachmentGroup } from './attachment-group'
 import { SwipeToReply } from './swipe-to-reply'
 // v16.9.2: Audio Hub card — lazy-loaded to keep the chat bundle small.
@@ -51,6 +54,9 @@ export interface MessageBubbleProps {
 
 export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMessage, onImageClick, registerRef, onOpenProduct, onReply, isFavorite, onToggleFavorite }: MessageBubbleProps) {
   const isDeleted = message.deletedForAll
+
+  // v25.24: развёрнут длинный текст сообщения («Показать ещё»)
+  const [bubbleTextExpanded, setBubbleTextExpanded] = useState(false)
 
   // Long-press for mobile.
   // v16.8 final fix: при долгом нажатии браузер по умолчанию начинает выделять
@@ -96,6 +102,7 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
   else if (message.mediaType === 'product') preview = '🛍 Товар'
   else if (message.mediaType === 'audio-hub') preview = '🎵 Аудио'
   else if (message.mediaType === 'film') preview = '🎬 Фильм'
+  else if (message.mediaType === 'game') preview = '🎮 Игра'
 
   // Определяем тип контента для рендера
   const isImage = message.mediaType === 'image' && message.mediaUrl
@@ -110,10 +117,23 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
   const isAudioHub = message.mediaType === 'audio-hub' && !!message.mediaUrl
   // v17: Video Hub film card — mediaUrl carries the film card JSON.
   const isFilm = message.mediaType === 'film' && !!message.mediaUrl
+  // v25.24: приглашение в онлайн-игру — mediaUrl carries the duel id.
+  const isGameInvite = message.mediaType === 'game' && !!message.mediaUrl
   // v12: attachment group — message has multiple files in `attachments` array
   const isAttachmentGroup = !!message.attachments && message.attachments.length > 0
-  // Если mediaUrl есть, но тип не image/video/audio/product/audio-hub/film — это документ
-  const isDocument = !isImage && !isVideo && !isAudio && !isProduct && !isAudioHub && !isFilm && !isAttachmentGroup && !!message.mediaUrl
+  // Если mediaUrl есть, но тип не image/video/audio/product/audio-hub/film/game — это документ
+  const isDocument = !isImage && !isVideo && !isAudio && !isProduct && !isAudioHub && !isFilm && !isGameInvite && !isAttachmentGroup && !!message.mediaUrl
+
+  // ═══ v25.28 (владелец): ОДИНОЧНЫЙ эмодзи — крупный, анимированный, без
+  // пузыря (как в Telegram). Несколько эмодзи подряд / любой другой текст —
+  // обычный пузырь. ═══
+  const EMOJI_ONLY_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\uFE0F|\u200D|\s)+$/u
+  const isBigEmoji =
+    !isDeleted && !message.replyTo && !message.forwardedFrom &&
+    !!message.content && message.content.trim().length <= 12 &&
+    EMOJI_ONLY_RE.test(message.content) &&
+    !isImage && !isVideo && !isAudio && !isProduct && !isAudioHub &&
+    !isFilm && !isGameInvite && !isAttachmentGroup && !isDocument
 
   // v10-photo: images get NO bubble — just a thin border card.
   // Outgoing: thin blue border. Incoming: thin beige-grey border.
@@ -121,8 +141,8 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
   // card (media-compact-card), same style as voice messages. Wrapping it in
   // another glass bubble was redundant and looked heavy.
   // v12: attachment groups also get NO bubble — AttachmentGroup has its own card.
-  const isTrulyBubbleless = (isAudio && !message.content) || (isProduct && !message.content) || (isAudioHub && !message.content) || (isFilm && !message.content) || (isDocument && !message.content) || isAttachmentGroup
-  const isBubbleless = isDocument || isAudio || isProduct || isAudioHub || isFilm || isAttachmentGroup
+  const isTrulyBubbleless = (isAudio && !message.content) || (isProduct && !message.content) || (isAudioHub && !message.content) || (isFilm && !message.content) || (isGameInvite && !message.content) || (isDocument && !message.content) || isAttachmentGroup
+  const isBubbleless = isDocument || isAudio || isProduct || isAudioHub || isFilm || isGameInvite || isAttachmentGroup
 
   return (
     <div
@@ -151,7 +171,9 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
         onTouchMove={onTouchEnd}
         className={cn(
           'relative select-none',
-          isImage
+          isBigEmoji
+            ? 'px-2 py-0.5' // одиночный эмодзи — без пузыря
+            : isImage
             ? cn(
                 'rounded-[20px] p-0.5 overflow-hidden',
                 // v11-photo: thin border, NO bubble background, soft brand glow.
@@ -167,8 +189,8 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
                 ? 'glass-message rounded-2xl p-1.5'
                 : 'glass-message cursor-pointer px-3 py-2', // compact text bubble
           // Only apply outgoing/incoming bubble colors when there IS a bubble (non-image)
-          !isImage && !isTrulyBubbleless && (isOwn ? 'glass-message-outgoing' : 'glass-message-incoming'),
-          !isImage && !isTrulyBubbleless && (isOwn ? 'rounded-br-md' : 'rounded-bl-md'),
+          !isImage && !isBigEmoji && !isTrulyBubbleless && (isOwn ? 'glass-message-outgoing' : 'glass-message-incoming'),
+          !isImage && !isBigEmoji && !isTrulyBubbleless && (isOwn ? 'rounded-br-md' : 'rounded-bl-md'),
           isDeleted && 'opacity-50',
         )}
         style={{
@@ -253,6 +275,7 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
                         : message.replyTo.mediaType === 'audio' ? '🎤 Голосовое'
                         : message.replyTo.mediaType === 'product' ? '🛍 Товар'
                         : message.replyTo.mediaType === 'audio-hub' ? '🎵 Аудио'
+                        : message.replyTo.mediaType === 'game' ? '🎮 Игра'
                         : 'Вложение')}
                 </div>
               </div>
@@ -330,6 +353,9 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
               return <DocumentAttachment url={message.mediaUrl!} isOwn={isOwn} />
             }
           })()
+        ) : isGameInvite ? (
+          // v25.24: приглашение в онлайн-игру — карточка с действиями.
+          <GameInviteCard duelId={message.mediaUrl!} isOwn={isOwn} />
         ) : isAttachmentGroup ? (
           // v12: attachment group — multi-file message (photos grid, doc list, or mixed)
           <AttachmentGroup
@@ -339,26 +365,67 @@ export function MessageBubbleImpl({ message, isOwn, onContextMenu, onScrollToMes
           />
         ) : isDocument ? (
           <DocumentAttachment url={message.mediaUrl!} isOwn={isOwn} />
+        ) : isBigEmoji ? (
+          // v25.28: крупный анимированный эмодзи (pop-in spring + лёгкий
+          // «дыхательный» дрейф). Рендерится БЕЗ пузыря — как в Telegram.
+          <motion.div
+            initial={{ scale: 0.2, opacity: 0, y: 6 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 16 }}
+            className="text-[52px] leading-none select-none px-1 py-0.5 cursor-pointer"
+          >
+            {message.content}
+          </motion.div>
         ) : message.content ? (
-          <div className="selectable text-sm whitespace-pre-wrap break-words leading-relaxed text-foreground">
-            {linkify(message.content).map((seg, i) => {
-              if (seg.type === 'link' && seg.url) {
-                return (
-                  <a
-                    key={i}
-                    href={seg.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:opacity-80 transition-opacity text-primary"
-                    onClick={(e) => e.stopPropagation()}
+          // v25.24: длинное сообщение сворачивается («Показать ещё / Свернуть»)
+          (() => {
+            const long = message.content.length > 480
+            return (
+              <div>
+                <div
+                  className={cn(
+                    'selectable text-sm whitespace-pre-wrap break-words leading-relaxed text-foreground',
+                    long && !bubbleTextExpanded && 'overflow-hidden',
+                  )}
+                  style={
+                    long && !bubbleTextExpanded
+                      ? {
+                          display: '-webkit-box',
+                          WebkitLineClamp: 12,
+                          WebkitBoxOrient: 'vertical',
+                        }
+                      : undefined
+                  }
+                >
+                  {linkify(message.content).map((seg, i) => {
+                    if (seg.type === 'link' && seg.url) {
+                      return (
+                        <a
+                          key={i}
+                          href={seg.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:opacity-80 transition-opacity text-primary"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {seg.text}
+                        </a>
+                      )
+                    }
+                    return <span key={i}>{seg.text}</span>
+                  })}
+                </div>
+                {long && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setBubbleTextExpanded((v) => !v) }}
+                    className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:text-primary/80 transition-colors"
                   >
-                    {seg.text}
-                  </a>
-                )
-              }
-              return <span key={i}>{seg.text}</span>
-            })}
-          </div>
+                    {bubbleTextExpanded ? 'Свернуть' : 'Показать ещё'}
+                  </button>
+                )}
+              </div>
+            )
+          })()
         ) : null}
 
         {/* Meta — только если контент не картинка (там время overlay) */}

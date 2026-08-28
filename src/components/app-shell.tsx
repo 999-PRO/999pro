@@ -13,6 +13,13 @@ import { ProductFeed } from './product-feed'
 import { InAppNotificationToast } from './in-app-notification-toast'
 import { PullToRefresh } from './pull-to-refresh'
 import { SmartScrollButton } from './smart-scroll-button'
+// v25.18: плавающая кнопка ИИ-агента (переехала из центра bottom-nav,
+// освободив место для «Сообществ»)
+import { FloatingAIButton } from './floating-ai-button'
+// v25.19: выбор «Сообщества / Чат» одной кнопкой из навигации
+import { CommunicationChooser } from './communication-chooser'
+// v25.19: SEO из Студии — title/description/keywords/OG/JSON-LD
+import { SeoHead } from './seo-head'
 // v13.3: floating glass chat button removed — chat is now in the sidebar
 // nav (NAV array in sidebar.tsx) and in the mobile bottom-nav. The floating
 // button was redundant and cluttered the screen.
@@ -36,6 +43,11 @@ import { UniversalSearchGlobalOverlay } from '@/components/universal-search/univ
 // Mounted in AppShell so it appears on every view (home, catalog, chat,
 // audio hub, video hub, media hub, studio, profile, settings, …).
 import { AIAssistant } from '@/modules/ai-assistant'
+// v25.16: «Мои комментарии» — история всех своих комментариев по товарам
+// и объявлениям. Открывается из профиля / меню шапки / события open-my-comments.
+import { MyCommentsView } from './my-comments-view'
+// v25.24: онлайн-дуэли из чата (крестики-нолики, нарды)
+import { DuelHost } from './games/duel-host'
 import type { Product } from '@/lib/types'
 import { useOrdersBadgeStore } from '@/lib/orders-badge-store'
 import { useAuthStore } from '@/lib/auth-store'
@@ -190,6 +202,15 @@ export function AppShell({
 
       <SmartScrollButton />
 
+      {/* v25.18: плавающая кнопка ИИ-агента над bottom-nav (мобайл) */}
+      <FloatingAIButton />
+
+      {/* v25.19: выбор «Сообщества или Чат» — одна кнопка в навигации */}
+      <CommunicationChooser onNavigate={onNavigate} />
+
+      {/* v25.19: SEO-настройки из Студии — теги для поисковиков */}
+      <SeoHead />
+
       <CallManager />
 
       {/* Global cart sheet — controlled by `open-cart` events so the cart
@@ -225,6 +246,12 @@ export function AppShell({
           arrives in a conversation the user is NOT currently viewing.
           Mounted globally so it appears over any view. */}
       <InAppNotificationToast />
+
+      {/* v25.16: «Мои комментарии» — глобальный экран истории комментариев */}
+      <MyCommentsView />
+
+      {/* v25.24: онлайн-дуэли из чата (крестики-нолики, нарды) — глобальный хост */}
+      <DuelHost />
     </div>
   )
 }

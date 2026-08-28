@@ -1,27 +1,30 @@
 // ============================================================================
 // Brand constants — единый источник правды для названия бренда.
 // ----------------------------------------------------------------------------
-// v25.8 (999PRO launch): бренд переименован в "999PRO".
-//   • Основное название: "999PRO" (одной строкой)
-//   • Внутренние технические имена (пути, storage prefix) НЕ меняются.
+// v25.27: ребрендинг «TRI999» → «TRI999» (решение владельца).
+//   • Основное название: «TRI999» (произносится «Три девятки»)
+//   • Внутренние технические имена (пути, storage prefix, npm-имена) НЕ
+//     меняются — это невидимые пользователю идентификаторы, их смена сломала
+//     бы PWA-кэш/сохранённые данные у уже установленных клиентов.
 // ============================================================================
 
-export const BRAND_NUMBER = '999PRO'
-export const BRAND_WORD = '999PRO'
-export const BRAND_WORD_EN = '999PRO'
+export const BRAND_NUMBER = 'TRI999'
+export const BRAND_WORD = 'TRI999'
+export const BRAND_WORD_EN = 'TRI999'
 
 // Inline-варианты для использования в текстах (одной строкой).
-export const BRAND_INLINE = '999PRO'
-export const BRAND_INLINE_EN = '999PRO'
+export const BRAND_INLINE = 'TRI999'
+export const BRAND_INLINE_EN = 'TRI999'
 
 // Короткое имя (для шапок, тостов, уведомлений).
-export const BRAND_SHORT = '999PRO'
-export const BRAND_FULL = '999PRO'
+export const BRAND_SHORT = 'TRI999'
+export const BRAND_FULL = 'TRI999'
 
 // Имя команды поддержки.
-export const BRAND_TEAM = 'Команда 999PRO'
-export const BRAND_TEAM_EN = '999PRO Team'
+export const BRAND_TEAM = 'Команда TRI999'
+export const BRAND_TEAM_EN = 'TRI999 Team'
 
 // localStorage / persist ключи (НЕ трогаем — старое имя «999pro-» оставляем
 // ради совместимости с уже установленными PWA-версиями пользователей).
+// Это невидимые технические ключи, а не отображаемый бренд.
 export const BRAND_STORAGE_PREFIX = '999pro'
